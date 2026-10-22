@@ -49,8 +49,7 @@ sh tests/kp-test.sh   # off-device self-test with fake sysfs files
 sh build.sh           # writes dist/Kprofiles-Control-<version>.zip
 ```
 
-GitHub Actions runs the same two steps on every push. Push a tag such as `v1.0`
-to publish a release with the zip attached.
+v1.0
 
 ## Status
 
