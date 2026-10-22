@@ -2,5 +2,5 @@ id=kprofiles_ui
 name=Kprofiles Control
 version=v1.0
 versionCode=1
-author=local build
+author=NeoZIL
 description=WebUI to set the Kprofiles mode (off, battery, balanced, performance) and the screen-off auto switch. Optional boot persistence.
