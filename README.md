@@ -54,9 +54,10 @@ to publish a release with the zip attached.
 
 ## Status
 
-Tested off-device (script logic and the page's logic against the script). Not yet
-confirmed on a phone: that writing `kp_mode` is accepted by your kernel. If a write
-is refused, the WebUI shows the message. Please open an issue with it.
+Confirmed working by the author on a POCO F6 (`peridot`) with the Theettam 6.1.176
+kernel and KernelSU-Next 3.4.2: it installs and the WebUI runs. How much a profile
+changes battery or smoothness depends on the kernel, so measure it yourself. If a
+write is refused, the WebUI shows the message. Please open an issue with it.
 
 ## License
 
