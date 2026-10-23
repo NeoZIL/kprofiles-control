@@ -25,9 +25,12 @@ The pickers only list frequencies the phone itself reports as available. Pick
 
 | Preset | Screen on | Screen off |
 |:--|:--|:--|
-| **Stock** | the phone's own limits | the phone's own limits |
+| **Stock** | the phone's own CPU/GPU limits | the phone's own CPU/GPU limits |
 | **Battery tilt** | big max 2188.8 MHz, prime max 2457.6 MHz, GPU max 736 MHz | little max 1017.6, big max 787.2, prime max 633.6, GPU max 353 MHz |
 | **Battery saver** | little and big max 1593.6, prime max 1766.4, GPU max 633 MHz | little max 787.2, big max 633.6, prime max 633.6, GPU max 255 MHz |
+
+Stock removes the limits this module set. It does not touch the kernel profile; the
+**Reset everything** button does both (Stock limits and kernel profile None).
 
 A preset only fills in the values. Edit any picker afterwards and the preset becomes
 "custom". The Action button in the manager cycles Stock, Battery tilt, Battery saver.
@@ -50,6 +53,14 @@ module always uses the screen-on set.
   the manager; or from a recovery create an empty file
   `/data/adb/kprofiles_ui/skip` (nothing is applied at boot while it exists).
 
+### How the limits and the kernel profile combine
+
+They never overwrite each other. Writing a value to `scaling_max_freq` only updates this
+module's own request to the kernel; the kernel profile's caps are separate requests. The
+kernel enforces the **lowest** maximum of all requests, so with the kernel Battery profile on,
+a limit you set above its cap is accepted but has no effect until the profile is None. The
+page then shows a warning that the kernel did not take the value, which is expected.
+
 ## Kernel profile (advanced)
 
 The Theettam kernel contains the Kprofiles driver. It only stores a number; other
@@ -62,7 +73,8 @@ kernel code reacts to it. Reading the kernel source, this is what each mode does
 | Performance (3) | no CPU caps; the GPU can no longer be slowed by the thermal controller |
 
 The Battery mode lowers the value `scaling_max_freq` reports, so at boot the module saves
-the phone's own limits **before** it applies the kernel profile. If you ever see a stock
+the phone's own limits **before** it applies the kernel profile, and it never records stock
+values while the kernel Battery profile is on or while its own limits are in place. If you ever see a stock
 value that looks capped, set the kernel profile to None, reboot, and let it save again.
 
 The driver also has an `auto_kp` switch, but this kernel never reads it, so it does
@@ -70,7 +82,7 @@ nothing. The module no longer shows it.
 
 ## Install
 
-1. Download `Kprofiles-Control-v1.1.zip` from Releases (or Actions, then Artifacts;
+1. Download the newest `Kprofiles-Control-v*.zip` from Releases (or Actions, then Artifacts;
    unzip the artifact once).
 2. In the KernelSU-Next manager open **Modules**, install the zip, then reboot.
 3. Open the module and tap **WebUI**.
@@ -84,7 +96,7 @@ nothing. The module no longer shows it.
 | `module/webroot/index.html` | The WebUI page |
 | `module/service.sh` | At boot (about 25 s after boot completes): save the phone's limits, re-apply yours |
 | `module/action.sh` | Action button: cycle presets |
-| `module/uninstall.sh` | Deletes saved settings in `/data/adb/kprofiles_ui` |
+| `module/uninstall.sh` | Stops the watcher, restores the phone's limits, sets the kernel profile to None, deletes saved settings |
 
 ## Build and test
 
@@ -96,12 +108,12 @@ sh build.sh             # writes dist/Kprofiles-Control-<version>.zip
 
 GitHub Actions runs ShellCheck, then both tests under dash, **mksh** (the shell Android
 uses) and busybox ash, and checks that a pushed tag matches the `version` in
-`module.prop`. Push a tag such as `v1.1.1` to publish a release with the zip attached.
+`module.prop`. Push a tag such as `v1.1.2` to publish a release with the zip attached.
 
 ## Status
 
 v1.0 and v1.1 are confirmed working by the author on a POCO F6 (`peridot`) with the
-Theettam 6.1.176 kernel and KernelSU-Next 3.4.2. v1.1.1 passes its off-device tests (script
+Theettam 6.1.176 kernel and KernelSU-Next 3.4.2. v1.1.2 passes its off-device tests (script
 logic against a fake copy of the phone's frequency tables, under dash, mksh and busybox
 ash, and the page in a simulated browser). Android or Xiaomi services may override some
 values. Every write is checked and the page shows a warning if the kernel did not accept

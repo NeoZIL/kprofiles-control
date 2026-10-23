@@ -87,7 +87,7 @@ select{width:100%;font:inherit;font-size:.9rem;color:var(--text);background:var(
     <div class="opts" role="radiogroup" aria-label="Preset" id="presets">
       <button class="opt" role="radio" aria-checked="false" data-preset="stock">
         <span class="t">Stock</span>
-        <span class="d">Your phone’s own limits. Removes everything this module set.</span>
+        <span class="d">Your phone’s own CPU and GPU limits. Removes the limits this module set. The kernel profile below is separate.</span>
       </button>
       <button class="opt" role="radio" aria-checked="false" data-preset="tilt">
         <span class="t">Battery tilt</span>
@@ -99,6 +99,10 @@ select{width:100%;font:inherit;font-size:.9rem;color:var(--text);background:var(
       </button>
     </div>
     <p class="hint" id="customNote" style="margin:10px 0 0;display:none">You have custom values, so no preset is highlighted.</p>
+    <button class="opt" id="resetAll" style="margin-top:10px">
+      <span class="t">Reset everything</span>
+      <span class="d">Stock limits and the kernel profile set to None.</span>
+    </button>
   </section>
 
   <section class="card" aria-label="Switches">
@@ -332,6 +336,9 @@ select{width:100%;font:inherit;font-size:.9rem;color:var(--text);background:var(
     var p = b.getAttribute("data-preset");
     var names = { stock: "Stock", tilt: "Battery tilt", saver: "Battery saver" };
     act("preset " + p, names[p] + " applied.");
+  });
+  $("resetAll").addEventListener("click", function () {
+    act("resetall", "Everything is back to your phone’s own behavior.");
   });
   $("kpopts").addEventListener("click", function (e) {
     var b = e.target.closest ? e.target.closest(".opt") : null;

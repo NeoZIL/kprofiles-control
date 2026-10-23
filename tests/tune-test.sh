@@ -13,16 +13,17 @@ mkpol() { # dir avail min max
   mkdir -p "$1"; echo "$2" > "$1/scaling_available_frequencies"
   echo "$3" > "$1/scaling_min_freq"; echo "$4" > "$1/scaling_max_freq"; echo walt > "$1/scaling_governor"
 }
-mkfake() {
-  rm -rf "$T/cpufreq" "$T/gpu" "$T/cfg"; mkdir -p "$T/bl"
+mksys() { # the kernel's own files, exactly as a freshly booted phone has them (a reboot resets these)
+  mkdir -p "$T/bl" "$T/kp"
   mkpol "$T/cpufreq/policy0" "364800 441600 595200 787200 902400 1017600 1113600 1228800 1344000 1478400 1593600 1708800 1843200 1900800 2016000" 595200 2016000
   mkpol "$T/cpufreq/policy3" "480000 633600 787200 940800 1056000 1190400 1286400 1401600 1497600 1593600 1708800 1824000 1920000 2073600 2188800 2361600 2572800 2611200 2707200" 633600 2572800
   mkpol "$T/cpufreq/policy7" "480000 633600 787200 960000 1094400 1209600 1324800 1459200 1651200 1766400 1900800 2150400 2304000 2457600 2668800 2803200 2918400" 633600 2668800
   mkdir -p "$T/gpu"; echo "1100000000 1000000000 950000000 900000000 835000000 736000000 684000000 633000000 500000000 353000000 255000000" > "$T/gpu/available_frequencies"
   echo 255000000 > "$T/gpu/min_freq"; echo 900000000 > "$T/gpu/max_freq"
-  echo 120 > "$T/bl/brightness"
+  echo 120 > "$T/bl/brightness"; echo 0 > "$T/kp/kp_mode"; echo N > "$T/kp/auto_kp"
 }
-export CPUFREQ_DIR="$T/cpufreq" GPU_DIR="$T/gpu" BL_PATH="$T/bl/brightness" CFG_DIR="$T/cfg" TUNE_NO_DAEMON=1
+mkfake() { rm -rf "$T/cpufreq" "$T/gpu" "$T/cfg" "$T/kp"; mksys; }
+export CPUFREQ_DIR="$T/cpufreq" GPU_DIR="$T/gpu" BL_PATH="$T/bl/brightness" CFG_DIR="$T/cfg" TUNE_NO_DAEMON=1 KP_PATH="$T/kp/kp_mode" AUTO_PATH="$T/kp/auto_kp"
 v() { cat "$T/$1"; }
 waitfor() { # name expected file seconds   (poll instead of a fixed sleep, so slow runners do not flake)
   i=0
@@ -111,11 +112,57 @@ check "missing gpu: cpu still applied" 2188800 "$(v cpufreq/policy3/scaling_max_
 mkfake; rm -f "$T/bl/brightness"; S preset tilt >/dev/null
 out=$(S status); has "no backlight node: treated as screen on" "state=on" "$out"
 
-echo "--- boot: rebuild defaults, forget old bookkeeping ---"
+echo "--- boot: a real reboot (the kernel files return to the phone's own values) ---"
 mkfake; S preset tilt >/dev/null
+check "before reboot: limits are applied" 2188800 "$(v cpufreq/policy3/scaling_max_freq)"
+mksys                                                   # reboot: sysfs is reset, saved config on disk stays
 out=$(S boot); has "boot reports" "boot done: enabled=1 preset=tilt" "$out"
-check "boot re-applied on-set" 2188800 "$(v cpufreq/policy3/scaling_max_freq)"
-out=$(S status); has "boot captured the values it found as defaults" "def_big_max=2188800" "$out"
+out=$(S status)
+has "boot recorded the phone's REAL big max as stock" "def_big_max=2572800" "$out"
+has "boot recorded the phone's REAL gpu max as stock" "def_gpu_max=900000000" "$out"
+check "boot re-applied the saved on-set (big)" 2188800 "$(v cpufreq/policy3/scaling_max_freq)"
+S preset stock >/dev/null
+check "Stock after reboot restores the real value" 2572800 "$(v cpufreq/policy3/scaling_max_freq)"
+
+echo "--- boot re-records stock even if the phone's own values changed (for example after a ROM update) ---"
+mkfake; S preset tilt >/dev/null
+mksys; echo 2611200 > "$T/cpufreq/policy3/scaling_max_freq"   # the update moved the phone's own big max
+S boot >/dev/null
+out=$(S status); has "boot recorded the NEW stock value" "def_big_max=2611200" "$out"
+S preset stock >/dev/null
+check "Stock restores the NEW stock value, not the old one" 2611200 "$(v cpufreq/policy3/scaling_max_freq)"
+
+echo "--- defaults are never recorded from a capped or already-limited state ---"
+mkfake; echo 1 > "$T/kp/kp_mode"                         # kernel Battery profile active, defaults not recorded yet
+out=$(S status); has "kernel Battery active: nothing recorded as stock" "def_big_max=" "$out"
+check "no defaults file written" "no" "$([ -f "$T/cfg/defaults" ] && echo yes || echo no)"
+echo 0 > "$T/kp/kp_mode"; out=$(S status)
+has "after the kernel profile is None: recorded" "def_big_max=2572800" "$out"
+mkfake; S preset tilt >/dev/null; rm -f "$T/cfg/defaults"
+out=$(S status); has "own limits in place: not recorded as stock" "def_big_max=" "$out"
+check "still no defaults file" "no" "$([ -f "$T/cfg/defaults" ] && echo yes || echo no)"
+
+echo "--- Reset everything: stock limits AND kernel profile ---"
+mkfake; S preset saver >/dev/null; sh "$HERE/../module/kp.sh" mode 1 >/dev/null
+check "kernel profile Battery set" 1 "$(v kp/kp_mode)"
+S resetall >/dev/null
+check "resetall: big max stock" 2572800 "$(v cpufreq/policy3/scaling_max_freq)"
+check "resetall: gpu max stock" 900000000 "$(v gpu/max_freq)"
+check "resetall: kernel profile None" 0 "$(v kp/kp_mode)"
+out=$(S status); has "resetall: limits disabled" "enabled=0" "$out"
+
+echo "--- uninstall restores limits, resets the kernel profile, removes saved settings ---"
+mkfake; S preset tilt >/dev/null; sh "$HERE/../module/kp.sh" mode 3 >/dev/null
+check "performance profile set" 3 "$(v kp/kp_mode)"
+sh "$HERE/../module/uninstall.sh"
+check "uninstall: big max restored" 2572800 "$(v cpufreq/policy3/scaling_max_freq)"
+check "uninstall: prime max restored" 2668800 "$(v cpufreq/policy7/scaling_max_freq)"
+check "uninstall: gpu max restored" 900000000 "$(v gpu/max_freq)"
+check "uninstall: kernel profile None" 0 "$(v kp/kp_mode)"
+check "uninstall: saved settings removed" "no" "$([ -d "$T/cfg" ] && echo yes || echo no)"
+
+echo "--- tune.sh never writes the kernel profile directly (kp.sh is its only writer) ---"
+check "no direct write to the kernel profile node" 0 "$(grep -c 'wr "\$KPNODE"\|> *"\$KPNODE"' "$TUNE")"
 
 echo "--- background watcher ---"
 mkfake; unset TUNE_NO_DAEMON

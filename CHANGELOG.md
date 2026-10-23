@@ -1,5 +1,18 @@
 # Changelog
 
+## v1.1.2
+- New **Reset everything** button (and `tune.sh resetall`): Stock limits and the kernel profile
+  set to None. The Stock preset text now says it only covers the CPU/GPU limits.
+- Stock values are never recorded while the kernel Battery profile is on (it lowers the values
+  the module reads) or while the module's own limits are in place.
+- Uninstall also sets the kernel profile to None before deleting settings.
+- Tests: the boot test now simulates a real reboot (the phone's own values return) instead of
+  accepting an already-limited value as stock; new tests for stock changing between boots,
+  Reset everything, uninstall, the capture guards, and that `tune.sh` never writes the kernel
+  profile node. Each new test was checked by deliberately breaking the code.
+- README: install filename no longer pinned to a version; explains how the limits and the
+  kernel profile combine.
+
 ## v1.1.1
 - Fix: at boot the module now saves the phone's own limits before applying the kernel
   profile. Before, a kernel Battery profile kept from the last session could be recorded

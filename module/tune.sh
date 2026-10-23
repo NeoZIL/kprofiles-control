@@ -15,6 +15,7 @@ PIDF="$CFG_DIR/daemon.pid"
 CPUFREQ="${CPUFREQ_DIR:-/sys/devices/system/cpu/cpufreq}"
 GPUDIR="${GPU_DIR:-/sys/class/kgsl/kgsl-3d0/devfreq}"
 BL="${BL_PATH:-/sys/class/backlight/panel0-backlight/brightness}"
+KPNODE="${KP_PATH:-/sys/kernel/kprofiles/kp_mode}"   # read only here; kp.sh is the only writer
 POLL_ON="${TUNE_POLL_ON:-3}"       # seconds between checks while the screen is on
 POLL_OFF="${TUNE_POLL_OFF:-1}"     # seconds between checks while the screen is off
 REASSERT_EVERY="${TUNE_REASSERT:-10}"
@@ -64,7 +65,11 @@ list_has() { for f in $(rd "$(avail_node "$1")"); do [ "$f" = "$2" ] && return 0
 
 # ---------- the phone's own values ----------
 capture_defaults() {
-  [ "$1" = force ] || [ ! -f "$DEF" ] || return 0
+  if [ "$1" != force ]; then
+    [ -f "$DEF" ] && return 0                    # already recorded
+    [ -s "$APPLIED" ] && return 0                # our own limits are in place: would record them as stock
+    [ "$(rd "$KPNODE")" = 1 ] && return 0        # kernel Battery profile lowers the values we read
+  fi
   mkdir -p "$CFG_DIR" 2>/dev/null
   : > "$DEF.tmp"
   for c in $CLUSTERS; do for k in min max; do
@@ -229,6 +234,12 @@ cmd_preset() {
   cmd_apply
 }
 
+cmd_resetall() { # stock limits AND kernel profile back to None
+  cmd_preset stock
+  [ -e "$KPNODE" ] && sh "$MODDIR/kp.sh" mode 0 >/dev/null 2>&1
+  return 0
+}
+
 cmd_boot() {
   rm -f "$APPLIED" "$PIDF"
   mkdir -p "$CFG_DIR" 2>/dev/null
@@ -260,9 +271,10 @@ case "$1" in
   lists)     cmd_lists ;;
   cfg)       cmd_cfg "$2" "$3" && echo ok ;;
   preset)    cmd_preset "$2" && echo ok ;;
+  resetall)  cmd_resetall && echo ok ;;
   apply)     cmd_apply && echo ok ;;
   boot)      cmd_boot ;;
   daemon)    run_daemon ;;
   stop)      stop_daemon; apply_state none; echo ok ;;
-  *) echo "usage: tune.sh status | lists | cfg KEY VALUE | preset stock|tilt|saver | apply | boot | stop"; exit 1 ;;
+  *) echo "usage: tune.sh status | lists | cfg KEY VALUE | preset stock|tilt|saver | resetall | apply | boot | stop"; exit 1 ;;
 esac
