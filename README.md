@@ -44,14 +44,16 @@ module always uses the screen-on set.
 
 ### Safety
 
-- Values outside the phone's available list are rejected.
+- Values outside the phone's available list are rejected. Presets follow the same rule: a preset
+  value that is not in the list, or whose list cannot be read, is skipped with a warning.
 - The phone's own limits are saved at every boot and restored by **Stock**, by the
   "Apply my limits" switch, and when a value is set back to Default.
 - Android's own changes (for example a temporary boost) are left alone for any value
   you did not set. Values you did set are re-applied about every 10 to 30 seconds.
 - Recovery if the phone feels wrong: tap **Stock**; or disable or uninstall the module in
-  the manager; or from a recovery create an empty file
-  `/data/adb/kprofiles_ui/skip` (nothing is applied at boot while it exists).
+  the manager (the watcher notices within a few seconds and hands the limits back; the
+  kernel profile is separate, use **Reset everything** for that); or from a recovery create
+  an empty file `/data/adb/kprofiles_ui/skip` (nothing is applied at boot while it exists).
 
 ### How the limits and the kernel profile combine
 
@@ -60,6 +62,27 @@ module's own request to the kernel; the kernel profile's caps are separate reque
 kernel enforces the **lowest** maximum of all requests, so with the kernel Battery profile on,
 a limit you set above its cap is accepted but has no effect until the profile is None. The
 page then shows a warning that the kernel did not take the value, which is expected.
+
+Who controls what: `kp.sh` is the only script that writes the kernel profile. `tune.sh` only
+reads it, and writes nothing but the min and max nodes of the three CPU clusters and the GPU.
+
+### Checking this on your phone
+
+The statements above come from reading the kernel source, so confirm them once on the device
+(as root, for example through `adb shell su`). For each kernel profile `N` in 0, 1, 2 and 3:
+
+```
+M=/data/adb/modules/kprofiles_ui
+sh $M/kp.sh mode N
+sh $M/tune.sh cfg ON_BIG_MAX 2188800
+cat /sys/devices/system/cpu/cpufreq/policy3/scaling_max_freq
+```
+
+Expected: with 0, 2 and 3 the file shows `2188800`; with 1 it shows the Battery cap (about
+`1286400`) and the call prints a warning. If the cap ever shows the higher value, or the value
+flips back and forth, please open an issue with the output. Finish with **Reset everything**.
+To check the disable handling, turn the module off in the manager with a preset active and
+read `scaling_max_freq` again a few seconds later: it should be back at the phone's own value.
 
 ## Kernel profile (advanced)
 

@@ -154,7 +154,7 @@ out=$(S status); has "resetall: limits disabled" "enabled=0" "$out"
 echo "--- uninstall restores limits, resets the kernel profile, removes saved settings ---"
 mkfake; S preset tilt >/dev/null; sh "$HERE/../module/kp.sh" mode 3 >/dev/null
 check "performance profile set" 3 "$(v kp/kp_mode)"
-sh "$HERE/../module/uninstall.sh"
+KPUI_TEST_CFG_DIR="$T/cfg" sh "$HERE/../module/uninstall.sh"
 check "uninstall: big max restored" 2572800 "$(v cpufreq/policy3/scaling_max_freq)"
 check "uninstall: prime max restored" 2668800 "$(v cpufreq/policy7/scaling_max_freq)"
 check "uninstall: gpu max restored" 900000000 "$(v gpu/max_freq)"
@@ -198,5 +198,53 @@ if [ -n "$a" ] && [ -n "$b" ] && [ "$a" -le "$b" ] && [ "$(sed -n "${a}p" "$SVC"
 else
   echo "FAIL service.sh lines not found"; fail=1
 fi
+
+echo "--- uninstall never deletes a folder named by a stray CFG_DIR ---"
+mkfake; mkdir -p "$T/precious"; echo keep > "$T/precious/file"
+CFG_DIR="$T/precious" sh "$HERE/../module/uninstall.sh"
+check "stray CFG_DIR survives uninstall" "keep" "$(cat "$T/precious/file" 2>/dev/null)"
+
+echo "--- preset check fails closed when the list cannot be read ---"
+mkfake; rm -f "$T/cpufreq/policy3/scaling_available_frequencies"      # controls exist, list is gone
+out=$(S preset tilt); has "unreadable list: warns" "warn: preset value 2188800 skipped for big because the phone's list" "$out"
+check "unreadable list: value not saved" "" "$(sed -n 's/^ON_BIG_MAX=//p' "$T/cfg/tune.conf")"
+check "unreadable list: nothing written" 2572800 "$(v cpufreq/policy3/scaling_max_freq)"
+check "unreadable list: other clusters still applied" 2457600 "$(v cpufreq/policy7/scaling_max_freq)"
+mkfake; : > "$T/cpufreq/policy3/scaling_available_frequencies"          # empty list counts as unreadable
+out=$(S preset tilt); has "empty list: warns" "could not be read" "$out"
+check "empty list: nothing written" 2572800 "$(v cpufreq/policy3/scaling_max_freq)"
+
+echo "--- Stock says so when it has no recorded values to restore from ---"
+mkfake; echo 1 > "$T/kp/kp_mode"; echo 1286400 > "$T/cpufreq/policy3/scaling_max_freq"   # kernel Battery on before anything was recorded
+out=$(S preset tilt); has "no stock recorded: Apply warns" "warn: the phone's own limits are not recorded yet" "$out"
+out=$(S preset stock); has "no stock recorded: Stock warns" "warn: the phone's own limits are not recorded yet" "$out"
+mksys; S boot >/dev/null                                                # a reboot records the real values
+out=$(S preset tilt); case "$out" in *"not recorded yet"*) echo "FAIL warning persists after boot"; fail=1 ;; *) echo "ok   no warning once stock is recorded" ;; esac
+S preset stock >/dev/null
+check "after the reboot Stock restores the real value" 2572800 "$(v cpufreq/policy3/scaling_max_freq)"
+
+echo "--- the watcher hands the limits back when the module is disabled or removed ---"
+unset TUNE_NO_DAEMON; export TUNE_POLL_ON=1 TUNE_POLL_OFF=1 TUNE_REASSERT=3
+for marker in disable remove; do
+  mkfake; rm -rf "$T/mod"; mkdir -p "$T/mod"; cp "$HERE/../module/tune.sh" "$HERE/../module/kp.sh" "$T/mod/"   # tune.sh looks for the marker in its own folder
+  S2() { sh "$T/mod/tune.sh" "$@"; }
+  S2 preset tilt >/dev/null
+  i=0; while [ "$i" -lt 10 ]; do out=$(S2 status); case "$out" in *daemon=1*) break ;; esac; sleep 1; i=$((i + 1)); done
+  has "$marker test: watcher running" "daemon=1" "$out"
+  check "$marker test: limit applied" 2188800 "$(v cpufreq/policy3/scaling_max_freq)"
+  touch "$T/mod/$marker"
+  waitfor "$marker marker: limit handed back" 2572800 cpufreq/policy3/scaling_max_freq 15
+  i=0; while [ "$i" -lt 10 ]; do out=$(S2 status); case "$out" in *daemon=0*) break ;; esac; sleep 1; i=$((i + 1)); done
+  has "$marker marker: watcher stopped" "daemon=0" "$out"
+done
+export TUNE_NO_DAEMON=1
+
+echo "--- screen detection ---"
+mkfake; : > "$T/bl/brightness"; out=$(S status); has "empty brightness reading counts as screen on" "state=on" "$out"
+echo 0 > "$T/bl/brightness"; out=$(S status); has "brightness 0 is screen off" "screen=off" "$out"
+echo 1 > "$T/bl/brightness"; out=$(S status); has "lowest brightness is still screen on" "screen=on" "$out"
+# the watcher polls every second, so the check must not start processes (the old $(cat ...) started two)
+check "watcher reads brightness with built-ins only" 0 "$(grep -c 'st=\$(screen_state)' "$TUNE")"
+check "brightness is not read through cat" 0 "$(sed -n '/^scr_get()/,/^}/p' "$TUNE" | grep -c 'cat \|rd ')"
 
 [ "$fail" = 0 ] && echo "all tune tests passed" || { echo "SOME TESTS FAILED"; exit 1; }

@@ -114,11 +114,16 @@ apply_domain() { # cluster state(on|off|none)
 }
 apply_state() { load_cfg; for c in $CLUSTERS; do apply_domain "$c" "$1"; done; return 0; }
 
-screen_state() {
-  [ -r "$BL" ] || { echo on; return; }
-  b=$(rd "$BL")
-  case "$b" in 0) echo off ;; *) echo on ;; esac
+# scr_get sets ST (on|off) with shell built-ins only: the watcher calls it every second, and
+# the old $(cat ...) started two extra processes each time.
+scr_get() {
+  ST=on
+  if [ -r "$BL" ] && read -r sb 2>/dev/null < "$BL"; then
+    [ "$sb" = 0 ] && ST=off
+  fi
+  return 0
 }
+screen_state() { scr_get; echo "$ST"; }
 want_state() { load_cfg; if [ "$SCREENOFF" = 1 ]; then screen_state; else echo on; fi; }
 
 # ---------- background watcher (switches sets when the screen turns on/off) ----------
@@ -149,7 +154,11 @@ run_daemon() {
   while :; do
     load_cfg
     if [ "$ENABLED" != 1 ]; then apply_state none >/dev/null; break; fi
-    st=on; [ "$SCREENOFF" = 1 ] && st=$(screen_state)
+    # Disabling or removing a module in the manager only drops a marker file. Notice it here and
+    # hand the limits back, instead of holding them until the next reboot.
+    if [ -e "$MODDIR/disable" ] || [ -e "$MODDIR/remove" ]; then apply_state none >/dev/null; break; fi
+    st=on
+    if [ "$SCREENOFF" = 1 ]; then scr_get; st=$ST; fi
     if [ "$st" != "$last" ] || [ "$n" -ge "$REASSERT_EVERY" ]; then
       apply_state "$st" >/dev/null; last=$st; n=0
     fi
@@ -160,14 +169,17 @@ run_daemon() {
 }
 
 # ---------- commands ----------
+NOSTOCK="warn: the phone's own limits are not recorded yet (the kernel Battery profile is on), so Stock cannot put them back until the next reboot"
 cmd_apply() {
   load_cfg
   if [ "$ENABLED" = 1 ]; then
     capture_defaults
+    [ -f "$DEF" ] || echo "$NOSTOCK"
     apply_state "$(want_state)"
     start_daemon
   else
     capture_defaults
+    [ -f "$DEF" ] || [ ! -s "$APPLIED" ] || echo "$NOSTOCK"
     apply_state none
     stop_daemon
   fi
@@ -224,9 +236,15 @@ cmd_preset() {
     eval "pv=\$P_${s}_${c}_${k}"
     if [ -n "$pv" ]; then
       pc=$(lower "$c"); pl=$(rd "$(avail_node "$pc")")
-      if [ -n "$pl" ] && ! list_has "$pc" "$pv"; then
-        echo "warn: preset value $pv is not available for $pc on this phone, skipped"; pv=""
+      if [ -n "$pl" ]; then
+        if ! list_has "$pc" "$pv"; then
+          echo "warn: preset value $pv is not available for $pc on this phone, skipped"; pv=""
+        fi
+      elif [ -e "$(node "$pc" max)" ]; then
+        # the controls exist but the phone's list cannot be read: do not guess
+        echo "warn: preset value $pv skipped for $pc because the phone's list of available frequencies could not be read"; pv=""
       fi
+      # (controls missing altogether: keep the value, apply_domain reports "controls not found")
     fi
     echo "${s}_${c}_${k}=$pv" >> "$CFG.tmp"
   done; done; done

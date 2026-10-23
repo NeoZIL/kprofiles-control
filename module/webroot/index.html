@@ -321,7 +321,7 @@ select{width:100%;font:inherit;font-size:.9rem;color:var(--text);background:var(
       if (failed) {
         setMsg((out || r.stderr || "That did not work.").trim(), "err");
       } else if (warns.length) {
-        setMsg("Applied, but the kernel did not accept everything:\n" + warns.join("\n"), "warn");
+        setMsg("Applied, with a warning:\n" + warns.join("\n"), "warn");
       } else {
         setMsg(okText, "ok");
       }

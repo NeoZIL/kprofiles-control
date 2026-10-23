@@ -1,5 +1,24 @@
 # Changelog
 
+## v1.1.3
+- Fix: disabling or removing the module in the manager now hands the limits back. The watcher
+  used to keep re-applying them until the next reboot, because the manager only drops a marker
+  file. The watcher now looks for `disable` / `remove` in the module folder.
+- The screen watcher reads the brightness with shell built-ins instead of starting `cat` and a
+  subshell every second (about 30% fewer processes started while the screen is off).
+- Presets fail closed: a value is also skipped, with a warning, when the controls exist but
+  the phone's list of available frequencies cannot be read. Missing controls still report
+  "controls not found".
+- Stock and Apply now warn when the phone's own limits were never recorded (kernel Battery was
+  on before the first recording), instead of silently leaving the caps in place until a reboot.
+- `uninstall.sh` always deletes `/data/adb/kprofiles_ui`; a stray `CFG_DIR` in the environment
+  can no longer redirect `rm -rf`.
+- The page says "Applied, with a warning" (not "the kernel did not accept") because warnings can
+  also come from skipped preset values or missing stock values.
+- Tests: disable and remove markers, unreadable and empty lists, the missing-stock warning,
+  stray `CFG_DIR`, brightness reading. Each new test was checked by deliberately breaking the
+  code. README: who controls what, and a short on-phone check of the kernel profile modes.
+
 ## v1.1.2
 - New **Reset everything** button (and `tune.sh resetall`): Stock limits and the kernel profile
   set to None. The Stock preset text now says it only covers the CPU/GPU limits.
