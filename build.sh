@@ -14,7 +14,9 @@ printf '%s\n' "$VER" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$' ||
   { echo "build: bad version '$VER' in module.prop (expected vMAJOR.MINOR.PATCH, e.g. v1.1.4)" >&2; exit 1; }
 # versionCode: a canonical positive integer (no sign, no leading zero, no zero) that fits the
 # signed 32-bit range (so any parser reads it exactly). Leading zeros would make update.json invalid JSON.
-printf '%s\n' "$CODE" | grep -Eq '^[1-9][0-9]{0,9}$' && [ "$CODE" -le 2147483647 ] ||
+# The range check uses expr, not [ -le ]: mksh's built-in test does 32-bit arithmetic, so 2147483648 wraps
+# negative there and would wrongly pass.
+printf '%s\n' "$CODE" | grep -Eq '^[1-9][0-9]{0,9}$' && expr "$CODE" \<= 2147483647 >/dev/null ||
   { echo "build: versionCode '$CODE' must be a whole number from 1 to 2147483647 without leading zeros" >&2; exit 1; }
 OUT="dist/Kprofiles-Control-${VER}.zip"
 
