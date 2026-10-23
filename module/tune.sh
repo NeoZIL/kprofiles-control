@@ -27,6 +27,8 @@ upper() {
   esac
 }
 
+lower() { case "$1" in LITTLE) echo little ;; BIG) echo big ;; PRIME) echo prime ;; GPU) echo gpu ;; esac; }
+
 dom_dir() {
   case "$1" in
     little) echo "$CPUFREQ/policy0" ;; big) echo "$CPUFREQ/policy3" ;;
@@ -214,7 +216,14 @@ cmd_preset() {
   mkdir -p "$CFG_DIR" 2>/dev/null
   { echo "ENABLED=$P_ENABLED"; echo "SCREENOFF=$P_SCREENOFF"; echo "PRESET=$1"; } > "$CFG.tmp"
   for s in ON OFF; do for c in LITTLE BIG PRIME GPU; do for k in MIN MAX; do
-    eval "pv=\$P_${s}_${c}_${k}"; echo "${s}_${c}_${k}=$pv" >> "$CFG.tmp"
+    eval "pv=\$P_${s}_${c}_${k}"
+    if [ -n "$pv" ]; then
+      pc=$(lower "$c"); pl=$(rd "$(avail_node "$pc")")
+      if [ -n "$pl" ] && ! list_has "$pc" "$pv"; then
+        echo "warn: preset value $pv is not available for $pc on this phone, skipped"; pv=""
+      fi
+    fi
+    echo "${s}_${c}_${k}=$pv" >> "$CFG.tmp"
   done; done; done
   mv "$CFG.tmp" "$CFG"
   cmd_apply

@@ -24,6 +24,14 @@ mkfake() {
 }
 export CPUFREQ_DIR="$T/cpufreq" GPU_DIR="$T/gpu" BL_PATH="$T/bl/brightness" CFG_DIR="$T/cfg" TUNE_NO_DAEMON=1
 v() { cat "$T/$1"; }
+waitfor() { # name expected file seconds   (poll instead of a fixed sleep, so slow runners do not flake)
+  i=0
+  while [ "$i" -lt "$4" ]; do
+    if [ "$(cat "$T/$3")" = "$2" ]; then echo "ok   $1"; return; fi
+    sleep 1; i=$((i + 1))
+  done
+  echo "FAIL $1: expected '$2' got '$(cat "$T/$3")'"; fail=1
+}
 S() { sh "$TUNE" "$@"; }
 
 mkfake
@@ -113,16 +121,35 @@ echo "--- background watcher ---"
 mkfake; unset TUNE_NO_DAEMON
 export TUNE_POLL_ON=1 TUNE_POLL_OFF=1 TUNE_REASSERT=3
 S preset tilt >/dev/null
-sleep 1
-out=$(S status); has "watcher running" "daemon=1" "$out"
-echo 0 > "$T/bl/brightness"; sleep 3
-check "watcher: screen off applied" 1017600 "$(v cpufreq/policy0/scaling_max_freq)"
-echo 120 > "$T/bl/brightness"; sleep 3
-check "watcher: screen on restored" 2016000 "$(v cpufreq/policy0/scaling_max_freq)"
-echo 2572800 > "$T/cpufreq/policy3/scaling_max_freq"; sleep 5     # something outside changes our limit
-check "watcher: drift re-asserted" 2188800 "$(v cpufreq/policy3/scaling_max_freq)"
-S cfg ENABLED 0 >/dev/null; sleep 2
-out=$(S status); has "watcher stopped after disable" "daemon=0" "$out"
-check "disable restored big max" 2572800 "$(v cpufreq/policy3/scaling_max_freq)"
+i=0; while [ "$i" -lt 10 ]; do out=$(S status); case "$out" in *daemon=1*) break ;; esac; sleep 1; i=$((i + 1)); done
+has "watcher running" "daemon=1" "$out"
+echo 0 > "$T/bl/brightness"
+waitfor "watcher: screen off applied" 1017600 cpufreq/policy0/scaling_max_freq 15
+echo 120 > "$T/bl/brightness"
+waitfor "watcher: screen on restored" 2016000 cpufreq/policy0/scaling_max_freq 15
+echo 2572800 > "$T/cpufreq/policy3/scaling_max_freq"      # something outside changes our limit
+waitfor "watcher: drift re-asserted" 2188800 cpufreq/policy3/scaling_max_freq 20
+S cfg ENABLED 0 >/dev/null
+i=0; while [ "$i" -lt 10 ]; do out=$(S status); case "$out" in *daemon=0*) break ;; esac; sleep 1; i=$((i + 1)); done
+has "watcher stopped after disable" "daemon=0" "$out"
+waitfor "disable restored big max" 2572800 cpufreq/policy3/scaling_max_freq 10
+
+echo "--- preset values are checked against the phone's own list ---"
+mkfake; TUNE_NO_DAEMON=1
+sed -i 's/ 1017600//' "$T/cpufreq/policy0/scaling_available_frequencies"   # this phone lacks 1017600
+out=$(S preset tilt); has "preset skips unavailable value" "warn: preset value 1017600 is not available for little" "$out"
+check "skipped value not saved" "" "$(sed -n 's/^OFF_LITTLE_MAX=//p' "$T/cfg/tune.conf")"
+check "valid preset values still applied" 2188800 "$(v cpufreq/policy3/scaling_max_freq)"
+
+echo "--- boot order: record stock values BEFORE the kernel profile is applied ---"
+SVC="$HERE/../module/service.sh"
+a=$(grep -n 'tune.sh" boot' "$SVC" | head -n 1 | cut -d: -f1); b=$(grep -n 'kp.sh" apply' "$SVC" | head -n 1 | cut -d: -f1)
+if [ -n "$a" ] && [ -n "$b" ] && [ "$a" -le "$b" ] && [ "$(sed -n "${a}p" "$SVC" | grep -c 'kp.sh')" -ge 0 ]; then
+  # on one line: tune boot must come first in the command list
+  line=$(grep 'tune.sh" boot' "$SVC" | head -n 1)
+  case "$line" in *'tune.sh" boot'*'kp.sh" apply'*) echo "ok   service.sh runs tune boot before kp apply" ;; *) echo "FAIL service.sh order"; fail=1 ;; esac
+else
+  echo "FAIL service.sh lines not found"; fail=1
+fi
 
 [ "$fail" = 0 ] && echo "all tune tests passed" || { echo "SOME TESTS FAILED"; exit 1; }

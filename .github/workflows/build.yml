@@ -16,10 +16,38 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Self-test (fake sysfs)
+      - name: Install test shells and ShellCheck
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq mksh busybox-static shellcheck
+
+      - name: ShellCheck
+        run: shellcheck -s sh -S warning -e SC1090,SC2154,SC2034 module/*.sh tests/*.sh build.sh
+
+      - name: Self-test (dash)
         run: |
           sh tests/kp-test.sh
           sh tests/tune-test.sh
+
+      - name: Self-test (mksh, the shell Android uses)
+        run: |
+          mkdir -p "$RUNNER_TEMP/shim-mksh"
+          ln -sf "$(command -v mksh)" "$RUNNER_TEMP/shim-mksh/sh"
+          PATH="$RUNNER_TEMP/shim-mksh:$PATH" mksh tests/kp-test.sh
+          PATH="$RUNNER_TEMP/shim-mksh:$PATH" mksh tests/tune-test.sh
+
+      - name: Self-test (busybox ash)
+        run: |
+          mkdir -p "$RUNNER_TEMP/shim-bb"
+          ln -sf "$(command -v busybox)" "$RUNNER_TEMP/shim-bb/sh"
+          PATH="$RUNNER_TEMP/shim-bb:$PATH" busybox sh tests/kp-test.sh
+          PATH="$RUNNER_TEMP/shim-bb:$PATH" busybox sh tests/tune-test.sh
+
+      - name: Tag matches module version (tags only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          ver=$(sed -n 's/^version=//p' module/module.prop)
+          [ "$ver" = "$GITHUB_REF_NAME" ] || { echo "tag $GITHUB_REF_NAME does not match module.prop version $ver"; exit 1; }
 
       - name: Build zip
         run: sh build.sh

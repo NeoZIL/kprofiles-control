@@ -61,6 +61,10 @@ kernel code reacts to it. Reading the kernel source, this is what each mode does
 | Battery (1) | little cores capped at about 1.59 GHz, big cores about 1.29 GHz, prime core held at its lowest speed, always on |
 | Performance (3) | no CPU caps; the GPU can no longer be slowed by the thermal controller |
 
+The Battery mode lowers the value `scaling_max_freq` reports, so at boot the module saves
+the phone's own limits **before** it applies the kernel profile. If you ever see a stock
+value that looks capped, set the kernel profile to None, reboot, and let it save again.
+
 The driver also has an `auto_kp` switch, but this kernel never reads it, so it does
 nothing. The module no longer shows it.
 
@@ -90,17 +94,18 @@ sh tests/tune-test.sh   # frequency script and screen watcher, fake sysfs
 sh build.sh             # writes dist/Kprofiles-Control-<version>.zip
 ```
 
-GitHub Actions runs the same steps on every push. Push a tag such as `v1.1` to
-publish a release with the zip attached.
+GitHub Actions runs ShellCheck, then both tests under dash, **mksh** (the shell Android
+uses) and busybox ash, and checks that a pushed tag matches the `version` in
+`module.prop`. Push a tag such as `v1.1.1` to publish a release with the zip attached.
 
 ## Status
 
-v1.0 is confirmed working by the author on a POCO F6 (`peridot`) with the Theettam
-6.1.176 kernel and KernelSU-Next 3.4.2. v1.1 passes its off-device tests (script logic
-against a fake copy of the phone's frequency tables, and the page in a simulated
-browser) but has not been confirmed on a phone yet. Android or Xiaomi services may
-override some values. Every write is checked and the page shows a warning if the
-kernel did not accept it. Please open an issue with that message.
+v1.0 and v1.1 are confirmed working by the author on a POCO F6 (`peridot`) with the
+Theettam 6.1.176 kernel and KernelSU-Next 3.4.2. v1.1.1 passes its off-device tests (script
+logic against a fake copy of the phone's frequency tables, under dash, mksh and busybox
+ash, and the page in a simulated browser). Android or Xiaomi services may override some
+values. Every write is checked and the page shows a warning if the kernel did not accept
+it. Please open an issue with that message.
 
 ## License
 
