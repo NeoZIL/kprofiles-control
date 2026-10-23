@@ -29,7 +29,15 @@ LOG='# Changelog
 '
 mk "$PROP" "$LOG"
 ( cd "$T/r" && REPO=me/mod sh build.sh >/dev/null 2>&1 ); check "build succeeds" 0 $?
-check "zip name"        "Kprofiles-Control-v2.3.4.zip" "$(ls "$T/r/dist" | grep '\.zip$')"
+zip_name=
+zip_count=0
+for f in "$T"/r/dist/*.zip; do
+  [ -f "$f" ] || continue
+  zip_count=$((zip_count + 1))
+  zip_name=${f##*/}
+done
+check "zip name"        "Kprofiles-Control-v2.3.4.zip" "$zip_name"
+check "exactly one ZIP" 1 "$zip_count"
 check "manifest version" "v2.3.4" "$(sed -n 's/.*"version": "\(.*\)",/\1/p' "$T/r/dist/update.json")"
 check "manifest code"    "42" "$(sed -n 's/.*"versionCode": \([0-9]*\),/\1/p' "$T/r/dist/update.json")"
 check "manifest zipUrl"  "https://github.com/me/mod/releases/download/v2.3.4/Kprofiles-Control-v2.3.4.zip" \
@@ -59,12 +67,22 @@ mk "$PROP" "# Changelog
 - other
 "
 ( cd "$T/r" && sh build.sh >/dev/null 2>&1 ); check "missing changelog section fails" 1 $?
-check "no manifest left behind" 0 "$(ls "$T/r/dist" 2>/dev/null | grep -c json)"
+json_count=0
+for f in "$T"/r/dist/*.json; do
+  [ -f "$f" ] || continue
+  json_count=$((json_count + 1))
+done
+check "no manifest left behind" 0 "$json_count"
 # Every malformed versionCode / version must be refused, and must leave no manifest behind.
 refuse() { # $1 label  $2 sed expression applied to PROP
   mk "$(printf '%s' "$PROP" | sed "$2")" "$LOG"
   ( cd "$T/r" && sh build.sh >/dev/null 2>&1 ); check "$1 fails" 1 $?
-  check "$1: no manifest" 0 "$(ls "$T/r/dist" 2>/dev/null | grep -c json)"
+  json_count=0
+  for f in "$T"/r/dist/*.json; do
+    [ -f "$f" ] || continue
+    json_count=$((json_count + 1))
+  done
+  check "$1: no manifest" 0 "$json_count"
 }
 refuse "versionCode 4x"            's/^versionCode=42/versionCode=4x/'
 refuse "versionCode leading zero"  's/^versionCode=42/versionCode=0042/'
