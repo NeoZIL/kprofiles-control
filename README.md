@@ -131,7 +131,7 @@ sh build.sh             # writes dist/Kprofiles-Control-<version>.zip
 
 GitHub Actions runs ShellCheck, then both tests under dash, **mksh** (the shell Android
 uses) and busybox ash, and checks that a pushed tag matches the `version` in
-`module.prop`. Push a tag such as `v1.1.2` to publish a release with the zip attached.
+`module.prop`. Push a tag such as `v1.1.3` to publish a release with the zip attached.
 
 ## Status
 

@@ -4,6 +4,15 @@
 - Fix: disabling or removing the module in the manager now hands the limits back. The watcher
   used to keep re-applying them until the next reboot, because the manager only drops a marker
   file. The watcher now looks for `disable` / `remove` in the module folder.
+- Fix: stopping and restarting the watcher quickly could leave the new one without its pid file
+  (the old one deleted it as it woke up), so the page showed "not running" while a watcher was
+  running. The watcher now reacts to a stop at once, removes the pid file only if it is still
+  its own, and Stop waits until the old one has really gone. Stop also signals only a process
+  that is recognisably the watcher, never whatever a stale pid file names.
+- Fix: the boot-time recording of the phone's own limits no longer takes a reading while the
+  kernel Battery profile is on. It keeps the earlier record instead, or records nothing.
+- Reset everything now sets the kernel profile to None first, then restores the limits, and
+  reports an error if the kernel profile could not be changed (the limits are still restored).
 - The screen watcher reads the brightness with shell built-ins instead of starting `cat` and a
   subshell every second (about 30% fewer processes started while the screen is off).
 - Presets fail closed: a value is also skipped, with a warning, when the controls exist but
@@ -11,13 +20,15 @@
   "controls not found".
 - Stock and Apply now warn when the phone's own limits were never recorded (kernel Battery was
   on before the first recording), instead of silently leaving the caps in place until a reboot.
-- `uninstall.sh` always deletes `/data/adb/kprofiles_ui`; a stray `CFG_DIR` in the environment
-  can no longer redirect `rm -rf`.
+- `uninstall.sh` deletes the fixed folder `/data/adb/kprofiles_ui` and reads nothing from the
+  environment.
 - The page says "Applied, with a warning" (not "the kernel did not accept") because warnings can
   also come from skipped preset values or missing stock values.
-- Tests: disable and remove markers, unreadable and empty lists, the missing-stock warning,
-  stray `CFG_DIR`, brightness reading. Each new test was checked by deliberately breaking the
-  code. README: who controls what, and a short on-phone check of the kernel profile modes.
+- Tests: disable and remove markers, watcher stop/restart/exit, boot with the Battery profile on,
+  Reset everything with a failing profile node, unreadable and empty lists, the missing-stock
+  warning, the shipped uninstall script, brightness reading. Each new test was checked by
+  deliberately breaking the code. README: who controls what, and a short on-phone check of the
+  kernel profile modes.
 
 ## v1.1.2
 - New **Reset everything** button (and `tune.sh resetall`): Stock limits and the kernel profile

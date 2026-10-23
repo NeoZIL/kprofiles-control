@@ -154,7 +154,10 @@ out=$(S status); has "resetall: limits disabled" "enabled=0" "$out"
 echo "--- uninstall restores limits, resets the kernel profile, removes saved settings ---"
 mkfake; S preset tilt >/dev/null; sh "$HERE/../module/kp.sh" mode 3 >/dev/null
 check "performance profile set" 3 "$(v kp/kp_mode)"
-KPUI_TEST_CFG_DIR="$T/cfg" sh "$HERE/../module/uninstall.sh"
+# the shipped script deletes a fixed path, so run a copy whose target is the fixture folder
+rm -rf "$T/modu"; cp -r "$HERE/../module" "$T/modu"
+sed "s#/data/adb/kprofiles_ui#$T/cfg#" "$HERE/../module/uninstall.sh" > "$T/modu/uninstall.sh"
+sh "$T/modu/uninstall.sh"
 check "uninstall: big max restored" 2572800 "$(v cpufreq/policy3/scaling_max_freq)"
 check "uninstall: prime max restored" 2668800 "$(v cpufreq/policy7/scaling_max_freq)"
 check "uninstall: gpu max restored" 900000000 "$(v gpu/max_freq)"
@@ -199,10 +202,9 @@ else
   echo "FAIL service.sh lines not found"; fail=1
 fi
 
-echo "--- uninstall never deletes a folder named by a stray CFG_DIR ---"
-mkfake; mkdir -p "$T/precious"; echo keep > "$T/precious/file"
-CFG_DIR="$T/precious" sh "$HERE/../module/uninstall.sh"
-check "stray CFG_DIR survives uninstall" "keep" "$(cat "$T/precious/file" 2>/dev/null)"
+echo "--- the shipped uninstall.sh deletes one fixed folder and reads nothing from the environment ---"
+check "uninstall.sh: fixed delete target" 1 "$(grep -c '^rm -rf /data/adb/kprofiles_ui$' "$HERE/../module/uninstall.sh")"
+check "uninstall.sh: no variable in any rm line" 0 "$(grep 'rm ' "$HERE/../module/uninstall.sh" | grep -c '\$')"
 
 echo "--- preset check fails closed when the list cannot be read ---"
 mkfake; rm -f "$T/cpufreq/policy3/scaling_available_frequencies"      # controls exist, list is gone
@@ -246,5 +248,57 @@ echo 1 > "$T/bl/brightness"; out=$(S status); has "lowest brightness is still sc
 # the watcher polls every second, so the check must not start processes (the old $(cat ...) started two)
 check "watcher reads brightness with built-ins only" 0 "$(grep -c 'st=\$(screen_state)' "$TUNE")"
 check "brightness is not read through cat" 0 "$(sed -n '/^scr_get()/,/^}/p' "$TUNE" | grep -c 'cat \|rd ')"
+
+echo "--- boot never records a capped reading as stock ---"
+mkfake; S boot >/dev/null                                               # a normal boot records the real values
+check "boot with profile 0: recorded" 2572800 "$(sed -n 's/^big_max=//p' "$T/cfg/defaults")"
+echo 1 > "$T/kp/kp_mode"; echo 1286400 > "$T/cpufreq/policy3/scaling_max_freq"
+S boot >/dev/null
+check "boot with Battery on: earlier record kept" 2572800 "$(sed -n 's/^big_max=//p' "$T/cfg/defaults")"
+mkfake; echo 1 > "$T/kp/kp_mode"; echo 1286400 > "$T/cpufreq/policy3/scaling_max_freq"
+S boot >/dev/null
+check "boot with Battery on and no record: nothing is saved" "" "$(sed -n 's/^big_max=//p' "$T/cfg/defaults" 2>/dev/null)"
+S preset tilt >/dev/null; out=$(S preset stock); has "no record: Stock says so" "not recorded yet" "$out"
+
+echo "--- Reset everything: profile first, and failures are reported ---"
+mkfake; S preset saver >/dev/null; sh "$HERE/../module/kp.sh" mode 1 >/dev/null
+out=$(S resetall); has "resetall ok: says ok" "ok" "$out"
+check "resetall ok: profile None" 0 "$(v kp/kp_mode)"
+check "resetall ok: big max stock" 2572800 "$(v cpufreq/policy3/scaling_max_freq)"
+mkfake; S preset saver >/dev/null; rm -f "$T/kp/kp_mode"; mkdir "$T/kp/kp_mode"      # a kernel profile node that cannot be written
+S resetall >"$T/ra.out" 2>&1; rc=$?
+check "resetall: failing profile gives a non-zero exit" 1 "$rc"
+has "resetall: failing profile is reported" "error: the kernel profile could not be set to None" "$(cat "$T/ra.out")"
+check "resetall: limits still restored when the profile fails" 2572800 "$(v cpufreq/policy3/scaling_max_freq)"
+rmdir "$T/kp/kp_mode"; echo 0 > "$T/kp/kp_mode"
+mkfake; S preset saver >/dev/null; rm -rf "$T/kp"                                     # no Kprofiles in this kernel at all
+S resetall >/dev/null 2>&1; check "resetall without Kprofiles still works" 2572800 "$(v cpufreq/policy3/scaling_max_freq)"
+mkfake
+
+echo "--- watcher lifecycle: stop, restart, and exit never touch each other's pid file ---"
+unset TUNE_NO_DAEMON; export TUNE_POLL_ON=3 TUNE_POLL_OFF=3 TUNE_REASSERT=10
+mkfake; S preset tilt >/dev/null; sleep 1
+old=$(cat "$T/cfg/daemon.pid"); S cfg ENABLED 0 >/dev/null
+if kill -0 "$old" 2>/dev/null; then echo "FAIL stop waits for the old watcher to exit"; fail=1; else echo "ok   stop waits for the old watcher to exit"; fi
+S preset tilt >/dev/null; sleep 1
+new=$(cat "$T/cfg/daemon.pid" 2>/dev/null)
+sleep 4                                                                 # longer than a poll: any late cleanup of the old one has happened
+check "new watcher keeps its pid file" "$new" "$(cat "$T/cfg/daemon.pid" 2>/dev/null)"
+out=$(S status); has "status still sees the new watcher" "daemon=1" "$out"
+S cfg ENABLED 0 >/dev/null
+out=$(S status); has "stopped for good" "daemon=0" "$out"
+echo "--- an exiting watcher leaves a pid file that names someone else alone ---"
+mkfake; S preset tilt >/dev/null; sleep 1
+w=$(cat "$T/cfg/daemon.pid"); echo 4242424 > "$T/cfg/daemon.pid"        # another watcher has taken over the file
+kill "$w"; sleep 1
+check "foreign pid file survives the old watcher's exit" 4242424 "$(cat "$T/cfg/daemon.pid" 2>/dev/null)"
+rm -f "$T/cfg/daemon.pid"
+echo "--- a stale pid file never makes stop signal an unrelated process ---"
+sleep 300 & bystander=$!
+mkfake; mkdir -p "$T/cfg"; echo "$bystander" > "$T/cfg/daemon.pid"
+S stop >/dev/null
+if kill -0 "$bystander" 2>/dev/null; then echo "ok   unrelated process left alone"; else echo "FAIL unrelated process was killed"; fail=1; fi
+kill "$bystander" 2>/dev/null
+export TUNE_NO_DAEMON=1
 
 [ "$fail" = 0 ] && echo "all tune tests passed" || { echo "SOME TESTS FAILED"; exit 1; }

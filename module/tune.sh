@@ -68,8 +68,10 @@ capture_defaults() {
   if [ "$1" != force ]; then
     [ -f "$DEF" ] && return 0                    # already recorded
     [ -s "$APPLIED" ] && return 0                # our own limits are in place: would record them as stock
-    [ "$(rd "$KPNODE")" = 1 ] && return 0        # kernel Battery profile lowers the values we read
   fi
+  # The kernel Battery profile lowers the values we read, so a reading taken now is not stock.
+  # This holds for the forced boot-time capture too: keep whatever was recorded before, or nothing.
+  [ "$(rd "$KPNODE")" = 1 ] && return 0
   mkdir -p "$CFG_DIR" 2>/dev/null
   : > "$DEF.tmp"
   for c in $CLUSTERS; do for k in min max; do
@@ -142,14 +144,28 @@ start_daemon() {
   fi
   return 0
 }
+# Stop the watcher and wait until it has really gone, so a new one can never be started while the
+# old one is still on its way out. Only a process that daemon_alive recognises is signalled.
 stop_daemon() {
-  if [ -f "$PIDF" ]; then kill "$(cat "$PIDF")" 2>/dev/null; rm -f "$PIDF"; fi
+  if daemon_alive; then
+    sdp=$dp
+    kill "$sdp" 2>/dev/null
+    i=0
+    while kill -0 "$sdp" 2>/dev/null && [ "$i" -lt 30 ]; do
+      sleep 0.1 2>/dev/null || { sleep 1; i=$((i + 9)); }
+      i=$((i + 1))
+    done
+  fi
+  rm -f "$PIDF"
   return 0
 }
+# An exiting watcher removes the pid file only if it still names this very process.
+pidf_release() { [ "$(cat "$PIDF" 2>/dev/null)" = "$$" ] && rm -f "$PIDF"; return 0; }
 run_daemon() {
   mkdir -p "$CFG_DIR" 2>/dev/null
   echo $$ > "$PIDF"
-  trap 'rm -f "$PIDF"; exit 0' TERM INT
+  sp=""
+  trap 'kill "$sp" 2>/dev/null; pidf_release; exit 0' TERM INT
   last=""; n=0
   while :; do
     load_cfg
@@ -163,9 +179,11 @@ run_daemon() {
       apply_state "$st" >/dev/null; last=$st; n=0
     fi
     n=$((n + 1))
-    if [ "$st" = off ]; then sleep "$POLL_OFF"; else sleep "$POLL_ON"; fi
+    if [ "$st" = off ]; then nap=$POLL_OFF; else nap=$POLL_ON; fi
+    sleep "$nap" & sp=$!       # wait, not a plain sleep: a stop signal is then handled at once
+    wait "$sp"
   done
-  rm -f "$PIDF"
+  pidf_release
 }
 
 # ---------- commands ----------
@@ -180,8 +198,8 @@ cmd_apply() {
   else
     capture_defaults
     [ -f "$DEF" ] || [ ! -s "$APPLIED" ] || echo "$NOSTOCK"
-    apply_state none
     stop_daemon
+    apply_state none
   fi
   return 0
 }
@@ -252,10 +270,16 @@ cmd_preset() {
   cmd_apply
 }
 
-cmd_resetall() { # stock limits AND kernel profile back to None
-  cmd_preset stock
-  [ -e "$KPNODE" ] && sh "$MODDIR/kp.sh" mode 0 >/dev/null 2>&1
-  return 0
+cmd_resetall() { # kernel profile back to None first (so nothing holds the limits down), then stock limits
+  ra_rc=0
+  if [ -e "$KPNODE" ]; then
+    if ! ra_out=$(sh "$MODDIR/kp.sh" mode 0 2>&1); then
+      ra_msg=$(printf '%s\n' "$ra_out" | head -n 1); ra_msg=${ra_msg#error: }
+      echo "error: the kernel profile could not be set to None: ${ra_msg:-no answer from kp.sh}"; ra_rc=1
+    fi
+  fi
+  cmd_preset stock || ra_rc=1
+  return "$ra_rc"
 }
 
 cmd_boot() {
