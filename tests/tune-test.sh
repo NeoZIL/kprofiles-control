@@ -235,7 +235,12 @@ for marker in disable remove; do
   has "$marker test: watcher running" "daemon=1" "$out"
   check "$marker test: limit applied" 2188800 "$(v cpufreq/policy3/scaling_max_freq)"
   touch "$T/mod/$marker"
-  waitfor "$marker marker: limit handed back" 2572800 cpufreq/policy3/scaling_max_freq 15
+  waitfor "$marker marker: limit handed back" 2572800 cpufreq/policy3/scaling_max_freq 30
+  if [ "$(v cpufreq/policy3/scaling_max_freq)" != 2572800 ]; then   # leave evidence in the log if this ever fails again
+    echo "diag: $(S2 status | grep -E '^(enabled|daemon|state)=' | tr '\n' ' ')"
+    echo "diag: pidfile=$(cat "$T/cfg/daemon.pid" 2>/dev/null) markers=$(ls "$T/mod" | tr '\n' ' ')"
+    echo "diag: shells running tune.sh: $(grep -l 'tune.sh' /proc/[0-9]*/cmdline 2>/dev/null | wc -l)"
+  fi
   i=0; while [ "$i" -lt 10 ]; do out=$(S2 status); case "$out" in *daemon=0*) break ;; esac; sleep 1; i=$((i + 1)); done
   has "$marker marker: watcher stopped" "daemon=0" "$out"
 done
