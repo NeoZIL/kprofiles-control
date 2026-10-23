@@ -69,7 +69,7 @@ select{width:100%;font:inherit;font-size:.9rem;color:var(--text);background:var(
 <body>
 <main>
   <h1>Kprofiles Control</h1>
-  <p class="sub">CPU and GPU speed limits, plus the kernel profile.</p>
+  <p class="sub">CPU and GPU speed limits, plus the kernel profile. <span id="ver"></span></p>
 
   <div id="msg" role="status" aria-live="polite"></div>
 
@@ -360,6 +360,10 @@ select{width:100%;font:inherit;font-size:.9rem;color:var(--text);background:var(
   });
 
   /* ---------- start ---------- */
+  exec("tr -d '\\r' < " + BASE + "module.prop | sed -n 's/^version=//p' | head -n 1").then(function (r) {
+    var v = (r.stdout || "").trim();
+    if (r.errno === 0 && /^v[0-9][0-9.]*$/.test(v)) $("ver").textContent = "Installed: " + v;
+  });
   T("lists").then(function (r) {
     if (r.errno !== 0 || r.stdout.indexOf("=") < 0) {
       setMsg((r.stderr || r.stdout || "Could not read the available frequencies.").trim(), "err");

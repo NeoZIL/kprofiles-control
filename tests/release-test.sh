@@ -1,0 +1,206 @@
+#!/bin/sh
+# Off-device test of release.sh with a fake gh, git, curl and sleep (no network, no GitHub).
+HERE=$(cd "$(dirname "$0")" && pwd)
+T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
+fail=0
+check() { if [ "$2" = "$3" ]; then echo "ok   $1"; else echo "FAIL $1: expected '$2' got '$3'"; fail=1; fi; }
+
+F="$T/fake"; mkdir -p "$T/bin"
+# fake gh: state lives in files under $FAKE (latest, state_<tag>, assets_<tag> holding "name size"
+# lines, upload_fail, calls). It mimics the real gh where it matters: "release not found" is printed
+# only when there really is no such release; FAKE_GH_FAIL=latest|tag simulates a transient API/network
+# error on that lookup; an upload without --clobber refuses a name that already exists; and an upload
+# WITH --clobber deletes the old file first, so a failed upload leaves it missing (the real behaviour).
+cat > "$T/bin/gh" <<'GH'
+#!/bin/sh
+echo "gh $*" >> "$FAKE/calls"
+[ "$1" = release ] || exit 2
+sub=$1; shift; sub=$1; shift
+tag=""; case "$1" in --*|"") ;; *) tag=$1; shift ;; esac
+json=""; prev=""; clobber=""
+for a in "$@"; do [ "$prev" = --json ] && json=$a; [ "$a" = --clobber ] && clobber=1; prev=$a; done
+notfound() { echo "release not found" >&2; exit 1; }
+neterr() { echo "error connecting to api.github.com" >&2; exit 1; }
+case "$sub" in
+  view)
+    if [ -z "$tag" ]; then
+      [ "$FAKE_GH_FAIL" = latest ] && neterr
+      [ -s "$FAKE/latest" ] || notfound
+      cat "$FAKE/latest"; exit 0
+    fi
+    [ "$FAKE_GH_FAIL" = tag ] && neterr
+    [ -f "$FAKE/state_$tag" ] || notfound
+    case "$json" in
+      isDraft) [ "$(cat "$FAKE/state_$tag")" = draft ] && echo true || echo false ;;
+      assets)  cat "$FAKE/assets_$tag" ;;
+    esac ;;
+  create) echo draft > "$FAKE/state_$tag"; : > "$FAKE/assets_$tag" ;;
+  upload)
+    names=""
+    for a in "$@"; do case "$a" in --*) ;; *) names="$names $(basename "$a")" ;; esac; done
+    if [ -z "$clobber" ]; then
+      for n in $names; do
+        if grep -q "^$n " "$FAKE/assets_$tag"; then echo "a release with the same name already exists: $n" >&2; exit 1; fi
+      done
+    else
+      for n in $names; do grep -v "^$n " "$FAKE/assets_$tag" > "$FAKE/tmp"; mv "$FAKE/tmp" "$FAKE/assets_$tag"; done
+    fi
+    n=$(cat "$FAKE/upload_fail" 2>/dev/null || echo 0)
+    if [ "$n" -gt 0 ]; then echo $((n - 1)) > "$FAKE/upload_fail"; exit 1; fi
+    for a in "$@"; do case "$a" in --*) ;; *) echo "$(basename "$a") $(wc -c < "$a" | tr -d ' ')" >> "$FAKE/assets_$tag" ;; esac; done ;;
+  edit)
+    for a in "$@"; do
+      case "$a" in
+        --draft=false) echo published > "$FAKE/state_$tag" ;;
+        --latest|--latest=true) echo "$tag" > "$FAKE/latest" ;;
+      esac
+    done ;;
+esac
+exit 0
+GH
+cat > "$T/bin/git" <<'GIT'
+#!/bin/sh
+# git show <tag>:module/module.prop  ->  the versionCode recorded for that tag
+ref=${2%%:*}
+[ -f "$FAKE/props_$ref" ] || exit 128
+cat "$FAKE/props_$ref"
+GIT
+cat > "$T/bin/curl" <<'CURL'
+#!/bin/sh
+out=""; prev=""; url=""
+for a in "$@"; do [ "$prev" = -o ] && out=$a; prev=$a; url=$a; done
+echo "curl $url" >> "$FAKE/calls"
+case "$url" in
+  */latest/download/update.json) [ -z "$FAKE_NO_MANIFEST" ] || exit 22; cp "$FAKE_DIST/update.json" "$out" ;;
+  *) [ -n "$FAKE_BAD_URL" ] && case "$url" in *"$FAKE_BAD_URL"*) exit 22 ;; esac; echo ok > "$out" ;;
+esac
+CURL
+printf '#!/bin/sh\nexit 0\n' > "$T/bin/sleep"
+chmod +x "$T/bin/"*
+
+# A built release for v2.3.4 / versionCode 42, in a scratch repo.
+R="$T/r"; mkdir -p "$R/module"
+cp "$HERE/../build.sh" "$HERE/../release.sh" "$R/"
+printf 'id=x\nversion=v2.3.4\nversionCode=42\n' > "$R/module/module.prop"
+printf '# Changelog\n\n## v2.3.4\n- thing\n' > "$R/CHANGELOG.md"
+( cd "$R" && REPO=me/mod sh build.sh >/dev/null 2>&1 )
+
+run() { # env assignments are passed as arguments: run NAME=value ...
+  ( cd "$R" && env PATH="$T/bin:$PATH" FAKE="$F" FAKE_DIST="$R/dist" GITHUB_REPOSITORY=me/mod GITHUB_REF_NAME=v2.3.4 "$@" sh release.sh >"$T/out" 2>&1 )
+}
+size() { wc -c < "$R/dist/$1" | tr -d ' '; }
+seed() { # seed TAG NAME... : the release already holds these files, with the sizes of the current build
+  t=$1; shift; for n in "$@"; do echo "$n $(size "$n")" >> "$F/assets_$t"; done
+}
+reset() { rm -rf "$F"; mkdir -p "$F"; : > "$F/calls"; }
+latest() { echo "$1" > "$F/latest"; printf 'versionCode=%s\n' "$2" > "$F/props_$1"; echo published > "$F/state_$1"; }
+calls() { grep -c "$1" "$F/calls"; }
+
+# 1. First ever release: draft, files, publish as latest, then verified.
+reset; run; check "new release: ok" 0 $?
+check "new release: created as draft"      1 "$(calls 'release create v2.3.4 --draft')"
+check "new release: no files on create"    0 "$(calls 'release create.*\.zip')"
+check "new release: 3 files attached"      "Kprofiles-Control-v2.3.4.zip update.json changelog.md" "$(cut -d' ' -f1 "$F/assets_v2.3.4" | tr '\n' ' ' | sed 's/ $//')"
+check "new release: published as latest"   1 "$(calls 'release edit v2.3.4 --draft=false --latest')"
+check "new release: manifest fetched"      1 "$(calls 'curl .*/latest/download/update.json')"
+check "new release: zip url fetched"       1 "$(calls 'curl .*/download/v2.3.4/Kprofiles-Control-v2.3.4.zip')"
+check "new release: changelog url fetched" 1 "$(calls 'curl .*/download/v2.3.4/changelog.md')"
+
+# 2. Existing draft (made by hand): filled and published, newest becomes latest.
+reset; latest v2.3.3 41; echo draft > "$F/state_v2.3.4"; : > "$F/assets_v2.3.4"
+run; check "draft: ok" 0 $?
+check "draft: not recreated"  0 "$(calls 'release create')"
+check "draft: published"      1 "$(calls 'release edit v2.3.4 .*--draft=false')"
+check "draft: is latest"      "v2.3.4" "$(cat "$F/latest")"
+
+# 3. Existing published release that is the newest: files re-attached, stays/becomes latest, never re-drafted.
+reset; latest v2.3.3 41; echo published > "$F/state_v2.3.4"; : > "$F/assets_v2.3.4"
+run; check "published: ok" 0 $?
+check "published: files attached" 3 "$(wc -l < "$F/assets_v2.3.4" | tr -d ' ')"
+check "published: not re-drafted" 0 "$(calls 'draft=false')"
+check "published: is latest"      "v2.3.4" "$(cat "$F/latest")"
+
+# 4. Re-running an OLDER tag repairs it but must not take over latest.
+reset; latest v2.4.0 50; echo published > "$F/state_v2.3.4"; : > "$F/assets_v2.3.4"
+run; check "older rerun: ok" 0 $?
+check "older rerun: files attached" 3 "$(wc -l < "$F/assets_v2.3.4" | tr -d ' ')"
+check "older rerun: latest unchanged" "v2.4.0" "$(cat "$F/latest")"
+check "older rerun: no latest edit" 0 "$(calls 'release edit.*--latest')"
+reset; latest v2.4.0 50; echo draft > "$F/state_v2.3.4"; : > "$F/assets_v2.3.4"
+run; check "older draft: ok" 0 $?
+check "older draft: published, latest unchanged" "v2.4.0" "$(cat "$F/latest")"
+check "older draft: published not latest" 1 "$(calls 'release edit v2.3.4 .*--draft=false --latest=false')"
+
+# 5. A new release that does not raise versionCode is refused before anything is created.
+reset; latest v2.3.3 42
+run; check "same versionCode refused" 1 $?
+check "same versionCode: nothing created" 0 "$(calls 'release create')"
+reset; latest v2.4.0 50
+run; check "lower versionCode refused (new release)" 1 $?
+check "lower versionCode: nothing created" 0 "$(calls 'release create')"
+reset; latest v2.3.3 ""
+run; check "unreadable latest versionCode refused" 1 $?
+
+# 6. Upload trouble: retried, and a release whose upload never works is never published.
+reset; echo 2 > "$F/upload_fail"
+run; check "upload retried: ok" 0 $?
+check "upload retried: published" 1 "$(calls 'draft=false')"
+reset; echo 9 > "$F/upload_fail"
+run; check "upload keeps failing: fails" 1 $?
+check "upload keeps failing: still a draft" "draft" "$(cat "$F/state_v2.3.4")"
+check "upload keeps failing: never published" 0 "$(calls 'draft=false')"
+
+# 7. Post-release check catches a release that resolves wrongly.
+reset; run FAKE_BAD_URL=Kprofiles-Control-v2.3.4.zip; check "unresolvable zip fails the job" 1 $?
+reset; run FAKE_NO_MANIFEST=1;                         check "unresolvable manifest fails the job" 1 $?
+
+# 9. A failed look-up of the latest release is an error, never "there is no latest release".
+#    (Before the fix an API/network hiccup here let an older release be promoted to latest.)
+reset; latest v2.4.0 50; echo published > "$F/state_v2.3.4"; : > "$F/assets_v2.3.4"
+run FAKE_GH_FAIL=latest; check "latest look-up fails: job fails" 1 $?
+check "latest look-up fails: nothing uploaded"   0 "$(calls 'release upload')"
+check "latest look-up fails: nothing edited"     0 "$(calls 'release edit')"
+check "latest look-up fails: latest unchanged"   "v2.4.0" "$(cat "$F/latest")"
+reset; latest v2.3.3 41
+run FAKE_GH_FAIL=latest; check "latest look-up fails (new release): job fails" 1 $?
+check "latest look-up fails (new release): nothing created" 0 "$(calls 'release create')"
+# ...while a genuine "release not found" still means a first release (test 1 above).
+
+# 10. A failed look-up of this tag's release is an error too, not "it does not exist".
+reset; latest v2.3.3 41; echo published > "$F/state_v2.3.4"; seed v2.3.4 Kprofiles-Control-v2.3.4.zip update.json changelog.md
+run FAKE_GH_FAIL=tag; check "tag look-up fails: job fails" 1 $?
+check "tag look-up fails: nothing created"  0 "$(calls 'release create')"
+check "tag look-up fails: nothing uploaded" 0 "$(calls 'release upload')"
+
+# 11. Published releases are never clobbered: only missing files are attached, nothing is deleted.
+reset; latest v2.3.3 41; echo published > "$F/state_v2.3.4"; : > "$F/assets_v2.3.4"
+seed v2.3.4 update.json changelog.md
+run; check "published, zip missing: ok" 0 $?
+check "published, zip missing: only the zip uploaded" 1 "$(calls 'release upload v2.3.4 dist/Kprofiles-Control-v2.3.4.zip$')"
+check "published, zip missing: no --clobber"          0 "$(calls 'upload.*clobber')"
+check "published, zip missing: 3 files now"           3 "$(wc -l < "$F/assets_v2.3.4" | tr -d ' ')"
+reset; latest v2.3.3 41; echo published > "$F/state_v2.3.4"; : > "$F/assets_v2.3.4"
+seed v2.3.4 Kprofiles-Control-v2.3.4.zip update.json changelog.md; echo 9 > "$F/upload_fail"
+run; check "published, all present: ok even if uploads would fail" 0 $?
+check "published, all present: no upload at all" 0 "$(calls 'release upload')"
+check "published, all present: files untouched"  3 "$(wc -l < "$F/assets_v2.3.4" | tr -d ' ')"
+reset; latest v2.3.3 41; echo published > "$F/state_v2.3.4"; : > "$F/assets_v2.3.4"
+seed v2.3.4 update.json changelog.md; echo 9 > "$F/upload_fail"
+run; check "published, upload keeps failing: job fails" 1 $?
+check "published, upload keeps failing: existing files NOT lost" 2 "$(wc -l < "$F/assets_v2.3.4" | tr -d ' ')"
+reset; latest v2.3.3 41; echo published > "$F/state_v2.3.4"; : > "$F/assets_v2.3.4"
+seed v2.3.4 Kprofiles-Control-v2.3.4.zip changelog.md; echo "update.json 1" >> "$F/assets_v2.3.4"
+run; check "published, file differs from build: refused" 1 $?
+check "published, file differs: nothing uploaded"  0 "$(calls 'release upload')"
+check "published, file differs: file kept"         1 "$(grep -c '^update.json 1$' "$F/assets_v2.3.4")"
+# A draft is not public, so there --clobber is fine and a stale file is replaced.
+reset; latest v2.3.3 41; echo draft > "$F/state_v2.3.4"; : > "$F/assets_v2.3.4"
+echo "update.json 1" >> "$F/assets_v2.3.4"
+run; check "draft with stale file: ok" 0 $?
+check "draft with stale file: replaced with --clobber" 1 "$(calls 'upload.*clobber')"
+check "draft with stale file: new update.json attached" 1 "$(grep -c "^update.json $(size update.json)$" "$F/assets_v2.3.4")"
+
+# 8. Missing build output is refused.
+reset; rm -f "$R/dist/changelog.md"; run; check "missing file refused" 1 $?
+
+[ "$fail" = 0 ] && echo "all tests passed" || { echo "SOME TESTS FAILED"; exit 1; }

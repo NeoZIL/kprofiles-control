@@ -110,6 +110,42 @@ nothing. The module no longer shows it.
 2. In the KernelSU-Next manager open **Modules**, install the zip, then reboot.
 3. Open the module and tap **WebUI**.
 
+## Updating
+
+From v1.1.4 on, the module updates itself through the KernelSU-Next manager. Its `module.prop`
+has an `updateJson` link that points at `update.json` on the newest GitHub release. When a newer
+version is published, the module in the manager's **Modules** list shows an update button with the
+release notes. Tap it, let it install, then reboot. Your settings are kept.
+
+- The first install of v1.1.4 has to be done by hand (step above), because older versions have no
+  update link.
+- The manager compares `versionCode`, so every release must raise it by at least one. The release
+  step refuses a `versionCode` that is not higher than the current latest release's.
+- The installed version is shown under the title in the WebUI.
+- Nothing is downloaded in the background, and the module itself never uses the network. The
+  manager does the check and the download, and only when you open it.
+
+## Releasing (maintainers)
+
+1. Raise `version` (exactly `vMAJOR.MINOR.PATCH`) and `versionCode` (a whole number, higher than the
+   last release's, no leading zero) in `module/module.prop`, and add a `## <version>` section to
+   `CHANGELOG.md`. The build stops without that section; it becomes the release notes.
+2. Commit and push. When Actions is green, push a tag equal to the version (for example `v1.1.4`).
+3. Actions builds the zip and runs `release.sh`: it creates the release as a draft, attaches
+   `Kprofiles-Control-<version>.zip`, `update.json` and `changelog.md`, publishes it as the latest
+   release, then downloads `latest/download/update.json` and checks that the zip and changelog it
+   names resolve. Let the tag create the release. If you create one yourself first, the files are
+   attached, and a draft is published; but a release you publish by hand is public for a moment
+   before its files arrive.
+4. Re-running the workflow for an older tag only repairs that release's files; it does not become
+   the latest release. On a release that is already public it only attaches missing files and never
+   replaces one (a failed replacement would leave users without it); if a public file differs from
+   the build, the job stops and asks you to delete that file on the release page first.
+5. If GitHub cannot be reached while the job looks up the latest release, the job fails instead of
+   guessing. Re-run it.
+
+`sh build.sh` writes the same three files to `dist/` for a local check.
+
 ## How it works
 
 | File | Purpose |
@@ -117,6 +153,9 @@ nothing. The module no longer shows it.
 | `module/tune.sh` | Frequency limits, presets, screen watcher, restore logic |
 | `module/kp.sh` | Reads and writes the kernel Kprofiles mode |
 | `module/webroot/index.html` | The WebUI page |
+| `module/module.prop` | Version, and the `updateJson` link the manager uses to offer updates |
+| `build.sh` | Builds the zip, `update.json` and the release notes into `dist/` |
+| `release.sh` | Publishes `dist/` as a GitHub release (draft first, versionCode check, post-release check) |
 | `module/service.sh` | At boot (about 25 s after boot completes): save the phone's limits, re-apply yours |
 | `module/action.sh` | Action button: cycle presets |
 | `module/uninstall.sh` | Stops the watcher, restores the phone's limits, sets the kernel profile to None, deletes saved settings |
@@ -126,12 +165,14 @@ nothing. The module no longer shows it.
 ```
 sh tests/kp-test.sh     # kernel profile script, fake sysfs
 sh tests/tune-test.sh   # frequency script and screen watcher, fake sysfs
-sh build.sh             # writes dist/Kprofiles-Control-<version>.zip
+sh tests/build-test.sh  # zip, update manifest and release notes
+sh tests/release-test.sh  # release.sh rules against a fake gh (no network)
+sh build.sh             # writes dist/Kprofiles-Control-<version>.zip, update.json, changelog.md
 ```
 
-GitHub Actions runs ShellCheck, then both tests under dash, **mksh** (the shell Android
+GitHub Actions runs ShellCheck, then all four tests under dash, **mksh** (the shell Android
 uses) and busybox ash, and checks that a pushed tag matches the `version` in
-`module.prop`. Push a tag such as `v1.1.3` to publish a release with the zip attached.
+`module.prop`. Push a tag such as `v1.1.4` to publish a release.
 
 ## Status
 

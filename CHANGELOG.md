@@ -1,5 +1,52 @@
 # Changelog
 
+## v1.1.4
+- New: **updates straight from the KernelSU-Next manager.** The module now carries an
+  `updateJson` link. When a newer release is published on GitHub, the manager shows an update
+  button on the module (with the release notes); tap it, then reboot. Nothing to download by hand.
+- Each release now publishes three files: the module zip, `update.json` (the manifest the manager
+  reads) and `changelog.md` (the notes for that version). The manifest is a release asset, so it
+  only changes when a release is actually published and its zip is already attached.
+- The release notes are taken from this changelog instead of being auto-generated.
+- `build.sh` writes `dist/update.json` and `dist/changelog.md` next to the zip, reads
+  `module.prop` safely even with Windows line endings, and stops if this changelog has no section
+  for the version being built. The version must be exactly `vMAJOR.MINOR.PATCH` (so `v1..4`,
+  `v1.1v4`, `v1.1.`, `v1.1` and `v1.1.4-rc1` are refused), and `versionCode` must be a whole number
+  from 1 to 2147483647 with no leading zero (`0007` used to build and produce an update.json that
+  is not valid JSON). The manifest's changelog link points at that version's own `changelog.md`,
+  not at whatever release is newest.
+- Publishing moved into `release.sh`, which the workflow runs on a version tag:
+  - A new release is created as a draft, filled with the zip, `update.json` and `changelog.md`
+    (re-tried if an upload fails, and checked to be complete), and only then published, so the
+    manager never sees a release without its manifest.
+  - A draft you created by hand is filled and published the same way, instead of being left as a
+    draft that the manager cannot see. Files already on a draft are replaced, which is safe because
+    nobody can see a draft.
+  - A release that is already public only gets the files it is missing. A file that is already
+    there is never deleted or replaced: GitHub's `--clobber` removes the old file before it uploads
+    the new one, so a failed upload would leave users without it. If a public file differs from the
+    build, the job stops and tells you to delete that file on the release page and re-run.
+  - Only GitHub's "release not found" answer is taken to mean "no such release". Any other failure
+    while looking up the latest release (network, API, authentication) stops the job. Before, such a
+    failure looked like "no latest release yet" and could let an older release be made the latest.
+  - A release is refused if its `versionCode` is the same as, or lower than, the current latest
+    release's, because the manager would not offer it as an update.
+  - Re-running the workflow for an older tag repairs that release's files but never makes it the
+    latest release.
+  - After publishing, `latest/download/update.json` is downloaded and its zip and changelog links
+    are fetched. A release that does not resolve fails the job.
+- New tests, run under dash, mksh and busybox ash in CI: `tests/build-test.sh` (manifest fields
+  and JSON, release notes cut to one version, Windows line endings, refusal of a missing changelog
+  section and of 17 malformed version / versionCode values) and `tests/release-test.sh` (the
+  release rules above, run against a fake `gh`, no network). The fake `gh` behaves like the real
+  one where it matters: it reports "release not found" only when that is true, can fail like a
+  network error, and deletes the old file when a `--clobber` upload fails. Tests cover a failed
+  latest-release or tag look-up, public releases that must never be clobbered, a failed upload that
+  must not lose existing files, and a public file that differs from the build.
+- The page header shows the installed version, so you can see that an update has taken effect.
+- Updating keeps your settings (they live outside the module folder). The first install of v1.1.4
+  has to be done by hand once, because older versions have no update link.
+
 ## v1.1.3
 - Fix: disabling or removing the module in the manager now hands the limits back. The watcher
   used to keep re-applying them until the next reboot, because the manager only drops a marker

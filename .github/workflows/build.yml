@@ -15,6 +15,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # tags are needed to read the versionCode of the current latest release
 
       - name: Install test shells and ShellCheck
         run: |
@@ -22,12 +24,14 @@ jobs:
           sudo apt-get install -y -qq mksh busybox-static shellcheck
 
       - name: ShellCheck
-        run: shellcheck -s sh -S warning -e SC1090,SC2154,SC2034 module/*.sh tests/*.sh build.sh
+        run: shellcheck -s sh -S warning -e SC1090,SC2154,SC2034 module/*.sh tests/*.sh build.sh release.sh
 
       - name: Self-test (dash)
         run: |
           sh tests/kp-test.sh
           sh tests/tune-test.sh
+          sh tests/build-test.sh
+          sh tests/release-test.sh
 
       - name: Self-test (mksh, the shell Android uses)
         run: |
@@ -35,6 +39,8 @@ jobs:
           ln -sf "$(command -v mksh)" "$RUNNER_TEMP/shim-mksh/sh"
           PATH="$RUNNER_TEMP/shim-mksh:$PATH" mksh tests/kp-test.sh
           PATH="$RUNNER_TEMP/shim-mksh:$PATH" mksh tests/tune-test.sh
+          PATH="$RUNNER_TEMP/shim-mksh:$PATH" mksh tests/build-test.sh
+          PATH="$RUNNER_TEMP/shim-mksh:$PATH" mksh tests/release-test.sh
 
       - name: Self-test (busybox ash)
         run: |
@@ -42,11 +48,13 @@ jobs:
           ln -sf "$(command -v busybox)" "$RUNNER_TEMP/shim-bb/sh"
           PATH="$RUNNER_TEMP/shim-bb:$PATH" busybox sh tests/kp-test.sh
           PATH="$RUNNER_TEMP/shim-bb:$PATH" busybox sh tests/tune-test.sh
+          PATH="$RUNNER_TEMP/shim-bb:$PATH" busybox sh tests/build-test.sh
+          PATH="$RUNNER_TEMP/shim-bb:$PATH" busybox sh tests/release-test.sh
 
       - name: Tag matches module version (tags only)
         if: startsWith(github.ref, 'refs/tags/v')
         run: |
-          ver=$(sed -n 's/^version=//p' module/module.prop)
+          ver=$(tr -d '\r' < module/module.prop | sed -n 's/^version=//p')
           [ "$ver" = "$GITHUB_REF_NAME" ] || { echo "tag $GITHUB_REF_NAME does not match module.prop version $ver"; exit 1; }
 
       - name: Build zip
@@ -55,16 +63,17 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: Kprofiles-Control
-          path: dist/*.zip
+          path: |
+            dist/*.zip
+            dist/update.json
+            dist/changelog.md
           if-no-files-found: error
 
       - name: Publish release (tags only)
         if: startsWith(github.ref, 'refs/tags/v')
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            gh release upload "$GITHUB_REF_NAME" dist/*.zip --clobber
-          else
-            gh release create "$GITHUB_REF_NAME" dist/*.zip --generate-notes
-          fi
+        # See release.sh: draft first, never public without update.json, refuses a versionCode that
+        # does not go up, never lets a re-run of an older tag become "latest", and checks afterwards
+        # that latest/download/update.json and the zip and changelog it points to really resolve.
+        run: sh release.sh "$GITHUB_REF_NAME"
