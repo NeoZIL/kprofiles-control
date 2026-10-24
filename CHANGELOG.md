@@ -1,49 +1,8 @@
 # Changelog
 
-## v1.3.0
-Standalone release. The module no longer has anything to do with the kernel's Kprofiles mode, and an audit
-of an earlier v1.3.0 test build (never released) found two recovery holes that are closed here. Nothing in
-this version has been tried on a phone yet; the tests ran off-device against a fake copy of the phone's
-frequency tables.
-- Change: **standalone.** `kp.sh` is gone. The module no longer writes the kernel profile, no longer reads it,
-  no longer applies it at boot, and Stock, Reset everything and uninstall leave it alone. The WebUI has no
-  kernel-profile card any more. Keep the kernel profile at None (mode 0) while you use the limits: that is
-  the setup they were seen working in on the phone. A kernel Battery profile that is on at boot can no longer
-  be detected, so it could make the phone's own values look capped; the README says how to check the
-  recorded values once after installing. Kept as before: a minimum at or above its maximum is never recorded
-  as stock, and an unreadable value or list is never invented or treated as proof of anything.
-- Fix (audit P1): **Stock could report success without restoring a limit.** If the module had changed a
-  cluster's minimum and that cluster's *maximum* control then disappeared, `tune.sh` said "controls not
-  found", returned success and left the minimum where it was (reproduced: original 600000, actual 1000000,
-  exit 0, marker still present, and uninstall could then have deleted the recovery data). Now a control that
-  exists is still restored and verified, so the minimum goes back and the marker is cleared; a control that
-  this module changed and that is gone is a failed restore (exit 1, marker, settings and recorded values
-  kept, uninstall exits 1 and keeps its data), and a limit asked for on a control that does not exist is
-  reported as rejected and never marked or written (before, the write could create a stray file in a test
-  tree and report success).
-- Fix (audit P1): **a limit could be applied with no recorded original value.** With the old Battery-profile
-  guard, a first run could change limits while the phone's own values were on record nowhere, so Stock had
-  nothing to put back. Now `apply`, presets and custom values check every limit they would change, in both
-  the screen-on and the screen-off set, against the recorded values. If one is missing, **nothing at all is
-  changed** (no limit, no marker, no watcher) and the message names it. Controls the phone does not have are
-  not demanded. A snapshot that cannot be saved with no earlier record makes boot exit 2: no limit is changed
-  at that boot and `boot.log` says so.
-- New: **something outside the module changing a limit is reported, and not argued with for ever.** `tune.sh
-  status` has `external=` (limits of ours that no longer read back as set) and the page shows a note. The
-  watcher puts such a limit back up to 3 times (`TUNE_EXT_RETRIES`), then logs once that it stops and leaves
-  it; a screen on/off change starts afresh.
-- Upgrade: settings (`tune.conf`), recorded values (`defaults`), markers and the module ID are unchanged. If
-  v1.2.x had saved a kernel profile to re-apply (`config`, MODE 1, 2 or 3 with PERSIST on), boot prints a
-  notice, `status` shows `legacy_kp=`, the page says so, and the old file is not touched or used.
-- Tests: `tests/kp-test.sh` is removed with `kp.sh`. `tests/tune-test.sh` lost its kernel-profile tests and
-  gained: a fake kernel-profile node that must never change through presets, custom values, boot, stop,
-  Stock, Reset everything and uninstall; no script or page text referring to the kernel profile; the two P1
-  holes above (vanished max, vanished min, both vanished, missing control for a request, missing minimum,
-  missing prime max, no GPU); external changes (report, Apply, the watcher's retry limit against a process
-  that keeps changing the value, and recovery on a screen change); and the upgrade cases. The vanished-control,
-  missing-baseline, retry-limit and kernel-profile tests were each run against a copy of the code with that
-  fix reverted (the old vanished-max handling, no baseline check, no retry limit, a stray kernel-profile
-  write) and each fails there.
+## v1.4.0
+Release of the v1.2.3 code under a new version number. No script or WebUI change from v1.2.3.
+- Change: version number only (v1.2.3 to v1.4.0, versionCode 16 to 17).
 
 ## v1.2.3
 An audit of v1.2.2 (before it was flashed) reproduced one hole in the new stock protection and one gap in

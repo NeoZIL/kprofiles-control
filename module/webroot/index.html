@@ -69,10 +69,9 @@ select{width:100%;font:inherit;font-size:.9rem;color:var(--text);background:var(
 <body>
 <main>
   <h1>Kprofiles Control</h1>
-  <p class="sub">CPU and GPU speed limits. <span id="ver"></span></p>
+  <p class="sub">CPU and GPU speed limits, plus the kernel profile. <span id="ver"></span></p>
 
   <div id="msg" role="status" aria-live="polite"></div>
-  <div class="warnbox" id="extBox" style="display:none"></div>
 
   <section class="card" aria-label="State">
     <h2>Right now</h2>
@@ -88,7 +87,7 @@ select{width:100%;font:inherit;font-size:.9rem;color:var(--text);background:var(
     <div class="opts" role="radiogroup" aria-label="Preset" id="presets">
       <button class="opt" role="radio" aria-checked="false" data-preset="stock">
         <span class="t">Stock</span>
-        <span class="d">Your phone’s own CPU and GPU limits. Removes the limits this module set.</span>
+        <span class="d">Your phone’s own CPU and GPU limits. Removes the limits this module set. The kernel profile below is separate.</span>
       </button>
       <button class="opt" role="radio" aria-checked="false" data-preset="tilt">
         <span class="t">Battery tilt</span>
@@ -102,7 +101,7 @@ select{width:100%;font:inherit;font-size:.9rem;color:var(--text);background:var(
     <p class="hint" id="customNote" style="margin:10px 0 0;display:none">You have custom values, so no preset is highlighted.</p>
     <button class="opt" id="resetAll" style="margin-top:10px">
       <span class="t">Reset everything</span>
-      <span class="d">Stock limits, and your saved settings reset. The kernel profile is not changed.</span>
+      <span class="d">Stock limits and the kernel profile set to None.</span>
     </button>
   </section>
 
@@ -131,7 +130,30 @@ select{width:100%;font:inherit;font-size:.9rem;color:var(--text);background:var(
     <div class="grid" id="gridOff"></div>
   </section>
 
-  <p class="note">Limits only lower what your phone is allowed to use, apart from any minimum you raise yourself. If the phone feels wrong, tap Stock. Test one change at a time. Keep the kernel’s own profile switch (Kprofiles) at None while you use these limits: this module does not read or change it.</p>
+  <section class="card" aria-label="Kernel profile">
+    <h2>Kernel profile (advanced)</h2>
+    <p class="hint">A separate switch inside the kernel. It stacks with the limits above, and the lowest limit wins.</p>
+    <div class="opts" role="radiogroup" aria-label="Kernel profile" id="kpopts">
+      <button class="opt" role="radio" aria-checked="false" data-kp="0">
+        <span class="t">None</span>
+        <span class="d">No kernel caps. Off and Balanced behave the same.</span>
+      </button>
+      <button class="opt" role="radio" aria-checked="false" data-kp="1">
+        <span class="t">Battery</span>
+        <span class="d">Hard caps, always on: little cores about 1.59 GHz, big cores about 1.29 GHz, prime core held at its lowest speed. Expect lag.</span>
+      </button>
+      <button class="opt" role="radio" aria-checked="false" data-kp="3">
+        <span class="t">Performance</span>
+        <span class="d">The GPU can no longer be slowed down by the heat controller. The phone can get hot.</span>
+      </button>
+    </div>
+    <label class="sw" style="margin-top:6px">
+      <span class="txt"><span class="t">Remember kernel profile after reboot</span></span>
+      <input type="checkbox" role="switch" id="swKpPersist">
+    </label>
+  </section>
+
+  <p class="note">Limits only lower what your phone is allowed to use, apart from any minimum you raise yourself. If the phone feels wrong, tap Stock. Test one change at a time.</p>
 </main>
 
 <script>
@@ -144,7 +166,7 @@ select{width:100%;font:inherit;font-size:.9rem;color:var(--text);background:var(
     ["prime", "Prime core", "CPU7"],
     ["gpu", "GPU", ""]
   ];
-  var busy = false, lists = null, st = null;
+  var busy = false, lists = null, st = null, kp = null;
 
   function $(id) { return document.getElementById(id); }
   function setMsg(text, kind) { var m = $("msg"); m.textContent = text || ""; m.className = kind || ""; }
@@ -165,6 +187,7 @@ select{width:100%;font:inherit;font-size:.9rem;color:var(--text);background:var(
     });
   }
   function T(a) { return exec("sh " + BASE + "tune.sh " + a); }
+  function K(a) { return exec("sh " + BASE + "kp.sh " + a); }
 
   function kv(text) {
     var o = {};
@@ -261,35 +284,37 @@ select{width:100%;font:inherit;font-size:.9rem;color:var(--text);background:var(
       });
     });
 
-    var eb = $("extBox"), msgs = [];
-    var ext = (st.external || "").trim();
-    if (st.enabled === "1" && ext) {
-      msgs.push("Something outside this module changed " + ext.split(/\s+/).join(", ").replace(/_/g, " ") + ". The module put it back a few times and then stopped, so it does not fight whatever is doing it.");
+    if (kp) {
+      var m = kp.mode;
+      var cur = m === "1" ? "1" : (m === "3" ? "3" : "0");
+      var ko = document.querySelectorAll("#kpopts .opt");
+      for (var j = 0; j < ko.length; j++) {
+        ko[j].setAttribute("aria-checked", ko[j].getAttribute("data-kp") === cur ? "true" : "false");
+      }
+      $("swKpPersist").checked = kp.persist === "1";
     }
-    if (st.legacy_kp) {
-      msgs.push("An earlier version saved kernel profile " + st.legacy_kp + " to re-apply at boot. This version does not manage the kernel profile, so that is no longer applied.");
-    }
-    eb.textContent = msgs.join("\n"); eb.style.whiteSpace = "pre-line";
-    eb.style.display = msgs.length ? "block" : "none";
   }
 
   function refresh(quiet) {
-    return T("status").then(function (a) {
+    return Promise.all([T("status"), K("status")]).then(function (rs) {
+      var a = rs[0], b = rs[1];
       if (a.errno !== 0 || a.stdout.indexOf("enabled=") < 0) {
         setMsg((a.stderr || a.stdout || "Could not read the phone state.").trim(), "err");
         return;
       }
       st = kv(a.stdout);
+      kp = (b.errno === 0 && /mode=/.test(b.stdout)) ? kv(b.stdout.replace(/ /g, "\n")) : null;
+      if (kp && kp.mode === "?") kp = null;
       render();
       if (!quiet) setMsg("", "");
     });
   }
 
-  function act(cmdLine, okText) {
+  function act(cmdLine, okText, isKernel) {
     if (busy) return;
     lockUI(true);
     setMsg("Working…", "");
-    T(cmdLine).then(function (r) {
+    (isKernel ? K(cmdLine) : T(cmdLine)).then(function (r) {
       var out = (r.stdout || "").trim();
       var failed = r.errno !== 0 || /^error:/m.test(out);
       var warns = out.split("\n").filter(function (l) { return /^warn:/.test(l); });
@@ -315,6 +340,12 @@ select{width:100%;font:inherit;font-size:.9rem;color:var(--text);background:var(
   $("resetAll").addEventListener("click", function () {
     act("resetall", "Everything is back to your phone’s own behavior.");
   });
+  $("kpopts").addEventListener("click", function (e) {
+    var b = e.target.closest ? e.target.closest(".opt") : null;
+    if (!b) return;
+    var m = b.getAttribute("data-kp");
+    act("mode " + m, "Kernel profile set.", true);
+  });
   $("swEnabled").addEventListener("change", function () {
     var on = $("swEnabled").checked;
     act("cfg ENABLED " + (on ? "1" : "0"), on ? "Limits applied." : "Back to your phone’s own values.");
@@ -323,6 +354,11 @@ select{width:100%;font:inherit;font-size:.9rem;color:var(--text);background:var(
     var on = $("swScreenOff").checked;
     act("cfg SCREENOFF " + (on ? "1" : "0"), on ? "Separate screen-off limits on." : "Screen-off limits off.");
   });
+  $("swKpPersist").addEventListener("change", function () {
+    var on = $("swKpPersist").checked;
+    act("persist " + (on ? "1" : "0"), on ? "Kernel profile will be kept after reboot." : "Kernel profile will not be kept.", true);
+  });
+
   /* ---------- start ---------- */
   exec("tr -d '\\r' < " + BASE + "module.prop | sed -n 's/^version=//p' | head -n 1").then(function (r) {
     var v = (r.stdout || "").trim();

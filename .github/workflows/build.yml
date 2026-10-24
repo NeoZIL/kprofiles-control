@@ -33,6 +33,7 @@ jobs:
 
       - name: Self-test (dash)
         run: |
+          sh tests/kp-test.sh
           sh tests/tune-test.sh
           sh tests/build-test.sh
           sh tests/release-test.sh
@@ -41,6 +42,7 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/shim-mksh"
           ln -sf "$(command -v mksh)" "$RUNNER_TEMP/shim-mksh/sh"
+          PATH="$RUNNER_TEMP/shim-mksh:$PATH" mksh tests/kp-test.sh
           PATH="$RUNNER_TEMP/shim-mksh:$PATH" mksh tests/tune-test.sh
           PATH="$RUNNER_TEMP/shim-mksh:$PATH" mksh tests/build-test.sh
           PATH="$RUNNER_TEMP/shim-mksh:$PATH" mksh tests/release-test.sh
@@ -49,6 +51,7 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/shim-bb"
           ln -sf "$(command -v busybox)" "$RUNNER_TEMP/shim-bb/sh"
+          PATH="$RUNNER_TEMP/shim-bb:$PATH" busybox sh tests/kp-test.sh
           PATH="$RUNNER_TEMP/shim-bb:$PATH" busybox sh tests/tune-test.sh
           PATH="$RUNNER_TEMP/shim-bb:$PATH" busybox sh tests/build-test.sh
           PATH="$RUNNER_TEMP/shim-bb:$PATH" busybox sh tests/release-test.sh

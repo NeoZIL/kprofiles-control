@@ -6,9 +6,6 @@
 #  * only values from the phone's own "available frequencies" lists are accepted
 #  * only nodes the user explicitly set are ever written (nothing else is touched)
 #  * the phone's own values are saved at boot and restored by "Stock" / disable
-#  * no limit is changed unless the phone's own value for it is on record, so Stock can always put it back
-#  * this module is standalone: it never reads or writes the kernel's Kprofiles mode, or any other kernel
-#    profile switch. Keep that kernel profile at None while you use the limits (see README).
 case "$0" in */*) MODDIR="${0%/*}" ;; *) MODDIR="." ;; esac
 CFG_DIR="${CFG_DIR:-/data/adb/kprofiles_ui}"
 CFG="$CFG_DIR/tune.conf"
@@ -18,11 +15,10 @@ PIDF="$CFG_DIR/daemon.pid"
 CPUFREQ="${CPUFREQ_DIR:-/sys/devices/system/cpu/cpufreq}"
 GPUDIR="${GPU_DIR:-/sys/class/kgsl/kgsl-3d0/devfreq}"
 BL="${BL_PATH:-/sys/class/backlight/panel0-backlight/brightness}"
-LEGACYCFG="$CFG_DIR/config"        # written by v1.2.x for its kernel-profile setting; read at boot to say it is ignored, never changed
+KPNODE="${KP_PATH:-/sys/kernel/kprofiles/kp_mode}"   # read only here; kp.sh is the only writer
 POLL_ON="${TUNE_POLL_ON:-3}"       # seconds between checks while the screen is on
 POLL_OFF="${TUNE_POLL_OFF:-1}"     # seconds between checks while the screen is off
 REASSERT_EVERY="${TUNE_REASSERT:-10}"
-EXT_RETRIES="${TUNE_EXT_RETRIES:-3}"   # how often the watcher puts back a limit that something else keeps changing
 CLUSTERS="little big prime gpu"
 
 upper() {
@@ -127,6 +123,9 @@ capture_defaults() {
     [ -f "$DEF" ] && return 0                    # already recorded
     [ -s "$APPLIED" ] && return 0                # our own limits are in place: would record them as stock
   fi
+  # The kernel Battery profile lowers the values we read, so a reading taken now is not stock.
+  # This holds for the forced boot-time capture too: keep whatever was recorded before, or nothing.
+  [ "$(rd "$KPNODE")" = 1 ] && return 0
   # Returns 2 when the snapshot could not be SAVED (a saved one is then left exactly as it was).
   cd_fail() { rm -f "$DEF.tmp" 2>/dev/null; log_msg "could not save the phone's own values"; return 2; }
   mkdir -p "$CFG_DIR" 2>/dev/null || { log_msg "could not save the phone's own values"; return 2; }
@@ -197,31 +196,6 @@ unmark_applied() {
   ! is_applied "$1"
 }
 
-# ---------- things outside this module ----------
-# ext_list STATE (on|off): the limits this module has set (they are marked) that no longer read back as
-# configured for that state, so something else changed them. Needs load_cfg to have run. Reported, never
-# argued with beyond the few retries the watcher makes (see run_daemon).
-ext_list() {
-  el=""
-  el_S=$(upper "$1")
-  for el_c in $CLUSTERS; do for el_k in min max; do
-    is_applied "${el_c}_${el_k}" || continue
-    el_C=$(upper "$el_c"); el_K=$(upper "$el_k")
-    eval "el_w=\${${el_S}_${el_C}_${el_K}:-}"
-    [ -n "$el_w" ] || continue
-    [ "$(rd "$(node "$el_c" "$el_k")")" = "$el_w" ] || el="$el ${el_c}_${el_k}"
-  done; done
-  echo "$el"
-}
-# The kernel mode that v1.2.x saved for re-applying at boot (1, 2 or 3), if any. This version ignores it.
-# Mode 0 (None) is the kernel's own default, so there is nothing to tell anyone about.
-legacy_mode() {
-  [ -f "$LEGACYCFG" ] || return 0
-  lg_p=$(sed -n 's/^PERSIST=//p' "$LEGACYCFG" 2>/dev/null | head -n 1); [ "$lg_p" != 0 ] || return 0
-  lg_m=$(sed -n 's/^MODE=//p' "$LEGACYCFG" 2>/dev/null | head -n 1)
-  case "$lg_m" in 1|2|3) echo "$lg_m" ;; esac
-}
-
 # ---------- applying ----------
 apply_domain() { # cluster state(on|off|none)
   AD_REJ=""; AD_NOREST=""
@@ -258,19 +232,7 @@ apply_domain() { # cluster state(on|off|none)
     AD_NOREST=$ad_gone
     return 1
   fi
-  # Neither control exists and nothing of ours is marked: hardware this phone simply does not have.
-  if [ ! -e "$ad_pmin" ] && [ ! -e "$ad_pmax" ]; then echo "warn: $ad_c controls not found on this phone"; return 0; fi
-  # Only ONE of the two controls exists. A limit we are asked to set on the missing one cannot be applied
-  # (and is never marked): that is a rejected limit, reported as such. A marked limit on the missing one
-  # was caught above; a marked limit on the one that exists is still restored below.
-  ad_miss=""
-  if [ -n "$ad_dmin" ] && [ -z "$ad_rmin" ] && [ ! -e "$ad_pmin" ]; then ad_miss="$ad_miss ${ad_c}_min"; ad_dmin=""; fi
-  if [ -n "$ad_dmax" ] && [ -z "$ad_rmax" ] && [ ! -e "$ad_pmax" ]; then ad_miss="$ad_miss ${ad_c}_max"; ad_dmax=""; fi
-  if [ -n "$ad_miss" ]; then
-    echo "warn: the control for$ad_miss is missing on this phone, so that limit was not applied"
-    log_msg "control missing, limit not applied:$ad_miss"
-    if [ -z "$ad_dmin$ad_dmax" ]; then AD_REJ=$ad_miss; return 1; fi
-  fi
+  [ -e "$ad_pmax" ] || { echo "warn: $ad_c controls not found on this phone"; return 0; }
   ad_curmin=$(rd "$ad_pmin"); ad_curmax=$(rd "$ad_pmax")
   # keep min <= max
   if [ -z "$ad_dmin" ] && [ -n "$ad_dmax" ] && [ -n "$ad_curmin" ] && [ "$ad_curmin" -gt "$ad_dmax" ]; then ad_dmin=$ad_dmax; ad_rmin=""; fi
@@ -314,7 +276,6 @@ apply_domain() { # cluster state(on|off|none)
   if [ -n "$ad_dmin" ] && [ -z "$ad_rmin" ] && [ -z "$ad_okmin" ]; then ad_rej="$ad_rej ${ad_c}_min"; fi
   if [ -n "$ad_dmax" ] && [ -z "$ad_rmax" ] && [ -z "$ad_okmax" ]; then ad_rej="$ad_rej ${ad_c}_max"; fi
   if [ -n "$ad_rej" ]; then log_msg "kernel did not take the requested limit for:$ad_rej"; fi
-  ad_rej="$ad_rej$ad_miss"
   AD_REJ=$ad_rej; AD_NOREST="$ad_note$ad_nodef"
   if [ -n "$ad_note" ]; then
     echo "warn: could not put the phone's own value back for:$ad_note; it stays marked as changed so a later Stock or Apply tries again"
@@ -457,7 +418,7 @@ run_daemon() {
   echo $$ > "$PIDF"
   sp=""
   trap 'kill "$sp" 2>/dev/null; pidf_release; exit 0' TERM INT
-  last=""; n=0; ext_seen=0
+  last=""; n=0
   while :; do
     # Only the watcher the pid file names may act. One that lost the file (a wiped folder, a start
     # that raced another) leaves quietly, so two watchers can never fight over the limits: a second
@@ -474,24 +435,8 @@ run_daemon() {
     fi
     st=on
     if [ "$SCREENOFF" = 1 ]; then scr_get; st=$ST; fi
-    if [ "$st" != "$last" ]; then
-      apply_state "$st" >/dev/null; last=$st; n=0; ext_seen=0
-    elif [ "$n" -ge "$REASSERT_EVERY" ]; then
-      n=0
-      ex=$(ext_list "$st")
-      if [ -z "$ex" ]; then
-        ext_seen=0; apply_state "$st" >/dev/null
-      else
-        # Something else changed a limit of ours. Put it back a few times (a one-off change is common),
-        # then stop: rewriting it for ever would only fight whatever keeps changing it.
-        ext_seen=$((ext_seen + 1))
-        if [ "$ext_seen" -le "$EXT_RETRIES" ]; then
-          log_msg "watcher $$: changed by something else:$ex, putting it back ($ext_seen/$EXT_RETRIES)"
-          apply_state "$st" >/dev/null
-        elif [ "$ext_seen" -eq $((EXT_RETRIES + 1)) ]; then
-          log_msg "watcher $$: still changed by something else:$ex, no longer putting it back until the screen changes"
-        fi
-      fi
+    if [ "$st" != "$last" ] || [ "$n" -ge "$REASSERT_EVERY" ]; then
+      apply_state "$st" >/dev/null; last=$st; n=0
     fi
     n=$((n + 1))
     if [ "$st" = off ]; then nap=$POLL_OFF; else nap=$POLL_ON; fi
@@ -511,24 +456,7 @@ report_apply_failure() {
   fi
   if [ -z "$AS_NOREST$AS_REJ" ]; then echo "error: not every limit could be applied (see the messages above)"; fi
 }
-NOSTOCK="warn: the phone's own limits are not recorded yet, so Stock cannot put them back until the next reboot"
-# baseline_missing: the limits this module would change (in EITHER screen set) for which the phone's own
-# value is not on record. Without that value Stock could never put the limit back, so none is changed.
-# Controls the phone does not have are not counted (apply_domain reports those).
-baseline_missing() {
-  bm=""
-  for bm_c in $CLUSTERS; do
-    [ -e "$(node "$bm_c" max)" ] || [ -e "$(node "$bm_c" min)" ] || continue
-    for bm_k in min max; do
-      bm_u=$(upper "$bm_k"); bm_C=$(upper "$bm_c"); bm_any=""
-      for bm_S in ON OFF; do eval "bm_v=\${${bm_S}_${bm_C}_${bm_u}:-}"; [ -z "$bm_v" ] || bm_any=1; done
-      [ -n "$bm_any" ] || continue
-      is_applied "${bm_c}_${bm_k}" && continue              # already ours; apply_domain handles its record
-      [ -n "$(def_of "${bm_c}_${bm_k}")" ] || bm="$bm ${bm_c}_${bm_k}"
-    done
-  done
-  [ -z "$bm" ]
-}
+NOSTOCK="warn: the phone's own limits are not recorded yet (for example because the kernel Battery profile was on), so Stock cannot put them back until the next reboot"
 cmd_apply() {
   ca_rc=0
   load_cfg
@@ -539,11 +467,7 @@ cmd_apply() {
       echo "error: the phone's own limits could not be saved, so no limit was changed"; return 1
     fi
     [ "$ca_cd" = 0 ] || echo "warn: the phone's own limits could not be saved again; the earlier record is kept"
-    if ! baseline_missing; then
-      echo "error: the phone's own value is not on record for:$bm, so no limit was changed (Stock could not put it back). Reboot to record it again; if it keeps happening, something is holding that control at a non-stock value at boot"
-      log_msg "apply refused, no recorded original value for:$bm"
-      return 1
-    fi
+    [ -f "$DEF" ] || echo "$NOSTOCK"
     if ! apply_state "$(want_state)"; then report_apply_failure; ca_rc=1; fi
     [ ! -f "$DEF" ] || warn_nodefault
     if ! start_daemon; then
@@ -636,8 +560,14 @@ PRESET=$1
   cmd_apply
 }
 
-cmd_resetall() { # the phone's own limits back and the settings reset; the kernel profile is not touched
+cmd_resetall() { # kernel profile back to None first (so nothing holds the limits down), then stock limits
   ra_rc=0
+  if [ -e "$KPNODE" ]; then
+    if ! ra_out=$(sh "$MODDIR/kp.sh" mode 0 2>&1); then
+      ra_msg=$(printf '%s\n' "$ra_out" | head -n 1); ra_msg=${ra_msg#error: }
+      echo "error: the kernel profile could not be set to None: ${ra_msg:-no answer from kp.sh}"; ra_rc=1
+    fi
+  fi
   cmd_preset stock || ra_rc=1
   return "$ra_rc"
 }
@@ -657,7 +587,7 @@ cmd_boot() {
     sleep "$BOOT_WAIT"
   done
   # cb_nostock: the snapshot could not be SAVED and there is no earlier one, so the phone's own limits are
-  # on record nowhere. No limit is changed then (cmd_apply refuses), and boot exits 2 so service.sh can log it.
+  # on record nowhere. service.sh must not apply the kernel profile then (exit status 2, see the end).
   cb_nostock=""
   if [ "$cb_cd" != 0 ]; then
     echo "error: the phone's own limits could not be saved at boot; an earlier record is kept if there is one"; cb_rc=1
@@ -666,11 +596,6 @@ cmd_boot() {
   [ -z "$CAP_BAD" ] || echo "warn: could not read these frequency values at boot:$CAP_BAD (an earlier record is kept if there is one)"
   [ -z "$CAP_PIN" ] || echo "warn: the minimum frequency was at or above the maximum for:$CAP_PIN, so it was not recorded as stock (something is holding it up); an earlier record is kept if there is one"
   [ "$cb_cd" != 0 ] || [ ! -s "$DEF" ] || log_msg "boot: stock recorded: $(tr '\n' ' ' < "$DEF" 2>/dev/null)"
-  cb_lg=$(legacy_mode)
-  if [ -n "$cb_lg" ]; then
-    echo "notice: an earlier version saved kernel profile $cb_lg to re-apply at boot. This version no longer manages the kernel profile, so that is not applied; the kernel keeps its own setting"
-    log_msg "boot: the kernel profile $cb_lg saved by an earlier version is no longer applied"
-  fi
   load_cfg
   [ -z "$CFG_BAD" ] || { echo "$NOREAD"; cb_rc=1; }
   if [ "$ENABLED" = 1 ] && [ -z "$CFG_BAD" ]; then cmd_apply || cb_rc=1; fi
@@ -681,8 +606,8 @@ cmd_boot() {
     log_msg "boot finished with errors"
   fi
   if [ -n "$cb_nostock" ]; then
-    echo "error: the phone's own limits are not on record, so no limit was changed at this boot (exit status 2)"
-    log_msg "boot: the phone's own limits are not on record; no limit was changed at this boot"
+    echo "error: the phone's own limits are not on record, so the kernel profile must not be applied at this boot (exit status 2)"
+    log_msg "boot: the phone's own limits are not on record; the kernel profile is not applied at this boot"
     return 2
   fi
   return "$cb_rc"
@@ -703,8 +628,6 @@ cmd_status() {
   for c in $CLUSTERS; do for k in min max; do
     echo "cur_${c}_${k}=$(rd "$(node $c $k)")"; echo "def_${c}_${k}=$(def_of "${c}_${k}")"
   done; done
-  if [ "$ENABLED" = 1 ]; then echo "external=$(ext_list "$(want_state)")"; else echo "external="; fi
-  echo "legacy_kp=$(legacy_mode)"
 }
 
 case "$1" in

@@ -50,8 +50,6 @@ mksys() { # the kernel's own files, exactly as a freshly booted phone has them (
   echo 120 > "$T/bl/brightness"; echo 0 > "$T/kp/kp_mode"; echo N > "$T/kp/auto_kp"
 }
 mkfake() { reap; rm -rf "$T/cpufreq" "$T/gpu" "$T/cfg" "$T/kp"; mksys; }
-# KP_PATH / AUTO_PATH are exported on purpose: the module does not use them any more, and if it ever reads or
-# writes the kernel profile again, the "standalone" tests below notice, because they watch that fake node.
 export CPUFREQ_DIR="$T/cpufreq" GPU_DIR="$T/gpu" BL_PATH="$T/bl/brightness" CFG_DIR="$T/cfg" TUNE_NO_DAEMON=1 KP_PATH="$T/kp/kp_mode" AUTO_PATH="$T/kp/auto_kp"
 v() { cat "$T/$1"; }
 waitfor() { # name expected file seconds   (poll instead of a fixed sleep, so slow runners do not flake)
@@ -168,24 +166,28 @@ out=$(S status); has "boot recorded the NEW stock value" "def_big_max=2611200" "
 S preset stock >/dev/null
 check "Stock restores the NEW stock value, not the old one" 2611200 "$(v cpufreq/policy3/scaling_max_freq)"
 
-echo "--- the kernel profile is not consulted when the phone's own values are recorded ---"
-mkfake; echo 1 > "$T/kp/kp_mode"; out=$(S status)
-has "kernel profile 1: the same record as with 0" "def_big_max=2572800" "$out"
-check "kernel profile 1: left exactly as it was" 1 "$(v kp/kp_mode)"
+echo "--- defaults are never recorded from a capped or already-limited state ---"
+mkfake; echo 1 > "$T/kp/kp_mode"                         # kernel Battery profile active, defaults not recorded yet
+out=$(S status); has "kernel Battery active: nothing recorded as stock" "def_big_max=" "$out"
+check "no defaults file written" "no" "$([ -f "$T/cfg/defaults" ] && echo yes || echo no)"
+echo 0 > "$T/kp/kp_mode"; out=$(S status)
+has "after the kernel profile is None: recorded" "def_big_max=2572800" "$out"
 mkfake; S preset tilt >/dev/null; rm -f "$T/cfg/defaults"
 out=$(S status); has "own limits in place: not recorded as stock" "def_big_max=" "$out"
 check "still no defaults file" "no" "$([ -f "$T/cfg/defaults" ] && echo yes || echo no)"
 
-echo "--- Reset everything: stock limits, saved settings reset, the kernel profile NOT changed ---"
-mkfake; S preset saver >/dev/null; echo 1 > "$T/kp/kp_mode"
+echo "--- Reset everything: stock limits AND kernel profile ---"
+mkfake; S preset saver >/dev/null; sh "$HERE/../module/kp.sh" mode 1 >/dev/null
+check "kernel profile Battery set" 1 "$(v kp/kp_mode)"
 S resetall >/dev/null
 check "resetall: big max stock" 2572800 "$(v cpufreq/policy3/scaling_max_freq)"
 check "resetall: gpu max stock" 900000000 "$(v gpu/max_freq)"
-check "resetall: kernel profile untouched" 1 "$(v kp/kp_mode)"
+check "resetall: kernel profile None" 0 "$(v kp/kp_mode)"
 out=$(S status); has "resetall: limits disabled" "enabled=0" "$out"
 
-echo "--- uninstall restores limits and removes saved settings; the kernel profile is not touched ---"
-mkfake; S preset tilt >/dev/null; echo 3 > "$T/kp/kp_mode"
+echo "--- uninstall restores limits, resets the kernel profile, removes saved settings ---"
+mkfake; S preset tilt >/dev/null; sh "$HERE/../module/kp.sh" mode 3 >/dev/null
+check "performance profile set" 3 "$(v kp/kp_mode)"
 # the shipped script deletes a fixed path, so run a copy whose target is the fixture folder
 rm -rf "$T/modu"; cp -r "$HERE/../module" "$T/modu"
 sed "s#/data/adb/kprofiles_ui#$T/cfg#" "$HERE/../module/uninstall.sh" > "$T/modu/uninstall.sh"
@@ -193,18 +195,11 @@ sh "$T/modu/uninstall.sh"
 check "uninstall: big max restored" 2572800 "$(v cpufreq/policy3/scaling_max_freq)"
 check "uninstall: prime max restored" 2668800 "$(v cpufreq/policy7/scaling_max_freq)"
 check "uninstall: gpu max restored" 900000000 "$(v gpu/max_freq)"
-check "uninstall: kernel profile untouched" 3 "$(v kp/kp_mode)"
+check "uninstall: kernel profile None" 0 "$(v kp/kp_mode)"
 check "uninstall: saved settings removed" "no" "$([ -d "$T/cfg" ] && echo yes || echo no)"
 
-echo "--- standalone: nothing in the module refers to the kernel profile ---"
-check "no kp.sh in the module" no "$([ -e "$HERE/../module/kp.sh" ] && echo yes || echo no)"
-check "no script reads or writes the kernel profile node" 0 "$(grep -hv '^ *#' "$HERE"/../module/*.sh | grep -ci 'kp_mode\|auto_kp\|kprofiles/\|kp\.sh\|KPNODE')"
-check "the WebUI has no kernel profile control" 0 "$(grep -ci 'kp\.sh\|kpopts\|data-kp\|kp_mode' "$HERE/../module/webroot/index.html")"
-# the whole preset cycle, boot and stop with the fake kernel profile at 2: it must still read 2 afterwards
-mkfake; echo 2 > "$T/kp/kp_mode"; echo Y > "$T/kp/auto_kp"
-S preset tilt >/dev/null; S preset saver >/dev/null; S cfg ON_BIG_MAX 2073600 >/dev/null; S boot >/dev/null; S preset stock >/dev/null; S stop >/dev/null
-check "preset, cfg, boot and stop leave the kernel profile alone" "2 Y" "$(v kp/kp_mode) $(v kp/auto_kp)"
-mkfake
+echo "--- tune.sh never writes the kernel profile directly (kp.sh is its only writer) ---"
+check "no direct write to the kernel profile node" 0 "$(grep -c 'wr "\$KPNODE"\|> *"\$KPNODE"' "$TUNE")"
 
 echo "--- background watcher ---"
 mkfake; unset TUNE_NO_DAEMON
@@ -231,7 +226,7 @@ out=$(S preset tilt); has "preset skips unavailable value" "warn: preset value 1
 check "skipped value not saved" "" "$(sed -n 's/^OFF_LITTLE_MAX=//p' "$T/cfg/tune.conf")"
 check "valid preset values still applied" 2188800 "$(v cpufreq/policy3/scaling_max_freq)"
 
-echo "--- boot: the real service.sh records stock, then re-applies the saved choices ---"
+echo "--- boot order: the real service.sh records stock BEFORE it applies the kernel profile ---"
 # A copy of the shipped service.sh and the module, with only three things changed so it can run here:
 # the data folder, the 25 s settle wait, and a getprop that says "boot completed".
 mksvc() {
@@ -240,50 +235,50 @@ mksvc() {
   printf '#!/bin/sh\necho 1\n' > "$T/svc/bin/getprop"; chmod +x "$T/svc/bin/getprop"
 }
 runsvc() { PATH="$T/svc/bin:$PATH" TUNE_BOOT_WAIT=0 TUNE_BOOT_RETRIES=2 sh "$T/svc/service.sh"; }
+kpsave() { sh "$HERE/../module/kp.sh" mode "$1" >/dev/null; echo 0 > "$T/kp/kp_mode"; }   # saved choice; the kernel is back at 0 (a reboot)
 mksvc
 check "service copy: data folder replaced" 1 "$(grep -c "^D=$T/cfg\$" "$T/svc/service.sh")"
 check "service copy: settle wait replaced" 1 "$(grep -c '^sleep 0$' "$T/svc/service.sh")"
-mkfake; S preset tilt >/dev/null; mksys; runsvc          # a reboot: the kernel files are reset, the saved choice stays
-check "boot: stock was recorded (big max)" 2572800 "$(sed -n 's/^big_max=//p' "$T/cfg/defaults")"
-check "boot: stock was recorded (big min)" 633600 "$(sed -n 's/^big_min=//p' "$T/cfg/defaults")"
-check "boot: the saved choice was re-applied" 2188800 "$(v cpufreq/policy3/scaling_max_freq)"
+mkfake; kpsave 1; runsvc
+check "boot: stock was recorded first (big max)" 2572800 "$(sed -n 's/^big_max=//p' "$T/cfg/defaults")"
+check "boot: stock was recorded first (big min)" 633600 "$(sed -n 's/^big_min=//p' "$T/cfg/defaults")"
+check "boot: the kernel profile was applied afterwards" 1 "$(v kp/kp_mode)"
 has "boot.log: reports a clean boot" "boot done" "$(cat "$T/cfg/boot.log")"
 
-echo "--- boot: the phone's own limits cannot be saved and none are on record: nothing is changed ---"
-mkfake; S preset tilt >/dev/null; mksys; rm -f "$T/cfg/defaults"; mkdir -p "$T/cfg/defaults"      # the snapshot file cannot be written (it is a folder)
+echo "--- boot: the phone's own limits cannot be saved and none are on record ---"
+mkfake; kpsave 1; mkdir -p "$T/cfg/defaults"          # the snapshot file cannot be written (it is a folder)
 S boot >/dev/null; rc=$?
 check "no record, save fails: tune.sh boot exits 2" 2 "$rc"
-check "no record, save fails: the log says so" 1 "$(grep -c 'not on record; no limit was changed at this boot' "$T/cfg/tune.log")"
-check "no record, save fails: no limit was changed" 2572800 "$(v cpufreq/policy3/scaling_max_freq)"
+check "no record, save fails: the log says so" 1 "$(grep -c 'not on record; the kernel profile is not applied' "$T/cfg/tune.log")"
 runsvc
-check "no record, save fails (service.sh): no limit was changed" 2572800 "$(v cpufreq/policy3/scaling_max_freq)"
-has "no record, save fails: boot.log reports it" "no limit was changed at this boot" "$(cat "$T/cfg/boot.log")"
+check "no record, save fails: the kernel profile is NOT applied" 0 "$(v kp/kp_mode)"
+has "no record, save fails: boot.log reports it" "kernel profile was NOT applied" "$(cat "$T/cfg/boot.log")"
 has "no record, save fails: boot.log has the status" "exit status 2" "$(cat "$T/cfg/boot.log")"
-mkfake; S preset tilt >/dev/null; mksys; rm -f "$T/cfg/defaults"; mkdir -p "$T/cfg/defaults.tmp"   # the temporary file cannot be written (it is a folder)
+mkfake; kpsave 1; mkdir -p "$T/cfg/defaults.tmp"      # the temporary file cannot be written (it is a folder)
 runsvc
-check "no record, temp file fails: no limit was changed" 2572800 "$(v cpufreq/policy3/scaling_max_freq)"
+check "no record, temp file fails: the kernel profile is NOT applied" 0 "$(v kp/kp_mode)"
 check "no record, temp file fails: nothing was recorded" no "$([ -f "$T/cfg/defaults" ] && echo yes || echo no)"
 
 echo "--- boot: the save fails but an earlier record exists ---"
-mkfake; S boot >/dev/null; cp "$T/cfg/defaults" "$T/defaults.keep"; S preset tilt >/dev/null; mksys; mkdir "$T/cfg/defaults.tmp"
+mkfake; S boot >/dev/null; cp "$T/cfg/defaults" "$T/defaults.keep"; kpsave 1; mkdir "$T/cfg/defaults.tmp"
 S boot >/dev/null; rc=$?
 check "earlier record, save fails: tune.sh boot exits 1" 1 "$rc"
 runsvc
 check "earlier record, save fails: the record is untouched" 0 "$(cmp -s "$T/defaults.keep" "$T/cfg/defaults"; echo $?)"
-check "earlier record, save fails: the saved choice IS applied from the earlier record" 2188800 "$(v cpufreq/policy3/scaling_max_freq)"
+check "earlier record, save fails: the kernel profile IS applied" 1 "$(v kp/kp_mode)"
 has "earlier record, save fails: boot.log reports the error" "exit status 1" "$(cat "$T/cfg/boot.log")"
 
-echo "--- boot: another error (unreadable settings) still records stock ---"
-mkfake; mkdir -p "$T/cfg/tune.conf"
+echo "--- boot: another error (unreadable settings) still applies the kernel profile ---"
+mkfake; kpsave 1; mkdir -p "$T/cfg/tune.conf"
 runsvc
+check "other error: the kernel profile IS applied" 1 "$(v kp/kp_mode)"
 check "other error: stock was still recorded" 2572800 "$(sed -n 's/^big_max=//p' "$T/cfg/defaults")"
-check "other error: no limit was changed" 2572800 "$(v cpufreq/policy3/scaling_max_freq)"
 
 echo "--- boot: tune.sh cannot run at all ---"
-mkfake; S preset tilt >/dev/null; mksys; rm -f "$T/svc/tune.sh"
+mkfake; kpsave 1; rm -f "$T/svc/tune.sh"
 runsvc
-check "tune.sh missing: no limit was changed" 2572800 "$(v cpufreq/policy3/scaling_max_freq)"
-has "tune.sh missing: boot.log reports it" "exit status" "$(cat "$T/cfg/boot.log")"
+check "tune.sh missing: the kernel profile is NOT applied" 0 "$(v kp/kp_mode)"
+has "tune.sh missing: boot.log says the profile was skipped" "kernel profile was NOT applied" "$(cat "$T/cfg/boot.log")"
 mksvc
 
 echo "--- the shipped uninstall.sh deletes one fixed folder and reads nothing from the environment ---"
@@ -301,12 +296,11 @@ out=$(S preset tilt); has "empty list: warns" "could not be read" "$out"
 check "empty list: nothing written" 2572800 "$(v cpufreq/policy3/scaling_max_freq)"
 
 echo "--- Stock says so when it has no recorded values to restore from ---"
-mkfake; S preset tilt >/dev/null; rm -f "$T/cfg/defaults"             # our limit is in place, its record is gone
-out=$(S preset stock); rc=$?
-has "no stock recorded: Stock says so" "not recorded" "$out"
-check "no stock recorded: Stock does not say ok" 1 "$rc"
-check "no stock recorded: the limit is left as it is" 2188800 "$(v cpufreq/policy3/scaling_max_freq)"
+mkfake; echo 1 > "$T/kp/kp_mode"; echo 1286400 > "$T/cpufreq/policy3/scaling_max_freq"   # kernel Battery on before anything was recorded
+out=$(S preset tilt); has "no stock recorded: Apply warns" "warn: the phone's own limits are not recorded yet" "$out"
+out=$(S preset stock); has "no stock recorded: Stock warns" "warn: the phone's own limits are not recorded yet" "$out"
 mksys; S boot >/dev/null                                                # a reboot records the real values
+out=$(S preset tilt); case "$out" in *"not recorded yet"*) echo "FAIL warning persists after boot"; fail=1 ;; *) echo "ok   no warning once stock is recorded" ;; esac
 S preset stock >/dev/null
 check "after the reboot Stock restores the real value" 2572800 "$(v cpufreq/policy3/scaling_max_freq)"
 
@@ -314,7 +308,7 @@ echo "--- the watcher hands the limits back when the module is disabled or remov
 unset TUNE_NO_DAEMON; export TUNE_POLL_ON=1 TUNE_POLL_OFF=1 TUNE_REASSERT=3 TUNE_DAEMON_LOG="$T/daemon.log"
 for marker in disable remove; do
   : > "$T/daemon.log"
-  mkfake; rm -rf "$T/mod"; mkdir -p "$T/mod"; cp "$HERE/../module/tune.sh" "$T/mod/"   # tune.sh looks for the marker in its own folder
+  mkfake; rm -rf "$T/mod"; mkdir -p "$T/mod"; cp "$HERE/../module/tune.sh" "$HERE/../module/kp.sh" "$T/mod/"   # tune.sh looks for the marker in its own folder
   S2() { sh "$T/mod/tune.sh" "$@"; }
   S2 preset tilt >/dev/null
   i=0; while [ "$i" -lt 10 ]; do out=$(S2 status); case "$out" in *daemon=1*) break ;; esac; sleep 1; i=$((i + 1)); done
@@ -346,20 +340,30 @@ echo 1 > "$T/bl/brightness"; out=$(S status); has "lowest brightness is still sc
 check "watcher reads brightness with built-ins only" 0 "$(grep -c 'st=\$(screen_state)' "$TUNE")"
 check "brightness is not read through cat" 0 "$(sed -n '/^scr_get()/,/^}/p' "$TUNE" | grep -c 'cat \|rd ')"
 
-echo "--- boot records the phone's own values, and Reset everything reports failures ---"
+echo "--- boot never records a capped reading as stock ---"
 mkfake; S boot >/dev/null                                               # a normal boot records the real values
-check "boot: recorded" 2572800 "$(sed -n 's/^big_max=//p' "$T/cfg/defaults")"
-mkfake; S preset saver >/dev/null; echo 1 > "$T/kp/kp_mode"
+check "boot with profile 0: recorded" 2572800 "$(sed -n 's/^big_max=//p' "$T/cfg/defaults")"
+echo 1 > "$T/kp/kp_mode"; echo 1286400 > "$T/cpufreq/policy3/scaling_max_freq"
+S boot >/dev/null
+check "boot with Battery on: earlier record kept" 2572800 "$(sed -n 's/^big_max=//p' "$T/cfg/defaults")"
+mkfake; echo 1 > "$T/kp/kp_mode"; echo 1286400 > "$T/cpufreq/policy3/scaling_max_freq"
+S boot >/dev/null
+check "boot with Battery on and no record: nothing is saved" "" "$(sed -n 's/^big_max=//p' "$T/cfg/defaults" 2>/dev/null)"
+S preset tilt >/dev/null; out=$(S preset stock); has "no record: Stock says so" "not recorded yet" "$out"
+
+echo "--- Reset everything: profile first, and failures are reported ---"
+mkfake; S preset saver >/dev/null; sh "$HERE/../module/kp.sh" mode 1 >/dev/null
 out=$(S resetall); has "resetall ok: says ok" "ok" "$out"
+check "resetall ok: profile None" 0 "$(v kp/kp_mode)"
 check "resetall ok: big max stock" 2572800 "$(v cpufreq/policy3/scaling_max_freq)"
-check "resetall ok: kernel profile untouched" 1 "$(v kp/kp_mode)"
-mkfake; S preset saver >/dev/null; rm -rf "$T/kp"                       # no Kprofiles in this kernel at all
-S resetall >/dev/null 2>&1; check "resetall without Kprofiles still works" 2572800 "$(v cpufreq/policy3/scaling_max_freq)"
-mkfake; S preset saver >/dev/null; rm -f "$T/cpufreq/policy3/scaling_max_freq"; mkdir "$T/cpufreq/policy3/scaling_max_freq"   # the kernel refuses writes
+mkfake; S preset saver >/dev/null; rm -f "$T/kp/kp_mode"; mkdir "$T/kp/kp_mode"      # a kernel profile node that cannot be written
 S resetall >"$T/ra.out" 2>&1; rc=$?
-check "resetall: a refused restore gives a non-zero exit" 1 "$rc"
-has "resetall: a refused restore is reported" "error: some of the phone's own values could not be put back" "$(cat "$T/ra.out")"
-check "resetall: the other limits were still restored" 2668800 "$(v cpufreq/policy7/scaling_max_freq)"
+check "resetall: failing profile gives a non-zero exit" 1 "$rc"
+has "resetall: failing profile is reported" "error: the kernel profile could not be set to None" "$(cat "$T/ra.out")"
+check "resetall: limits still restored when the profile fails" 2572800 "$(v cpufreq/policy3/scaling_max_freq)"
+rmdir "$T/kp/kp_mode"; echo 0 > "$T/kp/kp_mode"
+mkfake; S preset saver >/dev/null; rm -rf "$T/kp"                                     # no Kprofiles in this kernel at all
+S resetall >/dev/null 2>&1; check "resetall without Kprofiles still works" 2572800 "$(v cpufreq/policy3/scaling_max_freq)"
 mkfake
 
 echo "--- watcher lifecycle: stop, restart, and exit never touch each other's pid file ---"
@@ -391,7 +395,7 @@ export TUNE_NO_DAEMON=1
 echo "--- watcher started by name from inside the module folder still gets the real module folder ---"
 unset TUNE_NO_DAEMON; export TUNE_POLL_ON=1 TUNE_POLL_OFF=1 TUNE_REASSERT=3
 for marker in disable remove; do
-  mkfake; rm -rf "$T/mod" "$T/elsewhere"; mkdir -p "$T/mod" "$T/elsewhere"; cp "$HERE/../module/tune.sh" "$T/mod/"
+  mkfake; rm -rf "$T/mod" "$T/elsewhere"; mkdir -p "$T/mod" "$T/elsewhere"; cp "$HERE/../module/tune.sh" "$HERE/../module/kp.sh" "$T/mod/"
   ( cd "$T/mod" && sh tune.sh preset tilt >/dev/null )        # $0 is just "tune.sh": no folder in it
   i=0; while [ "$i" -lt 10 ] && [ ! -s "$T/cfg/daemon.pid" ]; do sleep 1; i=$((i + 1)); done
   wp=$(cat "$T/cfg/daemon.pid" 2>/dev/null)
@@ -444,7 +448,7 @@ check "pid-less lock: lock still there" "yes" "$([ -d "$T/cfg/daemon.lock" ] && 
 rm -rf "$T/cfg/daemon.lock"
 
 echo "--- a restore the kernel refuses is logged by the watcher and kept for a retry ---"
-mkfake; rm -rf "$T/mod"; mkdir -p "$T/mod"; cp "$HERE/../module/tune.sh" "$T/mod/"
+mkfake; rm -rf "$T/mod"; mkdir -p "$T/mod"; cp "$HERE/../module/tune.sh" "$HERE/../module/kp.sh" "$T/mod/"
 export TUNE_POLL_ON=1 TUNE_POLL_OFF=1 TUNE_REASSERT=3
 sh "$T/mod/tune.sh" boot >/dev/null; sh "$T/mod/tune.sh" preset tilt >/dev/null
 i=0; while [ "$i" -lt 10 ] && [ ! -s "$T/cfg/daemon.pid" ]; do sleep 1; i=$((i + 1)); done
@@ -486,22 +490,15 @@ check "retry: the marker is gone" 0 "$(grep -cx big_max "$T/cfg/applied" 2>/dev/
 mkfake; S boot >/dev/null; S preset tilt >/dev/null; S preset stock >/dev/null
 check "clean restore: nothing stays marked" 0 "$(grep -c . "$T/cfg/applied" 2>/dev/null)"
 
-echo "--- a partial snapshot: no limit is changed without a recorded original value, and nothing is made up ---"
+echo "--- a partial snapshot is reported by Stock, and nothing is made up ---"
 mkfake; : > "$T/cpufreq/policy3/scaling_max_freq"; S boot >/dev/null     # first boot, one reading missing
-out=$(S preset tilt); rc=$?
-check "partial snapshot: Apply is refused" 1 "$rc"
-has "partial snapshot: Apply names the missing value" "not on record for: big_max" "$out"
-has "partial snapshot: Apply says nothing was changed" "no limit was changed" "$out"
+out=$(S preset tilt); has "partial snapshot: Apply names the missing value" "not recorded for: big_max" "$out"
+out=$(S preset stock); has "partial snapshot: Stock names it too" "not recorded for: big_max" "$out"
 check "partial snapshot: no value was invented for big max" "" "$(sed -n 's/^big_max=//p' "$T/cfg/defaults")"
-check "partial snapshot: prime max was not changed either" 2668800 "$(v cpufreq/policy7/scaling_max_freq)"
-check "partial snapshot: gpu max was not changed either" 900000000 "$(v gpu/max_freq)"
-check "partial snapshot: no changed-marker was written" 0 "$([ -s "$T/cfg/applied" ] && echo 1 || echo 0)"
-check "partial snapshot: the watcher was not started" 0 "$(S status | grep -c '^daemon=1')"
-mksys; S boot >/dev/null; out=$(S preset tilt); rc=$?
-check "after a reboot that records everything: Apply works" 0 "$rc"
-check "after a reboot that records everything: the limit is in place" 2188800 "$(v cpufreq/policy3/scaling_max_freq)"
-out=$(S preset stock); case "$out" in *"not on record"*|*"not recorded"*) echo "FAIL complete snapshot: Stock complains"; fail=1 ;; *) echo "ok   complete snapshot: Stock does not complain" ;; esac
-check "complete snapshot: Stock restored the value" 2572800 "$(v cpufreq/policy3/scaling_max_freq)"
+check "partial snapshot: big max is left as it is" 2188800 "$(v cpufreq/policy3/scaling_max_freq)"
+check "partial snapshot: the recorded ones were restored" 2668800 "$(v cpufreq/policy7/scaling_max_freq)"
+mkfake; S boot >/dev/null; out=$(S preset tilt); case "$out" in *"not recorded for"*) echo "FAIL complete snapshot warns"; fail=1 ;; *) echo "ok   complete snapshot: no warning" ;; esac
+out=$(S preset stock); case "$out" in *"not recorded for"*) echo "FAIL complete snapshot: Stock warns"; fail=1 ;; *) echo "ok   complete snapshot: Stock does not warn" ;; esac
 
 echo "--- boot never replaces a saved snapshot with an incomplete reading ---"
 mkfake; S boot >/dev/null
@@ -528,7 +525,7 @@ case "$out" in *"could not read"*) echo "FAIL absent gpu is not a read failure";
 echo "--- a watcher that no longer owns the pid file cannot undo a restore ---"
 unset TUNE_NO_DAEMON; export TUNE_POLL_ON=1 TUNE_POLL_OFF=1 TUNE_REASSERT=2
 mkfake; rm -rf "$T/mod0" "$T/mod"; mkdir -p "$T/mod0" "$T/mod"
-cp "$HERE/../module/tune.sh" "$T/mod0/"; cp "$HERE/../module/tune.sh" "$T/mod/"
+cp "$HERE/../module/tune.sh" "$HERE/../module/kp.sh" "$T/mod0/"; cp "$HERE/../module/tune.sh" "$HERE/../module/kp.sh" "$T/mod/"
 sh "$T/mod0/tune.sh" preset tilt >/dev/null            # watcher A: looks for markers in mod0
 i=0; while [ "$i" -lt 10 ]; do out=$(sh "$T/mod0/tune.sh" status); case "$out" in *daemon=1*) break ;; esac; sleep 1; i=$((i + 1)); done
 has "ownership: watcher A running" "daemon=1" "$out"
@@ -617,15 +614,21 @@ check "refused restore while enabled: the command exits non-zero" 1 "$rc"
 has "refused restore while enabled: reports an error" "error: some of the phone's own values could not be put back" "$out"
 check "refused restore while enabled: the marker is kept" 1 "$(grep -cx big_max "$T/cfg/applied" 2>/dev/null)"
 
-echo "--- uninstall never touches the kernel profile, whatever state it is in ---"
-mkfake; S boot >/dev/null; S preset tilt >/dev/null; echo 3 > "$T/kp/kp_mode"
-rm -f "$T/kp/kp_mode"; mkdir "$T/kp/kp_mode"                            # a kernel profile node that cannot even be written
+echo "--- uninstall keeps the recovery data when the kernel profile cannot be reset ---"
+mkfake; S boot >/dev/null; S preset tilt >/dev/null; sh "$HERE/../module/kp.sh" mode 3 >/dev/null
+rm -f "$T/kp/kp_mode"; mkdir "$T/kp/kp_mode"                            # the kernel profile node cannot be written
 rm -rf "$T/modu"; cp -r "$HERE/../module" "$T/modu"
 sed "s#/data/adb/kprofiles_ui#$T/cfg#" "$HERE/../module/uninstall.sh" > "$T/modu/uninstall.sh"
 sh "$T/modu/uninstall.sh" >/dev/null 2>&1; rc=$?
-check "unwritable kernel profile: uninstall still exits 0" 0 "$rc"
-check "unwritable kernel profile: the limits were restored" 2572800 "$(v cpufreq/policy3/scaling_max_freq)"
-check "unwritable kernel profile: saved settings removed" no "$([ -e "$T/cfg" ] && echo yes || echo no)"
+check "kernel profile reset fails: uninstall exits non-zero" 1 "$rc"
+check "kernel profile reset fails: recorded stock values kept" yes "$([ -s "$T/cfg/defaults" ] && echo yes || echo no)"
+check "kernel profile reset fails: settings kept" yes "$([ -s "$T/cfg/tune.conf" ] && echo yes || echo no)"
+check "kernel profile reset fails: the limits themselves were restored" 2572800 "$(v cpufreq/policy3/scaling_max_freq)"
+rmdir "$T/kp/kp_mode"; echo 3 > "$T/kp/kp_mode"
+sh "$T/modu/uninstall.sh" >/dev/null 2>&1; rc=$?
+check "kernel profile resets: uninstall exits 0" 0 "$rc"
+check "kernel profile resets: profile is None" 0 "$(v kp/kp_mode)"
+check "kernel profile resets: saved settings removed" no "$([ -e "$T/cfg" ] && echo yes || echo no)"
 mkfake; S boot >/dev/null; S preset tilt >/dev/null; rm -rf "$T/kp"     # a kernel without Kprofiles has nothing to reset
 sh "$T/modu/uninstall.sh" >/dev/null 2>&1; rc=$?
 check "no Kprofiles in the kernel: uninstall still finishes" 0 "$rc"
@@ -697,13 +700,12 @@ check "no snapshot: uninstall keeps the markers" 1 "$(marked big_max)"
 cp "$T/defaults.keep" "$T/cfg/defaults"; rununinst; rc=$?
 check "snapshot back: uninstall exits 0" 0 "$rc"
 check "snapshot back: the phone's own value is restored" 2572800 "$(v cpufreq/policy3/scaling_max_freq)"
-mkfake; mkdir -p "$T/cfg/defaults"; S boot >/dev/null                  # the snapshot cannot be saved: nothing was recorded
-check "no snapshot could be saved: none exists" no "$([ -f "$T/cfg/defaults" ] && echo yes || echo no)"
-out=$(S preset tilt); rc=$?
-check "no snapshot could be saved: the preset is refused" 1 "$rc"
-check "no snapshot could be saved: no limit was changed" 2572800 "$(v cpufreq/policy3/scaling_max_freq)"
-rununinst; rc=$?
-check "no snapshot, nothing changed: uninstall has nothing to restore and finishes" 0 "$rc"
+mkfake; echo 1 > "$T/kp/kp_mode"; S boot >/dev/null                  # Battery profile on at boot: nothing was recorded
+check "Battery profile at boot: no snapshot was taken" no "$([ -f "$T/cfg/defaults" ] && echo yes || echo no)"
+S preset tilt >/dev/null; rununinst; rc=$?
+check "Battery profile at boot, limits changed: uninstall exits 1" 1 "$rc"
+check "Battery profile at boot, limits changed: recovery data kept" yes "$([ -d "$T/cfg" ] && echo yes || echo no)"
+S stop >/dev/null 2>&1; check "stop with no snapshot: exits 1" 1 "$(S stop >/dev/null 2>&1; echo $?)"
 # 2. the changed-marker cannot be saved: the limit must not be changed
 mkfake; S boot >/dev/null; mkdir "$T/cfg/applied"
 out=$(S preset tilt); rc=$?
@@ -824,20 +826,55 @@ check "action with a refused restore: exits non-zero" 1 "$rc"
 has "action with a refused restore: shows the warning" "could not put the phone's own value back" "$out"
 mkfake
 
-echo "--- uninstall: a limit the kernel refuses to restore keeps everything, then works once it can ---"
-rm -rf "$T/modu"
-mkfake; S boot >/dev/null; S preset tilt >/dev/null
-rm -f "$T/cpufreq/policy3/scaling_max_freq"; mkdir "$T/cpufreq/policy3/scaling_max_freq"        # writes are refused
+echo "--- uninstall resets the kernel profile BEFORE it restores the limits ---"
+# Stand-in for a kernel where the Battery profile holds the limit down: the big max can only be written
+# once kp.sh has set the profile to None. (The node is a folder, so writes fail, until then.)
+setup_locked() {
+  mkfake; S boot >/dev/null; S preset tilt >/dev/null; sh "$HERE/../module/kp.sh" mode 1 >/dev/null
+  rm -f "$T/cpufreq/policy3/scaling_max_freq"; mkdir "$T/cpufreq/policy3/scaling_max_freq"
+  rm -rf "$T/modu"; cp -r "$HERE/../module" "$T/modu"
+  sed "s#/data/adb/kprofiles_ui#$T/cfg#" "$HERE/../module/uninstall.sh" > "$T/modu/uninstall.sh"
+  mv "$T/modu/kp.sh" "$T/modu/kp-real.sh"
+  cat > "$T/modu/kp.sh" <<'WRAP'
+#!/bin/sh
+D=$(dirname "$0")
+sh "$D/kp-real.sh" "$@"; rc=$?
+if [ "$1" = mode ] && [ "$2" = 0 ] && [ "$rc" = 0 ] && [ -d "$BIGNODE" ]; then rmdir "$BIGNODE"; echo 2188800 > "$BIGNODE"; fi
+exit $rc
+WRAP
+}
+export BIGNODE="$T/cpufreq/policy3/scaling_max_freq"
+setup_locked
+sh "$T/modu/uninstall.sh" >/dev/null 2>&1; rc=$?
+check "locked limit: uninstall succeeds because the profile is reset first" 0 "$rc"
+check "locked limit: the big max is back to the phone's own value" 2572800 "$(v cpufreq/policy3/scaling_max_freq)"
+check "locked limit: the kernel profile is None" 0 "$(v kp/kp_mode)"
+check "locked limit: saved settings removed" no "$([ -e "$T/cfg" ] && echo yes || echo no)"
+# the profile cannot be reset: nothing can be restored, and everything is kept
+setup_locked; rm -rf "$T/kp/kp_mode"; mkdir "$T/kp/kp_mode"
+sh "$T/modu/uninstall.sh" >/dev/null 2>&1; rc=$?
+check "profile reset fails: uninstall exits 1" 1 "$rc"
+check "profile reset fails: recorded stock values kept" yes "$([ -s "$T/cfg/defaults" ] && echo yes || echo no)"
+check "profile reset fails: settings kept" yes "$([ -s "$T/cfg/tune.conf" ] && echo yes || echo no)"
+check "profile reset fails: marker kept" 1 "$(grep -cx big_max "$T/cfg/applied" 2>/dev/null)"
+rmdir "$T/kp/kp_mode"; echo 1 > "$T/kp/kp_mode"                     # the profile can be reset now
+sh "$T/modu/uninstall.sh" >/dev/null 2>&1; rc=$?
+check "after the profile can be reset: uninstall succeeds" 0 "$rc"
+check "after the profile can be reset: limit restored" 2572800 "$(v cpufreq/policy3/scaling_max_freq)"
+check "after the profile can be reset: saved settings removed" no "$([ -e "$T/cfg" ] && echo yes || echo no)"
+# the profile resets but the restore is still refused: kept, and the profile is already None
+mkfake; S boot >/dev/null; S preset tilt >/dev/null; sh "$HERE/../module/kp.sh" mode 1 >/dev/null
+rm -f "$T/cpufreq/policy3/scaling_max_freq"; mkdir "$T/cpufreq/policy3/scaling_max_freq"
 rm -rf "$T/modu"; cp -r "$HERE/../module" "$T/modu"; sed "s#/data/adb/kprofiles_ui#$T/cfg#" "$HERE/../module/uninstall.sh" > "$T/modu/uninstall.sh"
 sh "$T/modu/uninstall.sh" >/dev/null 2>&1; rc=$?
-check "restore refused: uninstall exits 1" 1 "$rc"
-check "restore refused: recovery data kept" 1 "$([ -s "$T/cfg/defaults" ] && [ -s "$T/cfg/tune.conf" ] && grep -qx big_max "$T/cfg/applied" && echo 1 || echo 0)"
+check "restore refused after the reset: uninstall exits 1" 1 "$rc"
+check "restore refused after the reset: the profile was reset first" 0 "$(v kp/kp_mode)"
+check "restore refused after the reset: recovery data kept" 1 "$([ -s "$T/cfg/defaults" ] && [ -s "$T/cfg/tune.conf" ] && grep -qx big_max "$T/cfg/applied" && echo 1 || echo 0)"
 rmdir "$T/cpufreq/policy3/scaling_max_freq"; echo 2188800 > "$T/cpufreq/policy3/scaling_max_freq"
 sh "$T/modu/uninstall.sh" >/dev/null 2>&1; rc=$?
 check "restore works again: uninstall succeeds and cleans up" "0 no" "$rc $([ -e "$T/cfg" ] && echo yes || echo no)"
-check "restore works again: the phone's own value is back" 2572800 "$(v cpufreq/policy3/scaling_max_freq)"
 check "uninstall.sh runs tune.sh resetall" 1 "$(grep -c 'tune.sh" resetall' "$HERE/../module/uninstall.sh")"
-check "uninstall.sh does not mention kp.sh outside comments" 0 "$(grep -v '^ *#' "$HERE/../module/uninstall.sh" | grep -c 'kp.sh')"
+check "uninstall.sh no longer calls kp.sh itself" 0 "$(grep -v '^ *#' "$HERE/../module/uninstall.sh" | grep -c 'kp.sh')"
 mkfake
 
 echo "--- audit round 2: a control that vanished after the module changed it is a failed restore ---"
@@ -946,13 +983,8 @@ echo "--- a recorded minimum at its maximum is never written back ---"
 mkfake; mkdir -p "$T/cfg"
 printf 'little_min=2016000\nlittle_max=2016000\nbig_min=2572800\nbig_max=2572800\nprime_min=2668800\nprime_max=2668800\ngpu_min=255000000\ngpu_max=900000000\n' > "$T/cfg/defaults"
 out=$(S status | grep '^def_big_min='); check "status does not show a pinned recorded minimum" "def_big_min=" "$out"
-S cfg ENABLED 1 >/dev/null; out=$(S cfg ON_BIG_MIN 787200); rc=$?
-check "pinned record: a custom minimum is refused (nothing to put back)" 1 "$rc"
-has "pinned record: the refusal names the minimum" "not on record for: big_min" "$out"
-check "pinned record: the minimum was not changed" 633600 "$(v cpufreq/policy3/scaling_min_freq)"
-check "pinned record: no changed-marker was written" no "$(grep -qx big_min "$T/cfg/applied" 2>/dev/null && echo yes || echo no)"
-# a limit that an older version had already changed (marker and changed value) must still not be pinned by Stock
-printf 'big_min\n' > "$T/cfg/applied"; echo 787200 > "$T/cpufreq/policy3/scaling_min_freq"
+S cfg ENABLED 1 >/dev/null; S cfg ON_BIG_MIN 787200 >/dev/null
+check "custom min applied" 787200 "$(v cpufreq/policy3/scaling_min_freq)"
 out=$(S preset stock); rc=$?
 check "Stock does not pin the minimum at the maximum" 787200 "$(v cpufreq/policy3/scaling_min_freq)"
 has "Stock says the minimum has no recorded value" "not recorded" "$out"
@@ -1012,9 +1044,8 @@ echo "--- restoring when the frequency list disappears after a minimum was chang
 mkfake; mkdir -p "$T/cfg"
 printf 'little_min=595200\nlittle_max=2016000\nbig_min=2572800\nbig_max=2572800\nprime_min=633600\nprime_max=2668800\ngpu_min=255000000\ngpu_max=900000000\n' > "$T/cfg/defaults"
 cp "$T/cfg/defaults" "$T/defaults.keep"
-S cfg ENABLED 1 >/dev/null
-printf 'big_min\n' > "$T/cfg/applied"; echo 787200 > "$T/cpufreq/policy3/scaling_min_freq"       # as an older version could have left it
-check "pinned record: the old marker is on file" 1 "$(grep -c '^big_min$' "$T/cfg/applied")"
+S cfg ENABLED 1 >/dev/null; S cfg ON_BIG_MIN 787200 >/dev/null
+check "pinned record: custom minimum applied and marked" 1 "$(grep -c '^big_min$' "$T/cfg/applied")"
 rm -f "$T/cpufreq/policy3/scaling_available_frequencies"
 out=$(S preset stock); rc=$?
 check "pinned record, list gone: the minimum is NOT pinned at the maximum" 787200 "$(v cpufreq/policy3/scaling_min_freq)"
@@ -1031,130 +1062,6 @@ S preset stock >/dev/null; rc=$?
 check "good record, list gone: the phone's own minimum is back" 633600 "$(v cpufreq/policy3/scaling_min_freq)"
 check "good record, list gone: exit status 0" 0 "$rc"
 check "good record, list gone: the changed-marker is cleared" 0 "$(grep -c '^big_min$' "$T/cfg/applied")"
-mkfake
-
-echo "--- v1.3.0 (audit P1): a control that disappears while a limit of ours is marked ---"
-marker_on() { grep -qx "$1" "$T/cfg/applied" 2>/dev/null && echo yes || echo no; }
-# (a) the MAX control vanishes, our change was on the MIN: the minimum can still be put back, and is
-mkfake; S boot >/dev/null; S cfg ENABLED 1 >/dev/null; S cfg ON_LITTLE_MIN 787200 >/dev/null
-check "vanished max: our little min is applied" 787200 "$(v cpufreq/policy0/scaling_min_freq)"
-check "vanished max: our little min is marked" yes "$(marker_on little_min)"
-rm -f "$T/cpufreq/policy0/scaling_max_freq"
-out=$(S preset stock); rc=$?
-check "vanished max: Stock put the phone's own min back" 595200 "$(v cpufreq/policy0/scaling_min_freq)"
-check "vanished max: Stock reports success only because the value is back" 0 "$rc"
-check "vanished max: the marker is cleared once the value is verified" no "$(marker_on little_min)"
-# (b) the control we changed is the one that vanished: that is a failed restore, never ok
-mkfake; S boot >/dev/null; S cfg ENABLED 1 >/dev/null; S cfg ON_LITTLE_MIN 787200 >/dev/null
-rm -f "$T/cpufreq/policy0/scaling_min_freq"
-out=$(S preset stock); rc=$?
-check "vanished min: Stock exits 1" 1 "$rc"
-if printf '%s\n' "$out" | grep -qx ok; then echo "FAIL vanished min: Stock printed ok"; fail=1; else echo "ok   vanished min: Stock does not print ok"; fi
-check "vanished min: the marker is kept" yes "$(marker_on little_min)"
-check "vanished min: the recorded value is kept" 595200 "$(sed -n 's/^little_min=//p' "$T/cfg/defaults")"
-rununinst; rc=$?
-check "vanished min: uninstall exits 1" 1 "$rc"
-check "vanished min: uninstall keeps the recovery data" yes "$([ -s "$T/cfg/defaults" ] && [ -s "$T/cfg/tune.conf" ] && [ "$(marker_on little_min)" = yes ] && echo yes || echo no)"
-mkpol "$T/cpufreq/policy0" "364800 441600 595200 787200" 787200 2016000      # the controls come back
-rununinst; rc=$?
-check "vanished min, back again: uninstall exits 0" 0 "$rc"
-check "vanished min, back again: the phone's own min is restored" 595200 "$(v cpufreq/policy0/scaling_min_freq)"
-# (c) both controls vanish
-mkfake; S boot >/dev/null; S cfg ENABLED 1 >/dev/null; S cfg ON_LITTLE_MIN 787200 >/dev/null
-rm -rf "$T/cpufreq/policy0"
-out=$(S preset stock); rc=$?
-check "both vanished: Stock exits 1" 1 "$rc"
-check "both vanished: the marker is kept" yes "$(marker_on little_min)"
-rununinst; rc=$?
-check "both vanished: uninstall exits 1 and keeps the data" "1 yes" "$rc $([ -d "$T/cfg" ] && echo yes || echo no)"
-# (d) asking for a limit on a control the phone does not have is a rejected limit, and nothing is written there
-mkfake; S boot >/dev/null; S cfg ENABLED 1 >/dev/null; rm -f "$T/cpufreq/policy0/scaling_min_freq"
-out=$(S cfg ON_LITTLE_MIN 787200); rc=$?
-check "missing min control: the request exits 1" 1 "$rc"
-has "missing min control: says the control is missing" "control for little_min is missing" "$out"
-check "missing min control: nothing was created at the missing node" no "$([ -e "$T/cpufreq/policy0/scaling_min_freq" ] && echo yes || echo no)"
-check "missing min control: no marker was written" no "$(marker_on little_min)"
-mkfake
-
-echo "--- v1.3.0 (audit P1): no limit is changed unless the phone's own value for it is on record ---"
-# a snapshot that lacks the little minimum: a custom little min is refused, a preset (maximums only) is not
-mkfake; S boot >/dev/null; sed -i '/^little_min=/d' "$T/cfg/defaults"
-S cfg ENABLED 1 >/dev/null
-out=$(S cfg ON_LITTLE_MIN 787200); rc=$?
-check "min not recorded: a custom minimum is refused" 1 "$rc"
-has "min not recorded: names it" "not on record for: little_min" "$out"
-check "min not recorded: the minimum was not changed" 595200 "$(v cpufreq/policy0/scaling_min_freq)"
-out=$(S preset tilt); rc=$?
-check "min not recorded: a preset that only sets maximums still works" 0 "$rc"
-check "min not recorded: the preset limit is in place" 2188800 "$(v cpufreq/policy3/scaling_max_freq)"
-# a control the phone does not have is not demanded
-mkfake; S boot >/dev/null; rm -rf "$T/gpu"; rm -f "$T/cfg/defaults"; S boot >/dev/null
-out=$(S preset tilt); rc=$?
-check "no GPU on the phone: the preset still applies" 0 "$rc"
-check "no GPU on the phone: the CPU limit is in place" 2188800 "$(v cpufreq/policy3/scaling_max_freq)"
-# the refusal changes nothing at all: no limit, no marker, no watcher
-mkfake; S boot >/dev/null; sed -i '/^prime_max=/d' "$T/cfg/defaults"; unset TUNE_NO_DAEMON
-out=$(S preset tilt); rc=$?
-check "prime max not recorded: the preset is refused" 1 "$rc"
-check "prime max not recorded: big max untouched" 2572800 "$(v cpufreq/policy3/scaling_max_freq)"
-check "prime max not recorded: gpu max untouched" 900000000 "$(v gpu/max_freq)"
-check "prime max not recorded: no marker file content" no "$([ -s "$T/cfg/applied" ] && echo yes || echo no)"
-check "prime max not recorded: no watcher was started" 0 "$(S status | grep -c '^daemon=1')"
-export TUNE_NO_DAEMON=1
-mkfake
-
-echo "--- v1.3.0: something outside the module changes a limit ---"
-mkfake; S boot >/dev/null; S preset tilt >/dev/null
-check "nothing outside changed: external is empty" "external=" "$(S status | grep '^external=')"
-echo 1286400 > "$T/cpufreq/policy3/scaling_max_freq"              # another tool lowers our big max
-out=$(S status); has "external change is reported" "big_max" "$(printf '%s\n' "$out" | grep '^external=')"
-S apply >/dev/null
-check "after Apply the limit is back" 2188800 "$(v cpufreq/policy3/scaling_max_freq)"
-check "after Apply external is empty again" "external=" "$(S status | grep '^external=')"
-S preset stock >/dev/null; echo 1286400 > "$T/cpufreq/policy3/scaling_max_freq"
-check "limits off: a change is not reported as ours" "external=" "$(S status | grep '^external=')"
-# the watcher puts a limit back a few times, then stops fighting
-mkfake; unset TUNE_NO_DAEMON
-export TUNE_POLL_ON=1 TUNE_POLL_OFF=1 TUNE_REASSERT=1 TUNE_EXT_RETRIES=2
-S preset tilt >/dev/null
-i=0; while [ "$i" -lt 10 ]; do out=$(S status); case "$out" in *daemon=1*) break ;; esac; sleep 1; i=$((i + 1)); done
-has "override test: watcher running" "daemon=1" "$out"
-( while :; do echo 1286400 > "$T/cpufreq/policy3/scaling_max_freq"; sleep 0.2 2>/dev/null || sleep 1; done ) & holder=$!
-i=0; while [ "$i" -lt 30 ]; do grep -q 'no longer putting it back' "$T/cfg/tune.log" 2>/dev/null && break; sleep 1; i=$((i + 1)); done
-check "override: the watcher stopped putting it back" 1 "$(grep -c 'no longer putting it back' "$T/cfg/tune.log")"
-check "override: it tried exactly the allowed number of times" 2 "$(grep -c 'putting it back (' "$T/cfg/tune.log")"
-sleep 4
-check "override: and then left it alone" 1 "$(grep -c 'no longer putting it back' "$T/cfg/tune.log")"
-check "override: no further attempts" 2 "$(grep -c 'putting it back (' "$T/cfg/tune.log")"
-has "override: status reports it" "big_max" "$(S status | grep '^external=')"
-kill "$holder" 2>/dev/null; wait "$holder" 2>/dev/null; holder=""
-echo 0 > "$T/bl/brightness"                                       # a screen change is a fresh start
-waitfor "override: the screen change applies the limits again" 787200 cpufreq/policy3/scaling_max_freq 15
-echo 120 > "$T/bl/brightness"
-waitfor "override: and the screen-on limit comes back" 2188800 cpufreq/policy3/scaling_max_freq 15
-S cfg ENABLED 0 >/dev/null
-export TUNE_NO_DAEMON=1 TUNE_POLL_ON=1 TUNE_POLL_OFF=1 TUNE_REASSERT=3; unset TUNE_EXT_RETRIES
-mkfake
-
-echo "--- v1.3.0: upgrading from v1.2.x ---"
-# v1.2.x saved its kernel-profile choice in "config"; this version ignores it, says so, and leaves the file alone
-mkfake; mkdir -p "$T/cfg"; printf 'PERSIST=1\nMODE=1\nAUTO=N\n' > "$T/cfg/config"; cp "$T/cfg/config" "$T/config.keep"; echo 0 > "$T/kp/kp_mode"
-out=$(S boot)
-has "saved kernel profile: boot tells you it is no longer applied" "no longer manages the kernel profile" "$out"
-check "saved kernel profile: the kernel profile was not set" 0 "$(v kp/kp_mode)"
-check "saved kernel profile: the old file is untouched" 0 "$(cmp -s "$T/config.keep" "$T/cfg/config"; echo $?)"
-check "saved kernel profile: status reports it" "legacy_kp=1" "$(S status | grep '^legacy_kp=')"
-mkfake; mkdir -p "$T/cfg"; printf 'PERSIST=1\nMODE=0\nAUTO=N\n' > "$T/cfg/config"
-check "saved kernel profile None: nothing to say" "legacy_kp=" "$(S status | grep '^legacy_kp=')"
-mkfake; mkdir -p "$T/cfg"; printf 'PERSIST=0\nMODE=1\nAUTO=N\n' > "$T/cfg/config"
-check "saved kernel profile not persisted: nothing to say" "legacy_kp=" "$(S status | grep '^legacy_kp=')"
-# settings and recorded values from v1.2.x keep working as they are
-mkfake; mkdir -p "$T/cfg"
-printf 'ENABLED=1\nSCREENOFF=1\nPRESET=tilt\nON_BIG_MAX=2188800\nOFF_BIG_MAX=787200\n' > "$T/cfg/tune.conf"
-printf 'little_min=595200\nlittle_max=2016000\nbig_min=633600\nbig_max=2572800\nprime_min=633600\nprime_max=2668800\ngpu_min=255000000\ngpu_max=900000000\n' > "$T/cfg/defaults"
-S boot >/dev/null
-check "upgrade: the saved settings are applied" 2188800 "$(v cpufreq/policy3/scaling_max_freq)"
-check "upgrade: the recorded values are the ones used for Stock" 2572800 "$(S preset stock >/dev/null; v cpufreq/policy3/scaling_max_freq)"
 mkfake
 
 [ "$fail" = 0 ] && echo "all tune tests passed" || { echo "SOME TESTS FAILED"; exit 1; }
