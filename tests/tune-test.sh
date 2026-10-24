@@ -34,6 +34,19 @@ waitfor() { # name expected file seconds   (poll instead of a fixed sleep, so sl
   echo "FAIL $1: expected '$2' got '$(cat "$T/$3")'"; fail=1
 }
 S() { sh "$TUNE" "$@"; }
+# settle: wait (up to 10 s) until no watcher of this test run is left. A watcher removes its pid file a
+# moment before the process is gone, and busybox ash can show a background sleep with the watcher's name.
+# watchers (tune.sh daemon) that belong to this test run, by command line
+nwatch() {
+  nw=0
+  for nf in /proc/[0-9]*/cmdline; do
+    case "$(tr '\0' ' ' < "$nf" 2>/dev/null)" in
+      *"$T"*"tune.sh daemon"*|*"$HERE"*"tune.sh daemon"*) nw=$((nw + 1)) ;;
+    esac
+  done
+  echo "$nw"
+}
+settle() { si=0; while [ "$(nwatch)" != 0 ] && [ "$si" -lt 10 ]; do sleep 1; si=$((si + 1)); done; }
 
 mkfake
 echo "--- initial ---"
@@ -185,7 +198,7 @@ has "watcher stopped after disable" "daemon=0" "$out"
 waitfor "disable restored big max" 2572800 cpufreq/policy3/scaling_max_freq 10
 
 echo "--- preset values are checked against the phone's own list ---"
-mkfake; TUNE_NO_DAEMON=1
+mkfake; export TUNE_NO_DAEMON=1
 sed -i 's/ 1017600//' "$T/cpufreq/policy0/scaling_available_frequencies"   # this phone lacks 1017600
 out=$(S preset tilt); has "preset skips unavailable value" "warn: preset value 1017600 is not available for little" "$out"
 check "skipped value not saved" "" "$(sed -n 's/^OFF_LITTLE_MAX=//p' "$T/cfg/tune.conf")"
@@ -226,6 +239,7 @@ S preset stock >/dev/null
 check "after the reboot Stock restores the real value" 2572800 "$(v cpufreq/policy3/scaling_max_freq)"
 
 echo "--- the watcher hands the limits back when the module is disabled or removed ---"
+settle; check "no stray watcher left over from earlier sections" 0 "$(nwatch)"
 unset TUNE_NO_DAEMON; export TUNE_POLL_ON=1 TUNE_POLL_OFF=1 TUNE_REASSERT=3 TUNE_DAEMON_LOG="$T/daemon.log"
 for marker in disable remove; do
   : > "$T/daemon.log"
@@ -288,6 +302,7 @@ S resetall >/dev/null 2>&1; check "resetall without Kprofiles still works" 25728
 mkfake
 
 echo "--- watcher lifecycle: stop, restart, and exit never touch each other's pid file ---"
+settle
 unset TUNE_NO_DAEMON; export TUNE_POLL_ON=3 TUNE_POLL_OFF=3 TUNE_REASSERT=10
 mkfake; S preset tilt >/dev/null; sleep 1
 old=$(cat "$T/cfg/daemon.pid"); S cfg ENABLED 0 >/dev/null
@@ -314,6 +329,7 @@ kill "$bystander" 2>/dev/null
 export TUNE_NO_DAEMON=1
 
 echo "--- watcher started by name from inside the module folder still gets the real module folder ---"
+settle
 unset TUNE_NO_DAEMON; export TUNE_POLL_ON=1 TUNE_POLL_OFF=1 TUNE_REASSERT=3
 for marker in disable remove; do
   mkfake; rm -rf "$T/mod" "$T/elsewhere"; mkdir -p "$T/mod" "$T/elsewhere"; cp "$HERE/../module/tune.sh" "$HERE/../module/kp.sh" "$T/mod/"
@@ -331,6 +347,7 @@ done
 export TUNE_NO_DAEMON=1
 
 echo "--- stop reports a watcher that will not exit and keeps its pid file ---"
+settle
 unset TUNE_NO_DAEMON
 mkfake; mkdir -p "$T/cfg" "$T/stub"
 printf 'trap "" TERM\nwhile :; do sleep 1; done\n' > "$T/stub/tune.sh"

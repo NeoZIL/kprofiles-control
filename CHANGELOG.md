@@ -29,7 +29,12 @@
   `dist/*.zip` can never include a stale one. The zip is now reproducible (fixed file dates, sorted
   file order, fixed permissions): the same source gives the same bytes, which the byte-for-byte check
   above relies on.
-- New tests for all of the above, under dash, mksh and busybox ash in CI.
+- New tests for all of the above, under dash, mksh and busybox ash in CI. The test script itself had a
+  bug: after one section it set `TUNE_NO_DAEMON=1` without exporting it, so later sections started
+  real watchers that kept running and re-applied limits during the disable / remove test, which made
+  that test fail on slower shells (busybox ash). Fixed, and each watcher section now first waits until
+  no watcher from an earlier section is left. The watcher can also write its output to a file
+  (`TUNE_DAEMON_LOG`, off by default) so test failures show its errors.
 
 ## v1.1.4
 - New: **updates straight from the KernelSU-Next manager.** The module now carries an
