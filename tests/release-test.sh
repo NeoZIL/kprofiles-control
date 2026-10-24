@@ -32,7 +32,10 @@ case "$sub" in
     [ -f "$FAKE/state_$tag" ] || notfound
     case "$json" in
       isDraft) [ "$(cat "$FAKE/state_$tag")" = draft ] && echo true || echo false ;;
-      assets)  cat "$FAKE/assets_$tag" ;;
+      assets)
+        n=$(cat "$FAKE/viewmiss" 2>/dev/null || echo 0)       # a just-created release is not found yet
+        if [ "$n" -gt 0 ]; then echo $((n - 1)) > "$FAKE/viewmiss"; notfound; fi
+        cat "$FAKE/assets_$tag" ;;
     esac ;;
   create) echo draft > "$FAKE/state_$tag"; : > "$FAKE/assets_$tag" ;;
   upload)
@@ -242,6 +245,17 @@ reset; run FAKE_WRONG_URL=1; check "update.json pointing at another release: job
 reset; run; check "verified release: ok" 0 $?
 has_line() { grep -q "$2" "$1" && echo "ok   $3" || { echo "FAIL $3"; fail=1; }; }
 has_line "$T/out" "published and verified" "success message says what was verified"
+
+# 14. A release that GitHub cannot find for a moment after it was created: the asset listing is retried.
+reset; echo 2 > "$F/viewmiss"
+run; check "new release not visible yet: retried, job ok" 0 $?
+check "new release not visible yet: published" "published" "$(cat "$F/state_v2.3.4")"
+check "new release not visible yet: looked again twice" 2 "$(grep -c 'looking again' "$T/out")"
+reset; echo 99 > "$F/viewmiss"
+run; check "release never becomes visible: job fails" 1 $?
+check "release never becomes visible: stays a draft" "draft" "$(cat "$F/state_v2.3.4")"
+check "release never becomes visible: never published" 0 "$(calls 'draft=false')"
+reset; run FAKE_GH_FAIL=tag; check "other lookup errors are still not retried" 0 "$(grep -c 'looking again' "$T/out")"
 
 # 8. Missing build output is refused.
 reset; rm -f "$R/dist/changelog.md"; run; check "missing file refused" 1 $?

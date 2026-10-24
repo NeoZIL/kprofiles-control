@@ -132,11 +132,42 @@ apply_domain() { # cluster state(on|off|none)
   [ -n "$ad_dmax" ] && [ "$ad_curmax" != "$ad_dmax" ] && wr "$ad_pmax" "$ad_dmax"
   [ -n "$ad_dmin" ] && [ "$(rd "$ad_pmin")" != "$ad_dmin" ] && wr "$ad_pmin" "$ad_dmin"
   # check what the kernel really took
-  if [ -n "$ad_dmin" ] && [ "$(rd "$ad_pmin")" != "$ad_dmin" ]; then echo "warn: $ad_c min wanted $ad_dmin, kernel says $(rd "$ad_pmin")"; fi
-  if [ -n "$ad_dmax" ] && [ "$(rd "$ad_pmax")" != "$ad_dmax" ]; then echo "warn: $ad_c max wanted $ad_dmax, kernel says $(rd "$ad_pmax")"; fi
-  # remember what we changed
-  if [ -n "$ad_dmin" ]; then if [ -n "$ad_rmin" ]; then unmark_applied "${ad_c}_min"; else mark_applied "${ad_c}_min"; fi; fi
-  if [ -n "$ad_dmax" ]; then if [ -n "$ad_rmax" ]; then unmark_applied "${ad_c}_max"; else mark_applied "${ad_c}_max"; fi; fi
+  ad_okmin=1; ad_okmax=1
+  if [ -n "$ad_dmin" ] && [ "$(rd "$ad_pmin")" != "$ad_dmin" ]; then ad_okmin=""; echo "warn: $ad_c min wanted $ad_dmin, kernel says $(rd "$ad_pmin")"; fi
+  if [ -n "$ad_dmax" ] && [ "$(rd "$ad_pmax")" != "$ad_dmax" ]; then ad_okmax=""; echo "warn: $ad_c max wanted $ad_dmax, kernel says $(rd "$ad_pmax")"; fi
+  # Remember what we changed. A limit of ours is forgotten only once the phone's own value has been
+  # verified back in place; a restore the kernel refused stays marked, so Stock or Apply can retry it.
+  ad_note=""
+  if [ -n "$ad_dmin" ]; then
+    if [ -z "$ad_rmin" ]; then mark_applied "${ad_c}_min"
+    elif [ -n "$ad_okmin" ]; then unmark_applied "${ad_c}_min"
+    else ad_note="$ad_note ${ad_c}_min"; fi
+  fi
+  if [ -n "$ad_dmax" ]; then
+    if [ -z "$ad_rmax" ]; then mark_applied "${ad_c}_max"
+    elif [ -n "$ad_okmax" ]; then unmark_applied "${ad_c}_max"
+    else ad_note="$ad_note ${ad_c}_max"; fi
+  fi
+  if [ -n "$ad_note" ]; then
+    echo "warn: could not put the phone's own value back for:$ad_note; it stays marked as changed so a later Stock or Apply tries again"
+    log_msg "restore refused by the kernel for:$ad_note (kept marked, will be retried)"
+  fi
+  return 0
+}
+# Limits we changed whose original value was never recorded: Stock has nothing to put back for them.
+# Nothing is guessed; the caller is told which ones.
+warn_nodefault() {
+  wn=""
+  for c in $CLUSTERS; do for k in min max; do
+    if is_applied "${c}_${k}" && [ -z "$(def_of "${c}_${k}")" ]; then wn="$wn ${c}_${k}"; fi
+  done; done
+  [ -z "$wn" ] || echo "warn: the phone's own value is not recorded for:$wn, so Stock cannot put it back until the next reboot"
+  return 0
+}
+# The watcher hands limits back without a terminal: whatever apply_state says goes to the log.
+apply_none_logged() {
+  anl=$(apply_state none)
+  [ -z "$anl" ] || log_msg "watcher $$: $(printf '%s' "$anl" | tr '\n' ';')"
   return 0
 }
 apply_state() { load_cfg; for c in $CLUSTERS; do apply_domain "$c" "$1"; done; return 0; }
@@ -171,19 +202,21 @@ lock_take() {
   while ! mkdir "$LOCKD" 2>/dev/null; do
     lo=$(cat "$LOCKD/pid" 2>/dev/null)
     if [ -n "$lo" ] && ! kill -0 "$lo" 2>/dev/null; then rm -rf "$LOCKD"; continue; fi
-    if [ -z "$lo" ] && [ "$lk" -ge 20 ]; then rm -rf "$LOCKD"; continue; fi   # owner died before writing its pid
+    if [ -z "$lo" ] && [ "$lk" -ge 50 ]; then rm -rf "$LOCKD"; continue; fi   # no pid after ~5 s: the owner died before writing it
     lk=$((lk + 1)); [ "$lk" -lt "$LOCK_TRIES" ] || return 1
     tick
   done
   echo $$ > "$LOCKD/pid"
   return 0
 }
-lock_free() { rm -rf "$LOCKD"; }
+# Only the process that wrote the pid removes the lock, so a late caller never frees a lock that someone
+# else has taken over in the meantime.
+lock_free() { [ "$(cat "$LOCKD/pid" 2>/dev/null)" = "$$" ] && rm -rf "$LOCKD"; return 0; }
 abs_moddir() { ( cd "$MODDIR" 2>/dev/null && pwd ) || echo "$MODDIR"; }
 start_daemon() {
   [ "$TUNE_NO_DAEMON" = 1 ] && return 0
   mkdir -p "$CFG_DIR" 2>/dev/null
-  lock_take || { echo "warn: another start or stop of the watcher is in progress, not starting it now"; return 0; }
+  lock_take || { echo "error: another start or stop of the watcher is in progress, the watcher was not started"; return 1; }
   if ! daemon_alive; then
     md=$(abs_moddir)
     # The module folder is passed on explicitly: a script started by name alone has no folder in $0.
@@ -195,7 +228,13 @@ start_daemon() {
     # Hold the lock until the new watcher has written its pid file, so the next caller sees it.
     i=0; while [ "$i" -lt "$START_TRIES" ] && ! daemon_alive; do tick; i=$((i + 1)); done
   fi
+  sd_ok=0; daemon_alive && sd_ok=1
   lock_free
+  if [ "$sd_ok" != 1 ]; then
+    log_msg "watcher did not start (no pid file after the wait)"
+    echo "error: the screen on/off watcher did not start"
+    return 1
+  fi
   return 0
 }
 # Stop the watcher and wait until it has really gone, so a new one can never be started while the
@@ -244,12 +283,12 @@ run_daemon() {
     # one used to re-apply the caps right after the first had handed them back.
     owns_pidf || { log_msg "watcher $$ no longer owns the pid file, leaving"; exit 0; }
     load_cfg
-    if [ "$ENABLED" != 1 ]; then apply_state none >/dev/null; break; fi
+    if [ "$ENABLED" != 1 ]; then apply_none_logged; break; fi
     # Disabling or removing a module in the manager only drops a marker file. Notice it here and
     # hand the limits back, instead of holding them until the next reboot.
     if [ -e "$MODDIR/disable" ] || [ -e "$MODDIR/remove" ]; then
       log_msg "watcher $$: module disabled or removed, handing the limits back"
-      apply_state none >/dev/null; break
+      apply_none_logged; break
     fi
     st=on
     if [ "$SCREENOFF" = 1 ]; then scr_get; st=$ST; fi
@@ -273,7 +312,11 @@ cmd_apply() {
     capture_defaults
     [ -f "$DEF" ] || echo "$NOSTOCK"
     apply_state "$(want_state)"
-    start_daemon
+    [ ! -f "$DEF" ] || warn_nodefault
+    if ! start_daemon; then
+      echo "error: your limits are applied for the current screen state, but the watcher that switches them when the screen turns on or off is not running"
+      ca_rc=1
+    fi
   else
     capture_defaults
     [ -f "$DEF" ] || [ ! -s "$APPLIED" ] || echo "$NOSTOCK"
@@ -282,6 +325,7 @@ cmd_apply() {
       ca_rc=1
     fi
     apply_state none
+    [ ! -f "$DEF" ] || warn_nodefault
   fi
   return "$ca_rc"
 }

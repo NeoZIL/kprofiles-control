@@ -7,10 +7,14 @@ T=$(mktemp -d)
 # is found). A watcher that outlives its section keeps re-applying limits to the next fake phone.
 reap() {
   rp=""
-  for e in /proc/[0-9]*/environ; do
-    p=${e%/environ}
-    tr '\0' '\n' < "$e" 2>/dev/null | grep -qx "CFG_DIR=$T/cfg" || continue
-    case "$(tr '\0' ' ' < "$p/cmdline" 2>/dev/null)" in *"tune.sh daemon"*) rp="$rp ${p#/proc/}" ;; esac
+  # One grep over all command lines finds the few candidates; only those get a closer look. Errors for
+  # processes we may not read are silenced around the redirection itself (a redirection that fails is
+  # reported by the shell, not by the command, so a plain 2>/dev/null after it is not enough).
+  for e in $(grep -l 'tune.sh' /proc/[0-9]*/cmdline 2>/dev/null); do
+    p=${e%/cmdline}
+    case "$({ tr '\0' ' ' < "$e"; } 2>/dev/null)" in *"tune.sh daemon"*) ;; *) continue ;; esac
+    { tr '\0' '\n' < "$p/environ"; } 2>/dev/null | grep -qx "CFG_DIR=$T/cfg" || continue
+    rp="$rp ${p#/proc/}"
   done
   [ -n "$rp" ] || return 0
   # shellcheck disable=SC2086
@@ -367,9 +371,46 @@ mkfake; mkdir -p "$T/cfg"; sleep 300 & other=$!
 echo "$other" > "$T/cfg/daemon.pid"; S stop >/dev/null
 check "stale pid file of an unrelated process is cleaned up" "no" "$([ -f "$T/cfg/daemon.pid" ] && echo yes || echo no)"
 kill "$other" 2>/dev/null
+echo "--- a watcher that fails to start is reported, not called ok ---"
+mkfake; mkdir -p "$T/failbin"; for n in setsid nohup; do printf '#!/bin/sh\nexit 0\n' > "$T/failbin/$n"; chmod +x "$T/failbin/$n"; done
+out=$(PATH="$T/failbin:$PATH" TUNE_START_TRIES=5 S preset tilt); rc=$?
+check "no watcher: the command fails" 1 "$rc"
+has "no watcher: the failure is reported" "error: the screen on/off watcher did not start" "$out"
+has "no watcher: says the limits themselves are applied" "your limits are applied for the current screen state" "$out"
+if printf '%s\n' "$out" | grep -qx ok; then echo "FAIL no watcher: must not print ok"; fail=1; else echo "ok   no watcher: no ok line"; fi
+check "no watcher: limits are applied anyway" 2188800 "$(v cpufreq/policy3/scaling_max_freq)"
+has "no watcher: logged" "watcher did not start" "$(cat "$T/cfg/tune.log")"
+check "no watcher: lock released" "no" "$([ -d "$T/cfg/daemon.lock" ] && echo yes || echo no)"
+out=$(S preset tilt); rc=$?; check "a working watcher: the command succeeds" 0 "$rc"
+S cfg ENABLED 0 >/dev/null
+
+echo "--- a lock whose owner has not written its pid yet is not taken over quickly ---"
+mkfake; mkdir -p "$T/cfg/daemon.lock"
+out=$(TUNE_LOCK_TRIES=30 S preset tilt); rc=$?
+check "pid-less lock: start gives up instead of taking it over" 1 "$rc"
+check "pid-less lock: lock still there" "yes" "$([ -d "$T/cfg/daemon.lock" ] && echo yes || echo no)"
+rm -rf "$T/cfg/daemon.lock"
+
+echo "--- a restore the kernel refuses is logged by the watcher and kept for a retry ---"
+mkfake; rm -rf "$T/mod"; mkdir -p "$T/mod"; cp "$HERE/../module/tune.sh" "$HERE/../module/kp.sh" "$T/mod/"
+export TUNE_POLL_ON=1 TUNE_POLL_OFF=1 TUNE_REASSERT=3
+sh "$T/mod/tune.sh" boot >/dev/null; sh "$T/mod/tune.sh" preset tilt >/dev/null
+i=0; while [ "$i" -lt 10 ] && [ ! -s "$T/cfg/daemon.pid" ]; do sleep 1; i=$((i + 1)); done
+rm -f "$T/cpufreq/policy3/scaling_max_freq"; mkdir "$T/cpufreq/policy3/scaling_max_freq"   # writes to it now fail
+touch "$T/mod/disable"
+i=0; while [ "$i" -lt 30 ]; do [ -s "$T/cfg/daemon.pid" ] || break; sleep 1; i=$((i + 1)); done
+has "watcher: refused restore is in the log" "could not put the phone's own value back for: big_max" "$(cat "$T/cfg/tune.log" 2>/dev/null)"
+check "watcher: refused restore stays marked" 1 "$(grep -cx big_max "$T/cfg/applied")"
+check "watcher: the other limits were handed back" 2668800 "$(v cpufreq/policy7/scaling_max_freq)"
+export TUNE_POLL_ON=3 TUNE_POLL_OFF=3 TUNE_REASSERT=10
+rm -f "$T/mod/disable"
+
 echo "--- start and stop share one lock ---"
 mkfake; mkdir -p "$T/cfg/daemon.lock"; sleep 300 & holder=$!; echo "$holder" > "$T/cfg/daemon.lock/pid"
-out=$(TUNE_LOCK_TRIES=5 S preset tilt); has "busy lock: start is skipped with a warning" "another start or stop of the watcher is in progress" "$out"
+out=$(TUNE_LOCK_TRIES=5 S preset tilt); rc=$?; has "busy lock: start is skipped with a warning" "another start or stop of the watcher is in progress" "$out"
+check "busy lock: the command fails, it does not say ok" 1 "$rc"
+check "busy lock: limits are still applied" 2188800 "$(v cpufreq/policy3/scaling_max_freq)"
+check "busy lock: a live owner's lock is left alone" "$holder" "$(cat "$T/cfg/daemon.lock/pid" 2>/dev/null)"
 check "busy lock: no watcher started" "no" "$([ -f "$T/cfg/daemon.pid" ] && echo yes || echo no)"
 kill "$holder" 2>/dev/null; wait "$holder" 2>/dev/null
 S status >/dev/null; S apply >/dev/null; sleep 1
@@ -377,6 +418,31 @@ check "lock of a dead owner is taken over" "yes" "$([ -f "$T/cfg/daemon.pid" ] &
 check "lock is released afterwards" "no" "$([ -d "$T/cfg/daemon.lock" ] && echo yes || echo no)"
 S cfg ENABLED 0 >/dev/null
 export TUNE_NO_DAEMON=1
+
+echo "--- a restore that fails keeps the limit marked until a retry succeeds ---"
+mkfake; S boot >/dev/null; S preset tilt >/dev/null
+rm -f "$T/cpufreq/policy3/scaling_max_freq"; mkdir "$T/cpufreq/policy3/scaling_max_freq"       # the kernel refuses writes
+out=$(S preset stock)
+has "refused restore: Stock says so" "could not put the phone's own value back for: big_max" "$out"
+check "refused restore: big max still marked as changed" 1 "$(grep -cx big_max "$T/cfg/applied")"
+check "refused restore: logged" 1 "$(grep -c 'restore refused by the kernel for: big_max' "$T/cfg/tune.log")"
+check "refused restore: the other limits were restored" 2668800 "$(v cpufreq/policy7/scaling_max_freq)"
+rmdir "$T/cpufreq/policy3/scaling_max_freq"; echo 2188800 > "$T/cpufreq/policy3/scaling_max_freq"   # the node accepts writes again
+out=$(S apply); case "$out" in *"could not put"*) echo "FAIL retry: still failing"; fail=1 ;; *) echo "ok   retry: no warning" ;; esac
+check "retry: the phone's own value is back" 2572800 "$(v cpufreq/policy3/scaling_max_freq)"
+check "retry: the marker is gone" 0 "$(grep -cx big_max "$T/cfg/applied" 2>/dev/null)"
+mkfake; S boot >/dev/null; S preset tilt >/dev/null; S preset stock >/dev/null
+check "clean restore: nothing stays marked" 0 "$(grep -c . "$T/cfg/applied" 2>/dev/null)"
+
+echo "--- a partial snapshot is reported by Stock, and nothing is made up ---"
+mkfake; : > "$T/cpufreq/policy3/scaling_max_freq"; S boot >/dev/null     # first boot, one reading missing
+out=$(S preset tilt); has "partial snapshot: Apply names the missing value" "not recorded for: big_max" "$out"
+out=$(S preset stock); has "partial snapshot: Stock names it too" "not recorded for: big_max" "$out"
+check "partial snapshot: no value was invented for big max" "" "$(sed -n 's/^big_max=//p' "$T/cfg/defaults")"
+check "partial snapshot: big max is left as it is" 2188800 "$(v cpufreq/policy3/scaling_max_freq)"
+check "partial snapshot: the recorded ones were restored" 2668800 "$(v cpufreq/policy7/scaling_max_freq)"
+mkfake; S boot >/dev/null; out=$(S preset tilt); case "$out" in *"not recorded for"*) echo "FAIL complete snapshot warns"; fail=1 ;; *) echo "ok   complete snapshot: no warning" ;; esac
+out=$(S preset stock); case "$out" in *"not recorded for"*) echo "FAIL complete snapshot: Stock warns"; fail=1 ;; *) echo "ok   complete snapshot: Stock does not warn" ;; esac
 
 echo "--- boot never replaces a saved snapshot with an incomplete reading ---"
 mkfake; S boot >/dev/null

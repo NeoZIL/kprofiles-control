@@ -52,7 +52,17 @@ CODE=$(tr -d '\r' < module/module.prop | sed -n 's/^versionCode=//p' | head -n 1
 printf '%s\n' "$CODE" | grep -Eq '^[1-9][0-9]*$' || die "bad versionCode '$CODE'"
 
 # Name and size of every file on the release, one "name size" pair per line.
-assets_of() { gh_view "$TAG" --json assets --jq '.assets[] | "\(.name) \(.size)"'; }
+# A release that was created a moment ago can briefly answer "release not found" on GitHub's side. That
+# one answer is retried a few times (and only that one: any other failure is reported at once).
+assets_of() {
+  ao=0
+  while :; do
+    ao_rc=0; ao_out=$(gh_view "$TAG" --json assets --jq '.assets[] | "\(.name) \(.size)"') || ao_rc=$?
+    if [ "$ao_rc" = 0 ]; then printf '%s\n' "$ao_out"; return 0; fi
+    [ "$ao_rc" = 44 ] && [ "$ao" -lt 5 ] || return "$ao_rc"
+    ao=$((ao + 1)); echo "release: $TAG is not visible yet, looking again ($ao/5)" >&2; sleep 3
+  done
+}
 
 # upload draft|published
 #  draft:     replace all three files (--clobber). Nobody can see a draft, so a failed replacement

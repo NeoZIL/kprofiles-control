@@ -1,5 +1,31 @@
 # Changelog
 
+## v1.1.7
+- Fix: a restore the kernel refuses no longer makes the module forget the limit. Before, a failed
+  write of the phone's own value was reported but the limit was still unmarked as changed, so a later
+  Stock, Apply or disable no longer knew it had to put that value back. A limit is now unmarked only
+  after the phone's own value has been read back correctly; otherwise it stays marked, the module says
+  so (`warn: could not put the phone's own value back for: ...`), logs it, and Stock or Apply tries
+  again.
+- Fix: the watcher no longer discards what the hand-back says. When it hands the limits back for a
+  disabled or removed module (or for "Apply my limits" turned off), any warning is written to
+  `/data/adb/kprofiles_ui/tune.log`.
+- Fix: an incomplete first-boot snapshot no longer lets Stock look complete. If a limit was changed and
+  the phone's own value for it was never recorded, Apply and Stock now say which one
+  (`warn: the phone's own value is not recorded for: ...`). No frequency is ever made up.
+- Fix: a watcher that fails to start is reported. Apply, a preset or a setting now exits non-zero with
+  an `error:` line if the watcher did not appear (or another start or stop held the lock), and says
+  that the limits themselves are applied for the current screen state. Before, it said ok.
+- Safer lock: only the process that took the lock removes it, and a lock whose owner has not written
+  its pid yet is given about five seconds (it was two) before it is treated as abandoned.
+- `release.sh`: right after a new draft release is created, a brief "release not found" answer while
+  listing its files is retried a few times (only that answer; any other failure still stops the job).
+- Tests: the cleanup between sections no longer opens every process's environment (about 250 `Permission
+  denied` lines per run and a slow start of each section); one `grep` over the command lines finds the
+  watchers and only those are looked at, still including a watcher whose pid file is gone. New tests
+  cover a refused restore and its retry, the watcher's log of it, a partial snapshot, a watcher that
+  fails to start, a busy lock, a pid-less lock and the release retry. Each new test fails on v1.1.6.
+
 ## v1.1.6
 - Fix: two watchers could run at once and the second one undid the first one's work. When a
   watcher lost its pid file (a wiped settings folder, or a start that raced another) it kept
