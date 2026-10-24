@@ -162,6 +162,7 @@ tick() { sleep 0.1 2>/dev/null || sleep 1; }   # a tenth of a second where sleep
 # Start and stop take one lock, so two callers can never start, or stop, a watcher at the same time.
 # The lock is a folder holding its owner's pid; a lock whose owner is gone is taken over.
 LOCKD="$CFG_DIR/daemon.lock"
+DLOG="${TUNE_DAEMON_LOG:-/dev/null}"       # where the watcher's own output goes (tests set this to see its errors)
 LOCK_TRIES="${TUNE_LOCK_TRIES:-100}"     # about a tenth of a second each
 lock_take() {
   lk=0
@@ -185,9 +186,9 @@ start_daemon() {
     md=$(abs_moddir)
     # The module folder is passed on explicitly: a script started by name alone has no folder in $0.
     if command -v setsid >/dev/null 2>&1; then
-      setsid sh "$md/tune.sh" daemon "$md" >/dev/null 2>&1 </dev/null &
+      setsid sh "$md/tune.sh" daemon "$md" >>"$DLOG" 2>&1 </dev/null &
     else
-      nohup sh "$md/tune.sh" daemon "$md" >/dev/null 2>&1 </dev/null &
+      nohup sh "$md/tune.sh" daemon "$md" >>"$DLOG" 2>&1 </dev/null &
     fi
     # Hold the lock until the new watcher has written its pid file, so the next caller sees it.
     i=0; while [ "$i" -lt 30 ] && ! daemon_alive; do tick; i=$((i + 1)); done

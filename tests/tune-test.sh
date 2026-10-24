@@ -226,8 +226,9 @@ S preset stock >/dev/null
 check "after the reboot Stock restores the real value" 2572800 "$(v cpufreq/policy3/scaling_max_freq)"
 
 echo "--- the watcher hands the limits back when the module is disabled or removed ---"
-unset TUNE_NO_DAEMON; export TUNE_POLL_ON=1 TUNE_POLL_OFF=1 TUNE_REASSERT=3
+unset TUNE_NO_DAEMON; export TUNE_POLL_ON=1 TUNE_POLL_OFF=1 TUNE_REASSERT=3 TUNE_DAEMON_LOG="$T/daemon.log"
 for marker in disable remove; do
+  : > "$T/daemon.log"
   mkfake; rm -rf "$T/mod"; mkdir -p "$T/mod"; cp "$HERE/../module/tune.sh" "$HERE/../module/kp.sh" "$T/mod/"   # tune.sh looks for the marker in its own folder
   S2() { sh "$T/mod/tune.sh" "$@"; }
   S2 preset tilt >/dev/null
@@ -240,6 +241,12 @@ for marker in disable remove; do
     echo "diag: $(S2 status | grep -E '^(enabled|daemon|state)=' | tr '\n' ' ')"
     echo "diag: pidfile=$(cat "$T/cfg/daemon.pid" 2>/dev/null) markers=$(ls "$T/mod" | tr '\n' ' ')"
     echo "diag: shells running tune.sh: $(grep -l 'tune.sh' /proc/[0-9]*/cmdline 2>/dev/null | wc -l)"
+    wpd=$(cat "$T/cfg/daemon.pid" 2>/dev/null)
+    echo "diag: watcher pid '$wpd' alive=$(kill -0 "$wpd" 2>/dev/null && echo yes || echo no) args='$(tr '\0' ' ' < "/proc/$wpd/cmdline" 2>/dev/null)'"
+    echo "diag: config: $(tr '\n' ' ' < "$T/cfg/tune.conf" 2>/dev/null | cut -c1-300)"
+    echo "diag: defaults: $(tr '\n' ' ' < "$T/cfg/defaults" 2>/dev/null)  applied: $(tr '\n' ' ' < "$T/cfg/applied" 2>/dev/null)"
+    echo "diag: tune.log: $(tr '\n' ' ' < "$T/cfg/tune.log" 2>/dev/null)"
+    echo "diag: watcher output: $(tr '\n' ' ' < "$T/daemon.log" 2>/dev/null | cut -c1-600)"
   fi
   i=0; while [ "$i" -lt 10 ]; do out=$(S2 status); case "$out" in *daemon=0*) break ;; esac; sleep 1; i=$((i + 1)); done
   has "$marker marker: watcher stopped" "daemon=0" "$out"
