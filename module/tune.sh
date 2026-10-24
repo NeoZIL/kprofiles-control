@@ -43,11 +43,26 @@ wr() { { echo "$2" > "$1"; } 2>/dev/null; }
 
 # ---------- config ----------
 load_cfg() { ENABLED=0; SCREENOFF=1; PRESET=stock; [ -f "$CFG" ] && . "$CFG"; return 0; }
+# cfg_put KEY VALUE [KEY VALUE ...]: saves one or more settings in ONE replace of the config file, or
+# changes nothing. Fails (and removes its temporary file) if the folder cannot be made, the settings
+# path is a folder, the temporary file cannot be written or it cannot be moved into place.
+NOSAVE="error: could not save the settings to $CFG, so nothing was changed"
 cfg_put() {
-  mkdir -p "$CFG_DIR" 2>/dev/null; touch "$CFG"
-  grep -v "^$1=" "$CFG" > "$CFG.tmp" 2>/dev/null
-  echo "$1=$2" >> "$CFG.tmp"
-  mv "$CFG.tmp" "$CFG"
+  [ $(($# % 2)) = 0 ] && [ "$#" -ge 2 ] || return 1
+  mkdir -p "$CFG_DIR" 2>/dev/null || return 1
+  [ ! -d "$CFG" ] || return 1
+  cp_pat=""; cp_new=""
+  while [ "$#" -ge 2 ]; do
+    cp_pat="$cp_pat -e ^$1="
+    cp_new="$cp_new$1=$2
+"
+    shift 2
+  done
+  # shellcheck disable=SC2086
+  { { { [ ! -f "$CFG" ] || grep -v $cp_pat "$CFG"; true; } && printf '%s' "$cp_new"; } > "$CFG.tmp"; } 2>/dev/null ||
+    { rm -f "$CFG.tmp" 2>/dev/null; return 1; }
+  mv "$CFG.tmp" "$CFG" 2>/dev/null || { rm -f "$CFG.tmp" 2>/dev/null; return 1; }
+  return 0
 }
 parse_key() {
   case "$1" in ON_*) PK_S=ON; r=${1#ON_} ;; OFF_*) PK_S=OFF; r=${1#OFF_} ;; *) return 1 ;; esac
@@ -339,7 +354,7 @@ cmd_cfg() { # KEY VALUE
   case "$key" in
     ENABLED|SCREENOFF)
       case "$val" in 0|1) ;; *) echo "error: $key must be 0 or 1"; return 1 ;; esac
-      cfg_put "$key" "$val"
+      cfg_put "$key" "$val" || { echo "$NOSAVE"; return 1; }
       ;;
     *)
       parse_key "$key" || { echo "error: unknown setting $key"; return 1; }
@@ -354,8 +369,7 @@ cmd_cfg() { # KEY VALUE
         if [ "$PK_K" = MIN ] && [ "$val" -gt "$other" ]; then echo "error: min must not be above max"; return 1; fi
         if [ "$PK_K" = MAX ] && [ "$val" -lt "$other" ]; then echo "error: max must not be below min"; return 1; fi
       fi
-      cfg_put "$key" "$val"
-      cfg_put PRESET custom
+      cfg_put "$key" "$val" PRESET custom || { echo "$NOSAVE"; return 1; }   # one save: the value and the name together
       ;;
   esac
   cmd_apply
@@ -377,8 +391,11 @@ preset_vals() {
 }
 cmd_preset() {
   preset_vals "$1" || { echo "error: unknown preset (use stock, tilt or saver)"; return 1; }
-  mkdir -p "$CFG_DIR" 2>/dev/null
-  { echo "ENABLED=$P_ENABLED"; echo "SCREENOFF=$P_SCREENOFF"; echo "PRESET=$1"; } > "$CFG.tmp"
+  # the new settings are built in memory and written once, so a failed save leaves the old file alone
+  pbody="ENABLED=$P_ENABLED
+SCREENOFF=$P_SCREENOFF
+PRESET=$1
+"
   for s in ON OFF; do for c in LITTLE BIG PRIME GPU; do for k in MIN MAX; do
     eval "pv=\$P_${s}_${c}_${k}"
     if [ -n "$pv" ]; then
@@ -393,9 +410,13 @@ cmd_preset() {
       fi
       # (controls missing altogether: keep the value, apply_domain reports "controls not found")
     fi
-    echo "${s}_${c}_${k}=$pv" >> "$CFG.tmp"
+    pbody="$pbody${s}_${c}_${k}=$pv
+"
   done; done; done
-  mv "$CFG.tmp" "$CFG"
+  mkdir -p "$CFG_DIR" 2>/dev/null || { echo "$NOSAVE"; return 1; }
+  [ ! -d "$CFG" ] || { echo "$NOSAVE"; return 1; }
+  { printf '%s' "$pbody" > "$CFG.tmp"; } 2>/dev/null || { rm -f "$CFG.tmp" 2>/dev/null; echo "$NOSAVE"; return 1; }
+  mv "$CFG.tmp" "$CFG" 2>/dev/null || { rm -f "$CFG.tmp" 2>/dev/null; echo "$NOSAVE"; return 1; }
   cmd_apply
 }
 

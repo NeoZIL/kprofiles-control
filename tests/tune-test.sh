@@ -581,6 +581,51 @@ sh "$T/modu/uninstall.sh" >/dev/null 2>&1; rc=$?
 check "no Kprofiles in the kernel: uninstall still finishes" 0 "$rc"
 check "no Kprofiles in the kernel: saved settings removed" no "$([ -e "$T/cfg" ] && echo yes || echo no)"
 
+echo "--- a settings file that cannot be saved: nothing is applied, nothing is reported ok, uninstall keeps everything ---"
+cfgsum() { cksum < "$T/cfg/tune.conf"; }
+mkfake; S boot >/dev/null; S preset tilt >/dev/null
+before=$(cfgsum); bigmax=$(v cpufreq/policy3/scaling_max_freq)
+mkdir "$T/cfg/tune.conf.tmp"                                  # the temporary file cannot be written
+out=$(S cfg ON_BIG_MAX 2073600); rc=$?
+check "unwritable temp file: cfg exits non-zero" 1 "$rc"
+has "unwritable temp file: cfg says the setting was not saved" "error: could not save" "$out"
+case "$out" in *ok*) case "$out" in *"error: could not save"*) echo "ok   unwritable temp file: cfg does not print ok" ;; *) echo "FAIL cfg printed ok"; fail=1 ;; esac ;; *) echo "ok   unwritable temp file: cfg does not print ok" ;; esac
+check "unwritable temp file: cfg leaves the saved settings as they were" "$before" "$(cfgsum)"
+check "unwritable temp file: cfg does not apply the old settings as if saved" "$bigmax" "$(v cpufreq/policy3/scaling_max_freq)"
+check "unwritable temp file: the preset name is not half-changed" tilt "$(sed -n 's/^PRESET=//p' "$T/cfg/tune.conf")"
+out=$(S preset saver); rc=$?
+check "unwritable temp file: preset exits non-zero" 1 "$rc"
+has "unwritable temp file: preset says the setting was not saved" "error: could not save" "$out"
+check "unwritable temp file: preset leaves the saved settings as they were" "$before" "$(cfgsum)"
+check "unwritable temp file: preset does not apply anything" "$bigmax" "$(v cpufreq/policy3/scaling_max_freq)"
+rm -rf "$T/modu"; cp -r "$HERE/../module" "$T/modu"
+sed "s#/data/adb/kprofiles_ui#$T/cfg#" "$HERE/../module/uninstall.sh" > "$T/modu/uninstall.sh"
+sh "$T/modu/uninstall.sh" >/dev/null 2>&1; rc=$?
+check "settings cannot be saved: uninstall exits non-zero" 1 "$rc"
+check "settings cannot be saved: recorded stock values kept" yes "$([ -s "$T/cfg/defaults" ] && echo yes || echo no)"
+check "settings cannot be saved: settings kept" "$before" "$(cfgsum)"
+check "settings cannot be saved: the changed-limit markers are kept" 1 "$(grep -cx big_max "$T/cfg/applied" 2>/dev/null)"
+rmdir "$T/cfg/tune.conf.tmp"
+sh "$T/modu/uninstall.sh" >/dev/null 2>&1; rc=$?
+check "settings can be saved again: uninstall exits 0" 0 "$rc"
+check "settings can be saved again: the phone's own value is back" 2572800 "$(v cpufreq/policy3/scaling_max_freq)"
+check "settings can be saved again: saved settings removed" no "$([ -e "$T/cfg" ] && echo yes || echo no)"
+# the settings path is itself a folder: mv would drop the new file INSIDE it and report success
+mkfake; S boot >/dev/null; S preset tilt >/dev/null; rm -f "$T/cfg/tune.conf"; mkdir "$T/cfg/tune.conf"
+out=$(S preset saver); rc=$?
+check "settings path is a folder: preset exits non-zero" 1 "$rc"
+check "settings path is a folder: nothing was moved into it" 0 "$(ls "$T/cfg/tune.conf" | wc -l | tr -d ' ')"
+out=$(S cfg ENABLED 0); rc=$?
+check "settings path is a folder: cfg exits non-zero" 1 "$rc"
+# a setting and the preset name are saved together or not at all
+mkfake; S boot >/dev/null; S preset tilt >/dev/null
+S cfg ON_BIG_MAX 2073600 >/dev/null
+check "cfg saves the value" 2073600 "$(sed -n 's/^ON_BIG_MAX=//p' "$T/cfg/tune.conf")"
+check "cfg saves PRESET=custom with it" custom "$(sed -n 's/^PRESET=//p' "$T/cfg/tune.conf")"
+check "cfg keeps each key once" 1 "$(grep -c '^ON_BIG_MAX=' "$T/cfg/tune.conf")"
+check "cfg keeps PRESET once" 1 "$(grep -c '^PRESET=' "$T/cfg/tune.conf")"
+check "cfg leaves no temporary file" no "$([ -e "$T/cfg/tune.conf.tmp" ] && echo yes || echo no)"
+
 echo "--- boot does not say 'boot done' after a failed apply or watcher start ---"
 mkfake; export TUNE_NO_DAEMON=1; S preset tilt >/dev/null; unset TUNE_NO_DAEMON      # saved: enabled, tilt (no watcher yet)
 mksys; rm -rf "$T/cfg/daemon.pid"; mkdir -p "$T/cfg/daemon.pid"                 # a watcher can never write its pid file

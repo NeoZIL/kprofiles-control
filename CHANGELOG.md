@@ -1,5 +1,25 @@
 # Changelog
 
+## v1.2.0
+- Fix: a settings file that cannot be saved no longer slips past the uninstall safety check. `tune.sh`
+  used to ignore failures while writing its settings (`cfg_put`, and the preset save in
+  `cmd_preset`). `preset stock` (the first step of `resetall`) then carried on and "applied" the old
+  settings, said ok, and `uninstall.sh` deleted the recorded stock values and the changed-limit
+  markers while the phone was still running the old limits. Now every step of a save is checked: the
+  folder, the temporary file and the move into place, and a settings path that is itself a folder is
+  refused (a plain move would have dropped the new file inside it and reported success). On any
+  failure the old settings stay exactly as they were, the temporary file is removed, nothing is
+  applied, the command prints `error: could not save the settings to <path>, so nothing was changed`
+  and exits 1. `resetall` then fails and `uninstall.sh` keeps all recovery data.
+- Fix: changing a custom value and switching the preset name to `custom` is now one save instead of
+  two, so a failure cannot leave the new value with the old preset name (or the reverse).
+- Presets are built in memory and written once, so a failed save also leaves no half-written file.
+- Tests: with the temporary file unwritable, `cfg` and `preset` exit 1, print the error, leave the
+  settings byte for byte as they were and apply nothing; uninstall exits 1 and keeps the recorded
+  stock values, the settings and the markers, then succeeds once saving works again; a settings path
+  that is a folder is refused with nothing moved into it; a custom value and its preset name are
+  saved together, once each, with no temporary file left. Each new check fails on the code it replaces.
+
 ## v1.1.9
 - Fix: uninstall now runs `tune.sh resetall`, which sets the kernel profile to None BEFORE it restores
   the limits. Before, the limits were restored first, while a restrictive profile such as Battery
