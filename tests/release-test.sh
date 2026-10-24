@@ -1,5 +1,6 @@
 #!/bin/sh
-# Off-device test of release.sh with a fake gh, git, curl and sleep (no network, no GitHub).
+# Off-device test of release.sh with a fake gh, git and curl (no network, no GitHub). `sleep` is made a no-op
+# by a shell function, not a PATH stand-in: busybox ash runs its own built-in sleep and ignores PATH for it.
 HERE=$(cd "$(dirname "$0")" && pwd)
 T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
 fail=0
@@ -91,7 +92,6 @@ case "$url" in
   *) exit 22 ;;
 esac
 CURL
-printf '#!/bin/sh\nexit 0\n' > "$T/bin/sleep"
 chmod +x "$T/bin/"*
 
 # A built release for v2.3.4 / versionCode 42, in a scratch repo.
@@ -102,7 +102,8 @@ printf '# Changelog\n\n## v2.3.4\n- thing\n' > "$R/CHANGELOG.md"
 ( cd "$R" && REPO=me/mod sh build.sh >/dev/null 2>&1 )
 
 run() { # env assignments are passed as arguments: run NAME=value ...
-  ( cd "$R" && env PATH="$T/bin:$PATH" FAKE="$F" FAKE_DIST="$R/dist" GITHUB_REPOSITORY=me/mod GITHUB_REF_NAME=v2.3.4 "$@" sh release.sh >"$T/out" 2>&1 )
+  printf 'sleep() { :; }\n. "$R/release.sh"\n' > "$R/run-release.sh"
+  ( cd "$R" && env R="$R" PATH="$T/bin:$PATH" FAKE="$F" FAKE_DIST="$R/dist" GITHUB_REPOSITORY=me/mod GITHUB_REF_NAME=v2.3.4 "$@" sh "$R/run-release.sh" >"$T/out" 2>&1 )
 }
 size() { wc -c < "$R/dist/$1" | tr -d ' '; }
 seed() { # seed TAG NAME... : the release already holds these files, with the sizes of the current build

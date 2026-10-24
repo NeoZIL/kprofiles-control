@@ -1,8 +1,9 @@
 # Changelog
 
 ## v1.2.1
-Fixes five ways the module could report success while the information needed to put the phone's own
-limits back was missing, unsaved or lost. Each has a failure-injection test that fails on v1.2.0.
+Fixes eight ways the module could report success while the information needed to put the phone's own
+limits back was missing, unsaved or lost, or while a limit you asked for was not in place. Each has a
+failure-injection test that fails on the code it replaces.
 - Fix: **no recorded original value.** A limit the module had changed, whose original value was never
   recorded (for example because the kernel Battery profile was on at boot), counted as restored.
   `preset stock`, `stop` and `resetall` printed ok, and uninstall then deleted the saved settings and
@@ -24,10 +25,31 @@ limits back was missing, unsaved or lost. Each has a failure-injection test that
   the result. A snapshot that cannot be saved is now reported (boot exits 1), an earlier snapshot is
   never replaced by a failed one, a snapshot path that is a folder is refused, and no limit is
   changed when there is no snapshot and none could be saved.
+- Fix: **a control that disappears after the module changed it.** If a limit's control file was gone
+  when the phone's own value had to be put back (the module had capped it earlier), Stock, `stop` and
+  `resetall` said "controls not found", exited 0, and uninstall then deleted the saved settings and
+  recorded values while the limit stayed capped. Now that is a failed restore: exit 1, the limit
+  stays marked, and uninstall keeps everything. Hardware the module never changed that is simply
+  absent is still not a failure.
+- Fix: **a limit the kernel refuses is no longer reported as ok.** When you apply a preset or custom
+  value and the kernel does not take it, the command used to print a warning and then `ok` with exit
+  0. Now it exits 1, names the limits that were refused (for example `big_max gpu_max`), says the
+  others are in place, and `boot` and the Action button report it too. A refused limit is described
+  as refused, not as a failed restore.
+- Fix: **turning persistence on is one save.** `kp.sh persist 1` saved `PERSIST`, `MODE` and `AUTO`
+  in three separate replaces of the settings file, so a failure part-way left some of them saved and
+  some not. The three are now written together in a single replace; if it fails the old file is
+  untouched, byte for byte.
+- Fix (tests): **failure injection that works in busybox ash.** The "settings cannot be read" and
+  "snapshot cannot be moved" tests put a stand-in `grep` or `mv` first in `PATH`. busybox ash runs its
+  own built-in `grep` and `mv` and never looks in `PATH` for them, so nothing was injected there and
+  the CI busybox step failed with "mode exits 1: expected 1 got 0". The tests now define a shell
+  function of the same name, which wins in every shell, and first check that the injection really
+  took effect. The module code was not at fault.
 - Internal: redirections that can fail now use `printf` rather than `:` (a failed redirection on a
   special built-in ends the whole script in a POSIX shell).
 - Wording: the "not recorded yet" warning no longer says the Battery profile is the only cause.
-- Tests: 54 new checks in `tests/tune-test.sh` and 7 in `tests/kp-test.sh` cover every case above.
+- Tests: 94 new checks in `tests/tune-test.sh` and 27 in `tests/kp-test.sh` cover every case above.
   Run against the v1.2.0 code they fail.
 
 ## v1.2.0

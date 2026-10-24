@@ -7,20 +7,31 @@ CFG_DIR="${CFG_DIR:-/data/adb/kprofiles_ui}"
 CFG="$CFG_DIR/config"
 
 cfg_get() { [ -f "$CFG" ] && sed -n "s/^$1=//p" "$CFG" | head -n 1; }
+# cfg_set KEY VALUE [KEY VALUE ...] saves one or more settings in ONE replace of the config file, or
+# changes nothing: the new file is prepared completely beside the old one and only then moved over it.
 # Returns non-zero if the folder cannot be made, the temporary file cannot be written or the config
-# cannot be replaced. The old config is never overwritten by a failed write, and the temporary file
-# is removed again.
+# cannot be replaced. The old config is never overwritten by a failed write (it stays byte for byte as
+# it was, even when several settings were being saved), and the temporary file is removed again.
 cfg_set() {
+  [ $(($# % 2)) = 0 ] && [ "$#" -ge 2 ] || return 1
   mkdir -p "$CFG_DIR" 2>/dev/null || return 1
   [ ! -d "$CFG" ] || return 1
+  cs_pat=""; cs_new=""
+  while [ "$#" -ge 2 ]; do
+    cs_pat="$cs_pat -e ^$1="
+    cs_new="$cs_new$1=$2
+"
+    shift 2
+  done
   { printf "" > "$CFG.tmp"; } 2>/dev/null || return 1
   if [ -e "$CFG" ]; then
     # grep exits 0 or 1 when it could read the file; anything else means the old config could not be
-    # read, and it must not be replaced by a file holding only the new key
-    grep -v "^$1=" "$CFG" > "$CFG.tmp" 2>/dev/null; cs_rc=$?
+    # read, and it must not be replaced by a file holding only the new keys
+    # shellcheck disable=SC2086
+    grep -v $cs_pat "$CFG" > "$CFG.tmp" 2>/dev/null; cs_rc=$?
     [ "$cs_rc" -le 1 ] || { rm -f "$CFG.tmp" 2>/dev/null; return 1; }
   fi
-  { echo "$1=$2" >> "$CFG.tmp"; } 2>/dev/null || { rm -f "$CFG.tmp" 2>/dev/null; return 1; }
+  { printf '%s' "$cs_new" >> "$CFG.tmp"; } 2>/dev/null || { rm -f "$CFG.tmp" 2>/dev/null; return 1; }
   mv "$CFG.tmp" "$CFG" 2>/dev/null || { rm -f "$CFG.tmp" 2>/dev/null; return 1; }
   return 0
 }
@@ -70,7 +81,8 @@ set_auto() {
 
 set_persist() {
   case "$1" in
-    1) if ! { cfg_set PERSIST 1 && cfg_set MODE "$(read_mode)" && cfg_set AUTO "$(read_auto)"; }; then
+    1) # the three settings are saved together, in one replace of the config file
+       if ! cfg_set PERSIST 1 MODE "$(read_mode)" AUTO "$(read_auto)"; then
          echo "error: could not save the persistence setting to $CFG"; return 1
        fi ;;
     0) if ! cfg_set PERSIST 0; then echo "error: could not save the persistence setting to $CFG"; return 1; fi ;;

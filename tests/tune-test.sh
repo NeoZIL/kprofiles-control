@@ -59,6 +59,13 @@ waitfor() { # name expected file seconds   (poll instead of a fixed sleep, so sl
   echo "FAIL $1: expected '$2' got '$(cat "$T/$3")'"; fail=1
 }
 S() { sh "$TUNE" "$@"; }
+# Failure injection that works in EVERY shell. A stand-in grep or mv placed first in PATH is NOT enough:
+# busybox ash runs its own built-in applets and never looks at PATH for them, so such a test silently
+# injected nothing there. A shell FUNCTION with the command's name beats both the built-in applet and the
+# real command. inj writes a small runner that defines the functions and then runs tune.sh (as a dotted
+# file, so the functions are in force inside it); SI runs it with the given arguments.
+inj() { printf '%s\n. "$INJ_TARGET"\n' "$1" > "$T/inj.sh"; }
+SI() { INJ_TARGET="$TUNE" sh "$T/inj.sh" "$@"; }
 
 mkfake
 echo "--- initial ---"
@@ -672,15 +679,16 @@ rmdir "$T/cfg/applied.tmp"; S apply >/dev/null
 check "marker clearable again: it is cleared" 0 "$(marked big_max)"
 # 3. the existing settings cannot be READ: they are never replaced by a file with only the new key
 mkfake; S boot >/dev/null; S preset tilt >/dev/null; before=$(cfgsum); bigmax=$(v cpufreq/policy3/scaling_max_freq)
-mkdir -p "$T/shim"; REALGREP=$(command -v grep)
-printf '#!/bin/sh\nfor a; do case "$a" in *tune.conf) exit 2 ;; esac; done\nexec %s "$@"\n' "$REALGREP" > "$T/shim/grep"; chmod +x "$T/shim/grep"
-out=$(PATH="$T/shim:$PATH" S cfg ON_BIG_MAX 2073600); rc=$?
+inj 'grep() { for ij_a; do case "$ij_a" in *tune.conf) return 2 ;; esac; done; command grep "$@"; }'
+printf 'grep -v zzz "%s" >/dev/null 2>&1; echo $?\n' "$T/cfg/tune.conf" > "$T/probe.sh"
+check "injection is active (grep on the settings fails in this shell)" 2 "$(INJ_TARGET="$T/probe.sh" sh "$T/inj.sh")"
+out=$(SI cfg ON_BIG_MAX 2073600); rc=$?
 check "settings unreadable: cfg exits 1" 1 "$rc"
 has "settings unreadable: cfg says nothing was saved" "error: could not save" "$out"
 check "settings unreadable: the old settings are byte for byte the same" "$before" "$(cfgsum)"
 check "settings unreadable: no temporary file left" no "$([ -e "$T/cfg/tune.conf.tmp" ] && echo yes || echo no)"
 check "settings unreadable: nothing was applied" "$bigmax" "$(v cpufreq/policy3/scaling_max_freq)"
-rm -rf "$T/shim"
+rm -f "$T/probe.sh"
 # a settings file that is damaged (cannot be parsed) is not "no settings"
 mkfake; S boot >/dev/null; S preset tilt >/dev/null; bigmax=$(v cpufreq/policy3/scaling_max_freq)
 printf 'ENABLED=1\nthis is ( broken\n' > "$T/cfg/tune.conf"; bad=$(cfgsum)
@@ -723,16 +731,16 @@ out=$(S boot); rc=$?
 check "snapshot path is a folder: boot exits 1" 1 "$rc"
 check "snapshot path is a folder: nothing moved into it" 0 "$(ls "$T/cfg/defaults" | wc -l | tr -d ' ')"
 # the final move of the snapshot into place fails (a stand-in mv refuses it)
-mkfake; rm -rf "$T/cfg"; mkdir -p "$T/shim"; REALMV=$(command -v mv)
-printf '#!/bin/sh\nfor a; do case "$a" in *defaults.tmp) exit 1 ;; esac; done\nexec %s "$@"\n' "$REALMV" > "$T/shim/mv"; chmod +x "$T/shim/mv"
-out=$(PATH="$T/shim:$PATH" S boot); rc=$?
+mkfake; rm -rf "$T/cfg"
+inj 'mv() { for ij_a; do case "$ij_a" in *defaults.tmp) return 1 ;; esac; done; command mv "$@"; }'
+out=$(SI boot); rc=$?
 check "snapshot move fails: boot exits 1" 1 "$rc"
 has "snapshot move fails: boot says so" "could not be saved at boot" "$out"
 check "snapshot move fails: no snapshot file claimed" no "$([ -f "$T/cfg/defaults" ] && echo yes || echo no)"
 check "snapshot move fails: no temporary file left" no "$([ -e "$T/cfg/defaults.tmp" ] && echo yes || echo no)"
-out=$(PATH="$T/shim:$PATH" S preset tilt); rc=$?
+out=$(SI preset tilt); rc=$?
 check "snapshot move fails: apply exits 1 and changes no limit" "1 2572800" "$rc $(v cpufreq/policy3/scaling_max_freq)"
-rm -rf "$T/shim"
+rm -f "$T/inj.sh"
 
 echo "--- boot does not say 'boot done' after a failed apply or watcher start ---"
 mkfake; export TUNE_NO_DAEMON=1; S preset tilt >/dev/null; unset TUNE_NO_DAEMON      # saved: enabled, tilt (no watcher yet)
@@ -821,6 +829,77 @@ sh "$T/modu/uninstall.sh" >/dev/null 2>&1; rc=$?
 check "restore works again: uninstall succeeds and cleans up" "0 no" "$rc $([ -e "$T/cfg" ] && echo yes || echo no)"
 check "uninstall.sh runs tune.sh resetall" 1 "$(grep -c 'tune.sh" resetall' "$HERE/../module/uninstall.sh")"
 check "uninstall.sh no longer calls kp.sh itself" 0 "$(grep -v '^ *#' "$HERE/../module/uninstall.sh" | grep -c 'kp.sh')"
+mkfake
+
+echo "--- audit round 2: a control that vanished after the module changed it is a failed restore ---"
+export TUNE_NO_DAEMON=1
+mkmodu() { rm -rf "$T/modu"; cp -r "$HERE/../module" "$T/modu"; sed "s#/data/adb/kprofiles_ui#$T/cfg#" "$HERE/../module/uninstall.sh" > "$T/modu/uninstall.sh"; }
+BIGMAX="$T/cpufreq/policy3/scaling_max_freq"
+mkfake; S boot >/dev/null; S preset tilt >/dev/null; rm -f "$BIGMAX"        # the node disappears after we capped it
+out=$(S resetall); rc=$?
+check "vanished control: resetall exits 1" 1 "$rc"
+has "vanished control: resetall names the limit" "big_max" "$out"
+has "vanished control: resetall says it stays marked" "stays marked" "$out"
+if printf '%s\n' "$out" | grep -qx ok; then echo "FAIL vanished control: resetall printed ok"; fail=1; else echo "ok   vanished control: resetall does not print ok"; fi
+check "vanished control: the marker is kept" 1 "$(grep -cx big_max "$T/cfg/applied" 2>/dev/null)"
+check "vanished control: recorded stock values kept" yes "$([ -s "$T/cfg/defaults" ] && echo yes || echo no)"
+check "vanished control: saved settings kept" yes "$([ -s "$T/cfg/tune.conf" ] && echo yes || echo no)"
+check "vanished control: the other limits were restored" "2668800 900000000" "$(v cpufreq/policy7/scaling_max_freq) $(v gpu/max_freq)"
+out=$(S preset stock); rc=$?; check "vanished control: Stock exits 1" 1 "$rc"
+out=$(S stop); rc=$?; check "vanished control: stop exits 1" 1 "$rc"
+if printf '%s\n' "$out" | grep -qx ok; then echo "FAIL vanished control: stop printed ok"; fail=1; else echo "ok   vanished control: stop does not print ok"; fi
+mkmodu; sh "$T/modu/uninstall.sh" >/dev/null 2>&1; rc=$?
+check "vanished control: uninstall exits 1" 1 "$rc"
+check "vanished control: uninstall keeps the recovery data" 1 "$([ -s "$T/cfg/defaults" ] && [ -s "$T/cfg/tune.conf" ] && grep -qx big_max "$T/cfg/applied" && echo 1 || echo 0)"
+echo 2188800 > "$BIGMAX"                                                     # the node is back
+sh "$T/modu/uninstall.sh" >/dev/null 2>&1; rc=$?
+check "control back: uninstall exits 0" 0 "$rc"
+check "control back: the phone's own value is back" 2572800 "$(v cpufreq/policy3/scaling_max_freq)"
+check "control back: saved settings removed" no "$([ -e "$T/cfg" ] && echo yes || echo no)"
+# the same for a min limit
+mkfake; S boot >/dev/null; S preset tilt >/dev/null; S cfg ON_BIG_MIN 787200 >/dev/null
+check "vanished min: the min is marked as ours" 1 "$(grep -cx big_min "$T/cfg/applied")"
+rm -f "$T/cpufreq/policy3/scaling_min_freq"
+out=$(S preset stock); rc=$?
+check "vanished min: Stock exits 1" 1 "$rc"
+check "vanished min: the min marker is kept" 1 "$(grep -cx big_min "$T/cfg/applied" 2>/dev/null)"
+# hardware the module never changed that is simply absent is still not a failure
+mkfake; rm -rf "$T/gpu"; S boot >/dev/null
+out=$(S preset tilt); rc=$?
+check "absent hardware, never changed: still exits 0" 0 "$rc"
+has "absent hardware, never changed: still says not found" "warn: gpu controls not found" "$out"
+out=$(S preset stock); rc=$?; check "absent hardware, never changed: Stock exits 0" 0 "$rc"
+
+echo "--- audit round 2: a requested limit the kernel refuses makes the command fail ---"
+mkfake; S boot >/dev/null; refuse_big
+out=$(S preset tilt); rc=$?
+check "refused request: preset exits 1" 1 "$rc"
+has "refused request: names the limit" "did not take these limits: big_max" "$out"
+has "refused request: still shows what the kernel said" "warn: big max wanted 2188800" "$out"
+if printf '%s\n' "$out" | grep -qx ok; then echo "FAIL refused request: preset printed ok"; fail=1; else echo "ok   refused request: preset does not print ok"; fi
+case "$out" in *"put back"*) echo "FAIL refused request: reported as a failed restore"; fail=1 ;; *) echo "ok   refused request: not reported as a failed restore" ;; esac
+check "refused request: the other limits ARE in place" "2457600 736000000" "$(v cpufreq/policy7/scaling_max_freq) $(v gpu/max_freq)"
+out=$(S apply); rc=$?; check "refused request: apply exits 1" 1 "$rc"
+out=$(S cfg ON_BIG_MAX 2073600); rc=$?; check "refused request: cfg exits 1" 1 "$rc"
+mkfake; S boot >/dev/null; S preset tilt >/dev/null; mksys; refuse_big     # saved: tilt; the phone rebooted; the kernel refuses the big max
+out=$(S boot); rc=$?
+check "refused request: boot exits 1" 1 "$rc"
+has "refused request: boot does not say done" "boot finished with errors" "$out"
+accept_big
+out=$(S apply); rc=$?
+check "refused request, kernel takes it later: apply exits 0" 0 "$rc"
+check "refused request, kernel takes it later: the limit is in place" 2188800 "$(v cpufreq/policy3/scaling_max_freq)"
+# two clusters refused: both are named, and the one that worked stays in place
+mkfake; S boot >/dev/null; refuse_big; rm -f "$T/gpu/max_freq"; mkdir "$T/gpu/max_freq"
+out=$(S preset tilt); rc=$?
+check "two refused: preset exits 1" 1 "$rc"
+has "two refused: both are named" "limits: big_max gpu_max" "$out"
+check "two refused: prime max is in place" 2457600 "$(v cpufreq/policy7/scaling_max_freq)"
+# a refused min is reported too
+mkfake; S boot >/dev/null; S preset tilt >/dev/null; rm -f "$T/cpufreq/policy3/scaling_min_freq"; mkdir "$T/cpufreq/policy3/scaling_min_freq"
+out=$(S cfg ON_BIG_MIN 787200); rc=$?
+check "refused min: cfg exits 1" 1 "$rc"
+has "refused min: names the limit" "big_min" "$out"
 mkfake
 
 [ "$fail" = 0 ] && echo "all tune tests passed" || { echo "SOME TESTS FAILED"; exit 1; }

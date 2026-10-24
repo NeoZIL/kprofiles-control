@@ -163,6 +163,7 @@ unmark_applied() {
 
 # ---------- applying ----------
 apply_domain() { # cluster state(on|off|none)
+  AD_REJ=""; AD_NOREST=""
   ad_c=$1; ad_S=$(upper "$2"); ad_C=$(upper "$1")
   eval "ad_wmin=\${${ad_S}_${ad_C}_MIN:-}"
   eval "ad_wmax=\${${ad_S}_${ad_C}_MAX:-}"
@@ -179,9 +180,23 @@ apply_domain() { # cluster state(on|off|none)
     # is a failed restore (it stays marked), never a silent success.
     [ -z "$ad_nodef" ] && return 0
     log_msg "no recorded original value for:$ad_nodef (kept marked)"
+    AD_NOREST=$ad_nodef
     return 1
   fi
   ad_pmin=$(node "$ad_c" min); ad_pmax=$(node "$ad_c" max)
+  AD_REJ=""; AD_NOREST=""
+  # A control that is gone although this module changed it earlier can NOT be put back: that is a failed
+  # restore (the limit stays marked and nothing recorded is deleted), never "not found, fine". Hardware
+  # that was never changed by us and is simply absent is still not a failure.
+  ad_gone=""
+  if is_applied "${ad_c}_min" && [ ! -e "$ad_pmin" ]; then ad_gone="$ad_gone ${ad_c}_min"; fi
+  if is_applied "${ad_c}_max" && [ ! -e "$ad_pmax" ]; then ad_gone="$ad_gone ${ad_c}_max"; fi
+  if [ -n "$ad_gone" ]; then
+    echo "warn: the $ad_c controls are gone, but this module changed:$ad_gone earlier, so the phone's own value could not be put back; it stays marked as changed"
+    log_msg "controls missing for marked limit:$ad_gone (kept marked)"
+    AD_NOREST=$ad_gone
+    return 1
+  fi
   [ -e "$ad_pmax" ] || { echo "warn: $ad_c controls not found on this phone"; return 0; }
   ad_curmin=$(rd "$ad_pmin"); ad_curmax=$(rd "$ad_pmax")
   # keep min <= max
@@ -219,12 +234,20 @@ apply_domain() { # cluster state(on|off|none)
   if [ -n "$ad_nodef" ]; then
     log_msg "no recorded original value for:$ad_nodef (kept marked)"
   fi
+  # A limit that was REQUESTED (not a restore) and that the kernel did not take is a failure too: the
+  # command must not say ok while a limit the person asked for is not in place.
+  ad_rej=""
+  if [ -n "$ad_dmin" ] && [ -z "$ad_rmin" ] && [ -z "$ad_okmin" ]; then ad_rej="$ad_rej ${ad_c}_min"; fi
+  if [ -n "$ad_dmax" ] && [ -z "$ad_rmax" ] && [ -z "$ad_okmax" ]; then ad_rej="$ad_rej ${ad_c}_max"; fi
+  if [ -n "$ad_rej" ]; then log_msg "kernel did not take the requested limit for:$ad_rej"; fi
+  AD_REJ=$ad_rej; AD_NOREST="$ad_note$ad_nodef"
   if [ -n "$ad_note" ]; then
     echo "warn: could not put the phone's own value back for:$ad_note; it stays marked as changed so a later Stock or Apply tries again"
     log_msg "restore refused by the kernel for:$ad_note (kept marked, will be retried)"
     return 1       # the restore is incomplete: callers must not treat it as done
   fi
   [ -z "$ad_nodef" ] || return 1     # a limit with no recorded original value was left as it is
+  [ -z "$ad_rej" ] || return 1       # a requested limit is not in place
   return 0
 }
 # Limits we changed whose original value was never recorded: Stock has nothing to put back for them.
@@ -244,7 +267,16 @@ apply_none_logged() {
   return 0
 }
 # Returns 1 when any restore of the phone's own value was refused by the kernel (the limit stays marked).
-apply_state() { load_cfg; as_rc=0; for c in $CLUSTERS; do apply_domain "$c" "$1" || as_rc=1; done; return "$as_rc"; }
+# AS_REJ lists requested limits the kernel did not take, AS_NOREST limits that could not be put back.
+apply_state() {
+  load_cfg; as_rc=0; AS_REJ=""; AS_NOREST=""
+  for c in $CLUSTERS; do
+    AD_REJ=""; AD_NOREST=""
+    apply_domain "$c" "$1" || as_rc=1
+    AS_REJ="$AS_REJ$AD_REJ"; AS_NOREST="$AS_NOREST$AD_NOREST"
+  done
+  return "$as_rc"
+}
 
 # scr_get sets ST (on|off) with shell built-ins only: the watcher calls it every second, and
 # the old $(cat ...) started two extra processes each time.
@@ -380,6 +412,14 @@ run_daemon() {
 
 # ---------- commands ----------
 NORESTORE="error: some of the phone's own values could not be put back (see the warning above); your settings and the recorded values are kept, so Stock or Apply can try again"
+# One message per kind of failure, so a rejected limit is never reported as a failed restore or the other way round.
+report_apply_failure() {
+  if [ -n "$AS_NOREST" ]; then echo "$NORESTORE"; fi
+  if [ -n "$AS_REJ" ]; then
+    echo "error: the kernel did not take these limits:$AS_REJ (see the warnings above); the other limits are in place, so the phone is only partly set up. Try again, or choose Stock"
+  fi
+  if [ -z "$AS_NOREST$AS_REJ" ]; then echo "error: not every limit could be applied (see the messages above)"; fi
+}
 NOSTOCK="warn: the phone's own limits are not recorded yet (for example because the kernel Battery profile was on), so Stock cannot put them back until the next reboot"
 cmd_apply() {
   ca_rc=0
@@ -392,7 +432,7 @@ cmd_apply() {
     fi
     [ "$ca_cd" = 0 ] || echo "warn: the phone's own limits could not be saved again; the earlier record is kept"
     [ -f "$DEF" ] || echo "$NOSTOCK"
-    if ! apply_state "$(want_state)"; then echo "$NORESTORE"; ca_rc=1; fi
+    if ! apply_state "$(want_state)"; then report_apply_failure; ca_rc=1; fi
     [ ! -f "$DEF" ] || warn_nodefault
     if ! start_daemon; then
       echo "error: your limits are applied for the current screen state, but the watcher that switches them when the screen turns on or off is not running"
@@ -405,7 +445,7 @@ cmd_apply() {
       echo "error: the watcher is still running and may apply the limits again; your settings are kept, try again or reboot"
       ca_rc=1
     fi
-    if ! apply_state none; then echo "$NORESTORE"; ca_rc=1; fi
+    if ! apply_state none; then report_apply_failure; ca_rc=1; fi
     [ ! -f "$DEF" ] || warn_nodefault
   fi
   return "$ca_rc"
