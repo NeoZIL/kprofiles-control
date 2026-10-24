@@ -1,5 +1,36 @@
 # Changelog
 
+## v1.1.5
+- Fix: the background watcher is now started with the module folder passed to it explicitly. Before,
+  it worked out its folder from the way the script was started, which fails when the script is
+  started by name alone, and then the `disable` / `remove` markers would be looked for in the wrong
+  place. The previous test change did not include this source change; it is in now, with tests that
+  start the watcher from inside the module folder, check which folder it received, and cover both
+  the `disable` and the `remove` marker.
+- Fix: stopping the watcher no longer claims success when it did not stop. If it is still running
+  after three seconds, Stop says so and keeps its pid file; otherwise the pid file is removed only if
+  it still names the process that was stopped. Starting and stopping the watcher now share one lock,
+  so two of them can no longer run at the same time (a lock left by a dead process is taken over).
+- Fix: the boot-time recording of the phone's own limits is checked before it replaces anything. If a
+  frequency node exists but gives no reading, or a reading that is not a number, the earlier record is
+  kept, the boot output warns which values could not be read, and a short line goes to
+  `/data/adb/kprofiles_ui/tune.log`. A phone with no saved record yet still keeps the values it could
+  read. Hardware that is simply absent (for example no GPU node) is not treated as a failure.
+- Release safety (`release.sh`):
+  - The latest release is read again right before a release is promoted. If a newer release appeared
+    while the job ran, this one is still published but does not take "latest"; a new latest with the
+    same `versionCode` stops the job. Releases from tags are also queued one at a time in the workflow.
+  - Files already on a public release must match the build byte for byte, not only in size.
+  - After publishing, the zip, `changelog.md` and `update.json` are downloaded from the release and
+    compared with the build, and `latest/download/update.json` must carry this release's version,
+    `versionCode`, zip link and changelog link exactly. Public files are still never replaced
+    automatically.
+- Build (`build.sh`): `dist/` is cleared of every module zip from earlier local builds, so uploading
+  `dist/*.zip` can never include a stale one. The zip is now reproducible (fixed file dates, sorted
+  file order, fixed permissions): the same source gives the same bytes, which the byte-for-byte check
+  above relies on.
+- New tests for all of the above, under dash, mksh and busybox ash in CI.
+
 ## v1.1.4
 - New: **updates straight from the KernelSU-Next manager.** The module now carries an
   `updateJson` link. When a newer release is published on GitHub, the manager shows an update

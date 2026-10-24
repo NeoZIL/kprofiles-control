@@ -13,6 +13,11 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    # Releases are published one at a time, so a second tag cannot promote itself while the first is
+    # still being checked. Other runs (branches, pull requests) are not held up by this.
+    concurrency:
+      group: ${{ startsWith(github.ref, 'refs/tags/v') && 'kprofiles-release' || format('build-{0}', github.ref) }}
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
         with:

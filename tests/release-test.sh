@@ -47,7 +47,11 @@ case "$sub" in
     fi
     n=$(cat "$FAKE/upload_fail" 2>/dev/null || echo 0)
     if [ "$n" -gt 0 ]; then echo $((n - 1)) > "$FAKE/upload_fail"; exit 1; fi
-    for a in "$@"; do case "$a" in --*) ;; *) echo "$(basename "$a") $(wc -c < "$a" | tr -d ' ')" >> "$FAKE/assets_$tag" ;; esac; done ;;
+    for a in "$@"; do case "$a" in --*) ;; *) echo "$(basename "$a") $(wc -c < "$a" | tr -d ' ')" >> "$FAKE/assets_$tag"; cp "$a" "$FAKE/blob_${tag}_$(basename "$a")" ;; esac; done
+    # race hook: another release is published while this job is busy uploading (its versionCode is in $FAKE/race)
+    if [ -f "$FAKE/race" ]; then
+      echo v2.4.0 > "$FAKE/latest"; printf 'versionCode=%s\n' "$(cat "$FAKE/race")" > "$FAKE/props_v2.4.0"; echo published > "$FAKE/state_v2.4.0"
+    fi ;;
   edit)
     for a in "$@"; do
       case "$a" in
@@ -71,8 +75,15 @@ out=""; prev=""; url=""
 for a in "$@"; do [ "$prev" = -o ] && out=$a; prev=$a; url=$a; done
 echo "curl $url" >> "$FAKE/calls"
 case "$url" in
-  */latest/download/update.json) [ -z "$FAKE_NO_MANIFEST" ] || exit 22; cp "$FAKE_DIST/update.json" "$out" ;;
-  *) [ -n "$FAKE_BAD_URL" ] && case "$url" in *"$FAKE_BAD_URL"*) exit 22 ;; esac; echo ok > "$out" ;;
+  */latest/download/update.json)
+    [ -z "$FAKE_NO_MANIFEST" ] || exit 22
+    if [ -n "$FAKE_WRONG_URL" ]; then sed 's#download/v2.3.4#download/v1.0.0#g' "$FAKE_DIST/update.json" > "$out"; else cp "$FAKE_DIST/update.json" "$out"; fi ;;
+  */download/*/*)
+    name=${url##*/}; rest=${url%/*}; tg=${rest##*/}
+    [ -n "$FAKE_BAD_URL" ] && case "$url" in *"$FAKE_BAD_URL"*) exit 22 ;; esac
+    [ -f "$FAKE/blob_${tg}_$name" ] || exit 22
+    if [ -n "$FAKE_CORRUPT" ] && [ "$name" = "$FAKE_CORRUPT" ]; then echo corrupt > "$out"; else cp "$FAKE/blob_${tg}_$name" "$out"; fi ;;
+  *) exit 22 ;;
 esac
 CURL
 printf '#!/bin/sh\nexit 0\n' > "$T/bin/sleep"
@@ -90,7 +101,7 @@ run() { # env assignments are passed as arguments: run NAME=value ...
 }
 size() { wc -c < "$R/dist/$1" | tr -d ' '; }
 seed() { # seed TAG NAME... : the release already holds these files, with the sizes of the current build
-  t=$1; shift; for n in "$@"; do echo "$n $(size "$n")" >> "$F/assets_$t"; done
+  t=$1; shift; for n in "$@"; do echo "$n $(size "$n")" >> "$F/assets_$t"; cp "$R/dist/$n" "$F/blob_${t}_$n"; done
 }
 reset() { rm -rf "$F"; mkdir -p "$F"; : > "$F/calls"; }
 latest() { echo "$1" > "$F/latest"; printf 'versionCode=%s\n' "$2" > "$F/props_$1"; echo published > "$F/state_$1"; }
@@ -199,6 +210,38 @@ echo "update.json 1" >> "$F/assets_v2.3.4"
 run; check "draft with stale file: ok" 0 $?
 check "draft with stale file: replaced with --clobber" 1 "$(calls 'upload.*clobber')"
 check "draft with stale file: new update.json attached" 1 "$(grep -c "^update.json $(size update.json)$" "$F/assets_v2.3.4")"
+
+# 12. A newer release appears while the job runs: this one is published but never promoted over it.
+reset; latest v2.3.3 41; echo 50 > "$F/race"
+run; check "race, newer latest appears: job ok" 0 $?
+check "race: this release is published" "published" "$(cat "$F/state_v2.3.4")"
+check "race: published without --latest" 1 "$(calls 'release edit v2.3.4 --draft=false --latest=false')"
+check "race: latest stays the newer release" "v2.4.0" "$(cat "$F/latest")"
+reset; latest v2.3.3 41; echo draft > "$F/state_v2.3.4"; : > "$F/assets_v2.3.4"; echo 50 > "$F/race"
+run; check "race (hand-made draft): job ok" 0 $?
+check "race (hand-made draft): latest stays the newer release" "v2.4.0" "$(cat "$F/latest")"
+reset; latest v2.3.3 41; echo published > "$F/state_v2.3.4"; : > "$F/assets_v2.3.4"; echo 50 > "$F/race"
+run; check "race (published): job ok" 0 $?
+check "race (published): latest stays the newer release" "v2.4.0" "$(cat "$F/latest")"
+check "race (published): no promotion" 0 "$(calls 'release edit v2.3.4 --latest')"
+reset; latest v2.3.3 41; echo 42 > "$F/race"
+run; check "race, same versionCode as the new latest: job fails" 1 $?
+check "race, same versionCode: not published" "draft" "$(cat "$F/state_v2.3.4")"
+
+# 13. Content, not just size: a public file of the right size but different bytes is never accepted.
+reset; latest v2.3.3 41; echo published > "$F/state_v2.3.4"; : > "$F/assets_v2.3.4"
+seed v2.3.4 Kprofiles-Control-v2.3.4.zip update.json changelog.md
+sed 's/2\.3\.4/9.9.9/' "$R/dist/update.json" > "$F/blob_v2.3.4_update.json"
+check "tampered fixture has the same size" "$(size update.json)" "$(wc -c < "$F/blob_v2.3.4_update.json" | tr -d ' ')"
+run; check "published, same size but other content: refused" 1 $?
+check "published, other content: nothing uploaded" 0 "$(calls 'release upload')"
+check "published, other content: file kept" "$(sed 's/2\.3\.4/9.9.9/' "$R/dist/update.json")" "$(cat "$F/blob_v2.3.4_update.json")"
+reset; run FAKE_CORRUPT=Kprofiles-Control-v2.3.4.zip; check "downloaded zip differs from the build: job fails" 1 $?
+reset; run FAKE_CORRUPT=changelog.md; check "downloaded changelog differs from the build: job fails" 1 $?
+reset; run FAKE_WRONG_URL=1; check "update.json pointing at another release: job fails" 1 $?
+reset; run; check "verified release: ok" 0 $?
+has_line() { grep -q "$2" "$1" && echo "ok   $3" || { echo "FAIL $3"; fail=1; }; }
+has_line "$T/out" "published and verified" "success message says what was verified"
 
 # 8. Missing build output is refused.
 reset; rm -f "$R/dist/changelog.md"; run; check "missing file refused" 1 $?

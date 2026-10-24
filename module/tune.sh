@@ -63,8 +63,20 @@ parse_key() {
 }
 list_has() { for f in $(rd "$(avail_node "$1")"); do [ "$f" = "$2" ] && return 0; done; return 1; }
 
+# ---------- a small log (kept short) ----------
+log_msg() {
+  LOG_LINE="$(date '+%F %T' 2>/dev/null) $1"
+  LOGF="$CFG_DIR/tune.log"; mkdir -p "$CFG_DIR" 2>/dev/null
+  echo "$LOG_LINE" >> "$LOGF" 2>/dev/null
+  if [ "$(wc -l < "$LOGF" 2>/dev/null | tr -d ' ')" -gt 50 ] 2>/dev/null; then
+    tail -n 25 "$LOGF" > "$LOGF.tmp" 2>/dev/null && mv "$LOGF.tmp" "$LOGF"
+  fi
+  return 0
+}
+
 # ---------- the phone's own values ----------
 capture_defaults() {
+  CAP_BAD=""
   if [ "$1" != force ]; then
     [ -f "$DEF" ] && return 0                    # already recorded
     [ -s "$APPLIED" ] && return 0                # our own limits are in place: would record them as stock
@@ -75,8 +87,20 @@ capture_defaults() {
   mkdir -p "$CFG_DIR" 2>/dev/null
   : > "$DEF.tmp"
   for c in $CLUSTERS; do for k in min max; do
-    v=$(rd "$(node $c $k)"); [ -n "$v" ] && echo "${c}_${k}=$v" >> "$DEF.tmp"
+    cn=$(node $c $k)
+    v=$(rd "$cn")
+    case "$v" in
+      "") [ -e "$cn" ] && CAP_BAD="$CAP_BAD ${c}_${k}" ;;      # the node exists but gave no reading
+      *[!0-9]*) CAP_BAD="$CAP_BAD ${c}_${k}" ;;                # not a plain number
+      *) echo "${c}_${k}=$v" >> "$DEF.tmp" ;;
+    esac
   done; done
+  if [ -n "$CAP_BAD" ]; then
+    # An incomplete reading must never replace a saved snapshot. With nothing saved yet the readable
+    # values are still better than none, so they are kept.
+    log_msg "could not read:$CAP_BAD"
+    if [ -s "$DEF" ]; then rm -f "$DEF.tmp"; return 0; fi
+  fi
   mv "$DEF.tmp" "$DEF"
 }
 def_of() { sed -n "s/^$1=//p" "$DEF" 2>/dev/null | head -n 1; }
@@ -134,19 +158,50 @@ daemon_alive() {
   dp=$(cat "$PIDF" 2>/dev/null); [ -n "$dp" ] || return 1
   kill -0 "$dp" 2>/dev/null && grep -q "tune.sh" "/proc/$dp/cmdline" 2>/dev/null
 }
+tick() { sleep 0.1 2>/dev/null || sleep 1; }   # a tenth of a second where sleep allows it
+# Start and stop take one lock, so two callers can never start, or stop, a watcher at the same time.
+# The lock is a folder holding its owner's pid; a lock whose owner is gone is taken over.
+LOCKD="$CFG_DIR/daemon.lock"
+LOCK_TRIES="${TUNE_LOCK_TRIES:-100}"     # about a tenth of a second each
+lock_take() {
+  lk=0
+  while ! mkdir "$LOCKD" 2>/dev/null; do
+    lo=$(cat "$LOCKD/pid" 2>/dev/null)
+    if [ -n "$lo" ] && ! kill -0 "$lo" 2>/dev/null; then rm -rf "$LOCKD"; continue; fi
+    if [ -z "$lo" ] && [ "$lk" -ge 20 ]; then rm -rf "$LOCKD"; continue; fi   # owner died before writing its pid
+    lk=$((lk + 1)); [ "$lk" -lt "$LOCK_TRIES" ] || return 1
+    tick
+  done
+  echo $$ > "$LOCKD/pid"
+  return 0
+}
+lock_free() { rm -rf "$LOCKD"; }
+abs_moddir() { ( cd "$MODDIR" 2>/dev/null && pwd ) || echo "$MODDIR"; }
 start_daemon() {
   [ "$TUNE_NO_DAEMON" = 1 ] && return 0
-  daemon_alive && return 0
-  if command -v setsid >/dev/null 2>&1; then
-    setsid sh "$MODDIR/tune.sh" daemon >/dev/null 2>&1 </dev/null &
-  else
-    nohup sh "$MODDIR/tune.sh" daemon >/dev/null 2>&1 </dev/null &
+  mkdir -p "$CFG_DIR" 2>/dev/null
+  lock_take || { echo "warn: another start or stop of the watcher is in progress, not starting it now"; return 0; }
+  if ! daemon_alive; then
+    md=$(abs_moddir)
+    # The module folder is passed on explicitly: a script started by name alone has no folder in $0.
+    if command -v setsid >/dev/null 2>&1; then
+      setsid sh "$md/tune.sh" daemon "$md" >/dev/null 2>&1 </dev/null &
+    else
+      nohup sh "$md/tune.sh" daemon "$md" >/dev/null 2>&1 </dev/null &
+    fi
+    # Hold the lock until the new watcher has written its pid file, so the next caller sees it.
+    i=0; while [ "$i" -lt 30 ] && ! daemon_alive; do tick; i=$((i + 1)); done
   fi
+  lock_free
   return 0
 }
 # Stop the watcher and wait until it has really gone, so a new one can never be started while the
 # old one is still on its way out. Only a process that daemon_alive recognises is signalled.
+# Returns 1 (and says so) if the watcher is still running after the wait; its pid file is then kept.
 stop_daemon() {
+  mkdir -p "$CFG_DIR" 2>/dev/null
+  lock_take || { echo "warn: another start or stop of the watcher is in progress"; return 1; }
+  sd_rc=0
   if daemon_alive; then
     sdp=$dp
     kill "$sdp" 2>/dev/null
@@ -155,13 +210,24 @@ stop_daemon() {
       sleep 0.1 2>/dev/null || { sleep 1; i=$((i + 9)); }
       i=$((i + 1))
     done
+    if kill -0 "$sdp" 2>/dev/null; then
+      echo "warn: the watcher (pid $sdp) did not stop within 3 seconds"; log_msg "watcher $sdp did not stop in time"
+      sd_rc=1
+    elif [ "$(cat "$PIDF" 2>/dev/null)" = "$sdp" ]; then
+      rm -f "$PIDF"                          # only the file that still names the process we stopped
+    fi
+  else
+    rm -f "$PIDF"                            # nothing recognisable is running: the file is stale
   fi
-  rm -f "$PIDF"
-  return 0
+  lock_free
+  return "$sd_rc"
 }
 # An exiting watcher removes the pid file only if it still names this very process.
 pidf_release() { [ "$(cat "$PIDF" 2>/dev/null)" = "$$" ] && rm -f "$PIDF"; return 0; }
 run_daemon() {
+  # The module folder arrives as an argument. Without it a script started by name alone would look
+  # for the disable / remove markers in the current folder.
+  if [ -n "${1:-}" ] && [ -f "$1/tune.sh" ]; then MODDIR=$1; fi
   mkdir -p "$CFG_DIR" 2>/dev/null
   echo $$ > "$PIDF"
   sp=""
@@ -286,6 +352,7 @@ cmd_boot() {
   rm -f "$APPLIED" "$PIDF"
   mkdir -p "$CFG_DIR" 2>/dev/null
   capture_defaults force
+  [ -z "$CAP_BAD" ] || echo "warn: could not read these frequency values at boot:$CAP_BAD (an earlier record is kept if there is one)"
   load_cfg
   [ "$ENABLED" = 1 ] && cmd_apply
   echo "boot done: enabled=$ENABLED preset=$PRESET"
@@ -316,7 +383,7 @@ case "$1" in
   resetall)  cmd_resetall && echo ok ;;
   apply)     cmd_apply && echo ok ;;
   boot)      cmd_boot ;;
-  daemon)    run_daemon ;;
+  daemon)    run_daemon "$2" ;;
   stop)      stop_daemon; apply_state none; echo ok ;;
   *) echo "usage: tune.sh status | lists | cfg KEY VALUE | preset stock|tilt|saver | resetall | apply | boot | stop"; exit 1 ;;
 esac

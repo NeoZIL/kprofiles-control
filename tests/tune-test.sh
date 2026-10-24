@@ -306,4 +306,69 @@ if kill -0 "$bystander" 2>/dev/null; then echo "ok   unrelated process left alon
 kill "$bystander" 2>/dev/null
 export TUNE_NO_DAEMON=1
 
+echo "--- watcher started by name from inside the module folder still gets the real module folder ---"
+unset TUNE_NO_DAEMON; export TUNE_POLL_ON=1 TUNE_POLL_OFF=1 TUNE_REASSERT=3
+for marker in disable remove; do
+  mkfake; rm -rf "$T/mod" "$T/elsewhere"; mkdir -p "$T/mod" "$T/elsewhere"; cp "$HERE/../module/tune.sh" "$HERE/../module/kp.sh" "$T/mod/"
+  ( cd "$T/mod" && sh tune.sh preset tilt >/dev/null )        # $0 is just "tune.sh": no folder in it
+  i=0; while [ "$i" -lt 10 ] && [ ! -s "$T/cfg/daemon.pid" ]; do sleep 1; i=$((i + 1)); done
+  wp=$(cat "$T/cfg/daemon.pid" 2>/dev/null)
+  args=$(tr '\0' ' ' < "/proc/$wp/cmdline" 2>/dev/null)
+  case "$args" in *" daemon $T/mod "*) echo "ok   $marker test: watcher was handed the module folder" ;; *) echo "FAIL $marker test: watcher arguments were '$args'"; fail=1 ;; esac
+  check "$marker test: limit applied" 2188800 "$(v cpufreq/policy3/scaling_max_freq)"
+  ( cd "$T/elsewhere" && touch "$T/mod/$marker" )
+  waitfor "$marker marker found from another working folder: limit handed back" 2572800 cpufreq/policy3/scaling_max_freq 30
+  i=0; while [ "$i" -lt 10 ] && kill -0 "$wp" 2>/dev/null; do sleep 1; i=$((i + 1)); done
+  if kill -0 "$wp" 2>/dev/null; then echo "FAIL $marker test: watcher still running"; fail=1; else echo "ok   $marker test: watcher exited"; fi
+done
+export TUNE_NO_DAEMON=1
+
+echo "--- stop reports a watcher that will not exit and keeps its pid file ---"
+unset TUNE_NO_DAEMON
+mkfake; mkdir -p "$T/cfg" "$T/stub"
+printf 'trap "" TERM\nwhile :; do sleep 1; done\n' > "$T/stub/tune.sh"
+sh "$T/stub/tune.sh" & stubp=$!
+echo "$stubp" > "$T/cfg/daemon.pid"; sleep 1
+out=$(S stop); has "stubborn watcher: stop warns" "did not stop within 3 seconds" "$out"
+check "stubborn watcher: pid file kept" "$stubp" "$(cat "$T/cfg/daemon.pid" 2>/dev/null)"
+kill -9 "$stubp" 2>/dev/null; wait "$stubp" 2>/dev/null
+rm -f "$T/cfg/daemon.pid"
+echo "--- stop never removes a pid file that names another process ---"
+mkfake; mkdir -p "$T/cfg"; sleep 300 & other=$!
+echo "$other" > "$T/cfg/daemon.pid"; S stop >/dev/null
+check "stale pid file of an unrelated process is cleaned up" "no" "$([ -f "$T/cfg/daemon.pid" ] && echo yes || echo no)"
+kill "$other" 2>/dev/null
+echo "--- start and stop share one lock ---"
+mkfake; mkdir -p "$T/cfg/daemon.lock"; sleep 300 & holder=$!; echo "$holder" > "$T/cfg/daemon.lock/pid"
+out=$(TUNE_LOCK_TRIES=5 S preset tilt); has "busy lock: start is skipped with a warning" "another start or stop of the watcher is in progress" "$out"
+check "busy lock: no watcher started" "no" "$([ -f "$T/cfg/daemon.pid" ] && echo yes || echo no)"
+kill "$holder" 2>/dev/null; wait "$holder" 2>/dev/null
+S status >/dev/null; S apply >/dev/null; sleep 1
+check "lock of a dead owner is taken over" "yes" "$([ -f "$T/cfg/daemon.pid" ] && echo yes || echo no)"
+check "lock is released afterwards" "no" "$([ -d "$T/cfg/daemon.lock" ] && echo yes || echo no)"
+S cfg ENABLED 0 >/dev/null
+export TUNE_NO_DAEMON=1
+
+echo "--- boot never replaces a saved snapshot with an incomplete reading ---"
+mkfake; S boot >/dev/null
+check "snapshot saved at first boot" 2572800 "$(sed -n 's/^big_max=//p' "$T/cfg/defaults")"
+mksys; : > "$T/cpufreq/policy3/scaling_max_freq"                         # a transient empty read
+out=$(S boot); has "empty reading: boot warns" "warn: could not read these frequency values at boot: big_max" "$out"
+check "empty reading: saved big max kept" 2572800 "$(sed -n 's/^big_max=//p' "$T/cfg/defaults")"
+check "empty reading: saved little max kept" 2016000 "$(sed -n 's/^little_max=//p' "$T/cfg/defaults")"
+check "empty reading: no temp file left" "no" "$([ -f "$T/cfg/defaults.tmp" ] && echo yes || echo no)"
+has "empty reading: logged" "could not read: big_max" "$(cat "$T/cfg/tune.log")"
+mksys; echo "garbage" > "$T/gpu/max_freq"                              # not a number
+out=$(S boot); has "invalid reading: boot warns" "gpu_max" "$out"
+check "invalid reading: saved gpu max kept" 900000000 "$(sed -n 's/^gpu_max=//p' "$T/cfg/defaults")"
+mksys; echo 2611200 > "$T/cpufreq/policy3/scaling_max_freq"
+out=$(S boot); case "$out" in *warn:*) echo "FAIL complete reading: unexpected warning"; fail=1 ;; *) echo "ok   complete reading: no warning" ;; esac
+check "complete reading: snapshot updated" 2611200 "$(sed -n 's/^big_max=//p' "$T/cfg/defaults")"
+mkfake; : > "$T/cpufreq/policy3/scaling_max_freq"; out=$(S boot)         # nothing saved yet: keep what can be read
+has "first boot with one empty reading: warns" "big_max" "$out"
+check "first boot with one empty reading: readable values saved" 2016000 "$(sed -n 's/^little_max=//p' "$T/cfg/defaults")"
+check "first boot with one empty reading: unreadable one not invented" "" "$(sed -n 's/^big_max=//p' "$T/cfg/defaults")"
+mkfake; rm -rf "$T/gpu"; out=$(S boot)                                  # hardware that is simply absent is not a failure
+case "$out" in *"could not read"*) echo "FAIL absent gpu is not a read failure"; fail=1 ;; *) echo "ok   absent gpu is not a read failure" ;; esac
+
 [ "$fail" = 0 ] && echo "all tune tests passed" || { echo "SOME TESTS FAILED"; exit 1; }

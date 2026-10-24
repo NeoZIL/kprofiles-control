@@ -109,6 +109,21 @@ if command -v python3 >/dev/null 2>&1; then
   check "versionCode max is valid JSON" 0 $?
 fi
 
+# Old versioned zips left in dist/ by earlier local builds are removed, so dist/*.zip is only this build.
+mk "$PROP" "$LOG"; mkdir -p "$T/r/dist"
+: > "$T/r/dist/Kprofiles-Control-v1.0.0.zip"; : > "$T/r/dist/Kprofiles-Control-v2.3.3.zip"
+( cd "$T/r" && sh build.sh >/dev/null 2>&1 ); check "rebuild with stale zips succeeds" 0 $?
+zip_count=0; zip_name=
+for f in "$T"/r/dist/*.zip; do [ -f "$f" ] || continue; zip_count=$((zip_count + 1)); zip_name=${f##*/}; done
+check "stale zips removed: exactly one zip left" 1 "$zip_count"
+check "stale zips removed: it is the current one" "Kprofiles-Control-v2.3.4.zip" "$zip_name"
+
+# The same source always builds the same zip (release.sh compares published files byte for byte).
+cp "$T/r/dist/Kprofiles-Control-v2.3.4.zip" "$T/first.zip"
+sleep 2; touch "$T/r/module/module.prop" "$T/r/module/kp.sh"
+( cd "$T/r" && sh build.sh >/dev/null 2>&1 )
+cmp -s "$T/first.zip" "$T/r/dist/Kprofiles-Control-v2.3.4.zip"; check "zip is reproducible (file dates do not matter)" 0 $?
+
 # The real module must point at a manifest that matches the real build.
 real=$(tr -d '\r' < "$HERE/../module/module.prop")
 check "real module.prop has updateJson" 1 "$(printf '%s\n' "$real" | grep -c '^updateJson=https://github.com/.*/releases/latest/download/update.json$')"

@@ -21,7 +21,9 @@ printf '%s\n' "$CODE" | grep -Eq '^[1-9][0-9]{0,9}$' && expr "$CODE" \<= 2147483
 OUT="dist/Kprofiles-Control-${VER}.zip"
 
 mkdir -p dist
-rm -f "$OUT" dist/update.json dist/changelog.md
+# dist/ belongs to this script: clear every module zip it may have made for an earlier version, so an
+# upload of dist/*.zip can never carry a stale one.
+rm -f dist/Kprofiles-Control-*.zip dist/update.json dist/changelog.md
 
 # Release notes: the "## <version>" section of CHANGELOG.md. A release without notes is an error.
 tr -d '\r' < CHANGELOG.md | awk -v h="## $VER" '
@@ -31,7 +33,14 @@ tr -d '\r' < CHANGELOG.md | awk -v h="## $VER" '
 ' | sed -e :a -e '/^[[:space:]]*$/{$d;N;ba' -e '}' > dist/changelog.md
 [ -s dist/changelog.md ] || { echo "build: CHANGELOG.md has no '## $VER' section" >&2; rm -f dist/changelog.md; exit 1; }
 
-( cd module && zip -q -r9 -X "../$OUT" . )
+# Reproducible zip: the files are copied to a scratch folder, given one fixed date and added in sorted
+# order, so building the same source twice gives byte-identical zips (release.sh compares them).
+STAGE=$(mktemp -d); trap 'rm -rf "$STAGE"' EXIT
+cp -R module/. "$STAGE/"
+chmod -R u=rwX,go=rX "$STAGE"
+ABS_OUT="$PWD/$OUT"
+find "$STAGE" -exec touch -t 200001010000 {} +
+( cd "$STAGE" && find . -type f | LC_ALL=C sort | sed 's#^\./##' | zip -q -9 -X "$ABS_OUT" -@ )
 
 BASE="https://github.com/$REPO/releases"
 cat > dist/update.json <<JSON

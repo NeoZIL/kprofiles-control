@@ -16,8 +16,14 @@
 #  - The release becomes "latest" only when its versionCode is higher than the current latest's.
 #    Re-running an older tag repairs its files but never takes over "latest".
 #  - A new release whose versionCode is not higher than the current latest's is refused.
-#  - After publishing, update.json is downloaded from the latest/download URL and its zip and
-#    changelog links are fetched, so a broken release fails the job instead of users' updates.
+#  - The latest release is looked at again right before the release is promoted. If a newer release
+#    appeared while this job was running, this release is still published, but it does not take
+#    "latest" (and a release with the same versionCode as the new latest stops the job).
+#  - Files already on a published release must match the build byte for byte, not just in size.
+#  - After publishing, every file is downloaded from its release URL and compared with the build, and
+#    update.json is downloaded from the latest/download URL: its version, versionCode, zipUrl and
+#    changelog must be exactly what this build expects, so a broken release fails the job instead of
+#    users' updates.
 set -e
 cd "$(dirname "$0")"
 TAG="${1:-$GITHUB_REF_NAME}"
@@ -38,6 +44,10 @@ gh_view() {
 for f in "$ZIP" dist/update.json dist/changelog.md; do
   [ -s "$f" ] || die "missing $f (run build.sh first)"
 done
+BASE="https://github.com/$REPO/releases"
+get() { curl -fsSL --retry 5 --retry-delay 3 --retry-all-errors -o "$1" "$2"; }
+# same_content FILE: the public copy of FILE on this release is byte for byte the file we built.
+same_content() { get "$TMP/pub" "$BASE/download/$TAG/$(basename "$1")" && cmp -s "$TMP/pub" "$1"; }
 CODE=$(tr -d '\r' < module/module.prop | sed -n 's/^versionCode=//p' | head -n 1)
 printf '%s\n' "$CODE" | grep -Eq '^[1-9][0-9]*$' || die "bad versionCode '$CODE'"
 
@@ -62,6 +72,8 @@ upload() {
         set -- "$@" "$f"
       elif [ "$cur" != "$size" ]; then
         die "$b on the published release $TAG is $cur bytes but the build is $size bytes. Not replacing a public file (an upload that fails would leave it missing). Delete it on the release page, then re-run this job."
+      elif ! same_content "$f"; then
+        die "$b on the published release $TAG has the same size as the build but different content. Not replacing a public file (an upload that fails would leave it missing). Delete it on the release page, then re-run this job."
       fi
     done
     if [ "$#" -eq 0 ]; then break; fi
@@ -80,23 +92,38 @@ upload() {
   done
 }
 
-# What is "latest" today, and is this release newer than it?
-rc=0; LATEST=$(gh_view --json tagName --jq .tagName) || rc=$?
-case "$rc" in
-  0) ;;
-  44) LATEST="" ;;   # GitHub confirmed there is no release yet
-  *) die "cannot tell which release is the latest; stopping instead of guessing" ;;
-esac
-MAKE_LATEST=yes
-if [ -n "$LATEST" ] && [ "$LATEST" != "$TAG" ]; then
-  PREV=$(git show "$LATEST:module/module.prop" 2>/dev/null | tr -d '\r' | sed -n 's/^versionCode=//p' | head -n 1)
-  printf '%s\n' "$PREV" | grep -Eq '^[0-9]+$' || die "cannot read the versionCode of the current latest release $LATEST"
-  if [ "$CODE" -eq "$PREV" ]; then
-    die "versionCode $CODE is the same as $LATEST. Raise it in module.prop."
-  elif [ "$CODE" -lt "$PREV" ]; then
-    MAKE_LATEST=no
+# decide_latest [fresh]: what is "latest" now, and is this release newer than it? Sets LATEST, PREV and
+# MAKE_LATEST. "fresh" first fetches tags, so a release made while this job ran can be read too.
+decide_latest() {
+  rc=0; LATEST=$(gh_view --json tagName --jq .tagName) || rc=$?
+  case "$rc" in
+    0) ;;
+    44) LATEST="" ;;   # GitHub confirmed there is no release yet
+    *) die "cannot tell which release is the latest; stopping instead of guessing" ;;
+  esac
+  MAKE_LATEST=yes
+  if [ -n "$LATEST" ] && [ "$LATEST" != "$TAG" ]; then
+    [ "$1" != fresh ] || git fetch --tags --quiet 2>/dev/null || true
+    PREV=$(git show "$LATEST:module/module.prop" 2>/dev/null | tr -d '\r' | sed -n 's/^versionCode=//p' | head -n 1)
+    printf '%s\n' "$PREV" | grep -Eq '^[0-9]+$' || die "cannot read the versionCode of the current latest release $LATEST"
+    if [ "$CODE" -eq "$PREV" ]; then
+      die "versionCode $CODE is the same as $LATEST. Raise it in module.prop."
+    elif [ "$CODE" -lt "$PREV" ]; then
+      MAKE_LATEST=no
+    fi
   fi
-fi
+}
+decide_latest
+# promote_flag: look again right before promoting. A newer release may have been published while this
+# job ran; then this one is published without taking "latest".
+promote_flag() {
+  was=$LATEST
+  decide_latest fresh
+  if [ "$MAKE_LATEST" = yes ]; then FLAG=true; else
+    FLAG=false
+    echo "release: $LATEST became the latest release while this job ran (was $was); $TAG is published but not promoted" >&2
+  fi
+}
 
 rc=0; STATE=$(gh_view "$TAG" --json isDraft --jq '.isDraft') || rc=$?
 case "$rc" in
@@ -109,29 +136,35 @@ case "$STATE" in
     [ "$MAKE_LATEST" = yes ] || die "versionCode $CODE is lower than $LATEST ($PREV). Raise it in module.prop."
     gh release create "$TAG" --draft --title "Kprofiles Control $TAG" --notes-file dist/changelog.md
     upload draft
-    gh release edit "$TAG" --draft=false --latest
+    promote_flag
+    gh release edit "$TAG" --draft=false "--latest=$FLAG"
     ;;
   true)
     upload draft
-    gh release edit "$TAG" --notes-file dist/changelog.md --draft=false "--latest=$([ "$MAKE_LATEST" = yes ] && echo true || echo false)"
+    promote_flag
+    gh release edit "$TAG" --notes-file dist/changelog.md --draft=false "--latest=$FLAG"
     ;;
   false)
     upload published
-    if [ "$MAKE_LATEST" = yes ]; then gh release edit "$TAG" --latest; fi
+    if [ "$MAKE_LATEST" = yes ]; then
+      promote_flag
+      if [ "$FLAG" = true ]; then gh release edit "$TAG" --latest; fi
+    fi
     ;;
   *) die "unexpected release state '$STATE'" ;;
 esac
 
-# Post-release check: what a phone will fetch must resolve.
-[ "$MAKE_LATEST" = yes ] || { echo "release: $TAG repaired; not latest ($LATEST stays latest), so the latest-manifest check is skipped"; exit 0; }
-get() { curl -fsSL --retry 5 --retry-delay 3 --retry-all-errors -o "$1" "$2"; }
-get "$TMP/update.json" "https://github.com/$REPO/releases/latest/download/update.json" ||
+# Post-release check: what a phone will fetch must resolve, and be exactly what was built.
+for f in "$ZIP" dist/update.json dist/changelog.md; do
+  same_content "$f" || die "$(basename "$f") on release $TAG cannot be downloaded or differs from the build"
+done
+[ "$MAKE_LATEST" = yes ] || { echo "release: $TAG verified; not latest ($LATEST stays latest), so the latest-manifest check is skipped"; exit 0; }
+get "$TMP/update.json" "$BASE/latest/download/update.json" ||
   die "latest/download/update.json does not resolve"
 field() { sed -n "s/.*\"$1\": \"\\(.*\\)\".*/\\1/p" "$TMP/update.json" | head -n 1; }
 [ "$(field version)" = "$TAG" ] || die "latest update.json says version '$(field version)', expected $TAG"
 grep -q "\"versionCode\": $CODE," "$TMP/update.json" || die "latest update.json has a different versionCode than $CODE"
-for k in zipUrl changelog; do
-  url=$(field "$k"); [ -n "$url" ] || die "update.json has no $k"
-  get "$TMP/$k" "$url" || die "$k $url does not resolve"
-done
-echo "release: $TAG published and verified (update.json, zip and changelog resolve)"
+[ "$(field zipUrl)" = "$BASE/download/$TAG/$(basename "$ZIP")" ] || die "latest update.json zipUrl is '$(field zipUrl)', not this release's zip"
+[ "$(field changelog)" = "$BASE/download/$TAG/changelog.md" ] || die "latest update.json changelog is '$(field changelog)', not this release's changelog.md"
+cmp -s "$TMP/update.json" dist/update.json || die "latest update.json is not the update.json that was built"
+echo "release: $TAG published and verified (zip, changelog and update.json match the build; update.json links are this release's)"
