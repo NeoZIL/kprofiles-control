@@ -120,7 +120,7 @@ check "stale zips removed: it is the current one" "Kprofiles-Control-v2.3.4.zip"
 
 # The same source always builds the same zip (release.sh compares published files byte for byte).
 cp "$T/r/dist/Kprofiles-Control-v2.3.4.zip" "$T/first.zip"
-sleep 2; touch "$T/r/module/module.prop" "$T/r/module/kp.sh"
+sleep 2; touch "$T/r/module/module.prop" "$T/r/module/tune.sh"
 ( cd "$T/r" && sh build.sh >/dev/null 2>&1 )
 cmp -s "$T/first.zip" "$T/r/dist/Kprofiles-Control-v2.3.4.zip"; check "zip is reproducible (file dates do not matter)" 0 $?
 

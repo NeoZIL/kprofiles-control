@@ -5,7 +5,11 @@ Redmi Turbo 3 (`peridot`). From one screen you can:
 
 - set **CPU and GPU speed limits** with presets or your own values
 - use **different limits when the screen is on and when it is off**
-- switch the kernel's built-in **Kprofiles** mode
+- put everything **back to the phone's own values** with Stock or Reset everything
+
+The module is **standalone**: it does not read or change the kernel's Kprofiles mode (or any other kernel
+profile switch). **Keep the kernel profile at None (mode 0) while you use these limits.** That is the
+setup the limits and the screen-on/off switching were tested in on the phone.
 
 ## Frequency limits
 
@@ -29,8 +33,8 @@ The pickers only list frequencies the phone itself reports as available. Pick
 | **Battery tilt** | big max 2188.8 MHz, prime max 2457.6 MHz, GPU max 736 MHz | little max 1017.6, big max 787.2, prime max 633.6, GPU max 353 MHz |
 | **Battery saver** | little and big max 1593.6, prime max 1766.4, GPU max 633 MHz | little max 787.2, big max 633.6, prime max 633.6, GPU max 255 MHz |
 
-Stock removes the limits this module set. It does not touch the kernel profile; the
-**Reset everything** button does both (Stock limits and kernel profile None).
+Stock removes the limits this module set. **Reset everything** does the same and also resets your saved
+settings to their defaults. Neither touches the kernel profile.
 
 A preset only fills in the values. Edit any picker afterwards and the preset becomes
 "custom". The Action button in the manager cycles Stock, Battery tilt, Battery saver.
@@ -53,62 +57,40 @@ module always uses the screen-on set.
   otherwise keeps the earlier record. A recorded minimum like that is also never written back. A
   cluster counts as having a single frequency only if its list of available frequencies can be read
   and holds exactly one; a missing or unreadable list does not.
-- If the phone's own limits cannot be saved at boot and no earlier record exists, the kernel profile
-  is not applied at that boot (`boot.log` says so); reboot or open the app to try again.
-- Android's own changes (for example a temporary boost) are left alone for any value
-  you did not set. Values you did set are re-applied about every 10 to 30 seconds.
+- **No limit is changed unless the phone's own value for it is on record.** If the record is missing or
+  incomplete for a limit you ask for, nothing is changed at all and the message names the value; Stock
+  could never put such a limit back. If the phone's own limits cannot be saved at boot and no earlier
+  record exists, no limit is changed at that boot (`boot.log` says so); reboot or open the app to try again.
+- **Stock and uninstall only report success once the phone's own value is verified back in place.** A
+  control that has disappeared, or a write the kernel refuses, makes the command fail; the saved settings,
+  the recorded values and the "changed" markers are kept so it can be tried again, and uninstall keeps its
+  recovery data.
+- Android's own changes (for example a temporary boost) are left alone for any value you did not set.
+  Values you did set are checked about every 10 to 30 seconds. If something else changed one of them, the
+  watcher puts it back, but only a few times: if it keeps being changed the watcher stops and the page says
+  something outside the module is changing it, instead of fighting it for ever. A screen on/off change
+  starts afresh. The same check shows in `tune.sh status` as `external=`.
 - Recovery if the phone feels wrong: tap **Stock**; or disable or uninstall the module in
-  the manager (the watcher notices within a few seconds and hands the limits back; the
-  kernel profile is separate, use **Reset everything** for that); or from a recovery create
-  an empty file `/data/adb/kprofiles_ui/skip` (nothing is applied at boot while it exists).
+  the manager (the watcher notices within a few seconds and hands the limits back); or from a
+  recovery create an empty file `/data/adb/kprofiles_ui/skip` (nothing is applied at boot while it exists).
 
-### How the limits and the kernel profile combine
+### The kernel profile (Kprofiles) is not managed here
 
-They never overwrite each other. Writing a value to `scaling_max_freq` only updates this
-module's own request to the kernel; the kernel profile's caps are separate requests. The
-kernel enforces the **lowest** maximum of all requests, so with the kernel Battery profile on,
-a limit you set above its cap is accepted but has no effect until the profile is None. The
-page then shows a warning that the kernel did not take the value, which is expected.
+Earlier versions (up to v1.2.x) could switch the kernel's Kprofiles mode and re-apply it at boot. This
+version does not: it never writes that mode, and it never reads it. Why this matters:
 
-Who controls what: `kp.sh` is the only script that writes the kernel profile. `tune.sh` only
-reads it, and writes nothing but the min and max nodes of the three CPU clusters and the GPU.
-
-### Checking this on your phone
-
-The statements above come from reading the kernel source, so confirm them once on the device
-(as root, for example through `adb shell su`). For each kernel profile `N` in 0, 1, 2 and 3:
-
-```
-M=/data/adb/modules/kprofiles_ui
-sh $M/kp.sh mode N
-sh $M/tune.sh cfg ON_BIG_MAX 2188800
-cat /sys/devices/system/cpu/cpufreq/policy3/scaling_max_freq
-```
-
-Expected: with 0, 2 and 3 the file shows `2188800`; with 1 it shows the Battery cap (about
-`1286400`) and the call prints a warning. If the cap ever shows the higher value, or the value
-flips back and forth, please open an issue with the output. Finish with **Reset everything**.
-To check the disable handling, turn the module off in the manager with a preset active and
-read `scaling_max_freq` again a few seconds later: it should be back at the phone's own value.
-
-## Kernel profile (advanced)
-
-The Theettam kernel contains the Kprofiles driver. It only stores a number; other
-kernel code reacts to it. Reading the kernel source, this is what each mode does:
-
-| Mode | Effect |
-|:--|:--|
-| None (0 or 2) | no kernel caps |
-| Battery (1) | little cores capped at about 1.59 GHz, big cores about 1.29 GHz, prime core held at its lowest speed, always on |
-| Performance (3) | no CPU caps; the GPU can no longer be slowed by the thermal controller |
-
-The Battery mode lowers the value `scaling_max_freq` reports, so at boot the module saves
-the phone's own limits **before** it applies the kernel profile, and it never records stock
-values while the kernel Battery profile is on or while its own limits are in place. If you ever see a stock
-value that looks capped, set the kernel profile to None, reboot, and let it save again.
-
-The driver also has an `auto_kp` switch, but this kernel never reads it, so it does
-nothing. The module no longer shows it.
+- **Keep it at None (0).** The kernel enforces the **lowest** maximum of all requests, so with the kernel
+  Battery profile on, a limit you set above its cap is accepted but has no effect, and the page shows a
+  warning that the kernel did not take the value. Set the kernel profile with whatever you use for that.
+- **A Battery profile that is on at boot can make the phone's own values look lower than they are.** This
+  module can no longer tell, so it would record the capped values as "stock". Two checks remain: a minimum
+  at or above its maximum is never recorded, and a missing or unreadable value is never invented. After
+  installing this version, look once at the recorded values (`sh /data/adb/modules/kprofiles_ui/tune.sh
+  status`, the `def_` lines) and make sure they are your phone's real ones. If they look capped, set the
+  kernel profile to None, reboot, and let it record again.
+- If you used the persisted kernel profile of v1.2.x (its choice sits in `/data/adb/kprofiles_ui/config`), boot
+  says that it is no longer applied, and the page shows the same note. The file is left as it is.
+- Reset everything, Stock and uninstall never change the kernel profile.
 
 ## Install
 
@@ -158,38 +140,35 @@ release notes. Tap it, let it install, then reboot. Your settings are kept.
 | File | Purpose |
 |:--|:--|
 | `module/tune.sh` | Frequency limits, presets, screen watcher, restore logic |
-| `module/kp.sh` | Reads and writes the kernel Kprofiles mode |
 | `module/webroot/index.html` | The WebUI page |
 | `module/module.prop` | Version, and the `updateJson` link the manager uses to offer updates |
 | `build.sh` | Builds the zip, `update.json` and the release notes into `dist/` |
 | `release.sh` | Publishes `dist/` as a GitHub release (draft first, versionCode check, post-release check) |
 | `module/service.sh` | At boot (about 25 s after boot completes): save the phone's limits, re-apply yours |
 | `module/action.sh` | Action button: cycle presets |
-| `module/uninstall.sh` | Runs `tune.sh resetall` (kernel profile to None first, then stops the watcher and restores the phone's limits) and deletes saved settings only if that worked; otherwise they are kept and it exits 1 |
+| `module/uninstall.sh` | Runs `tune.sh resetall` (stops the watcher and restores the phone's limits, verified) and deletes saved settings only if that worked; otherwise they are kept and it exits 1 |
 
 ## Build and test
 
 ```
-sh tests/kp-test.sh     # kernel profile script, fake sysfs
-sh tests/tune-test.sh   # frequency script and screen watcher, fake sysfs
+sh tests/tune-test.sh   # frequency script, screen watcher, restore and recovery rules, fake sysfs
 sh tests/build-test.sh  # zip, update manifest and release notes
 sh tests/release-test.sh  # release.sh rules against a fake gh (no network)
 sh build.sh             # writes dist/Kprofiles-Control-<version>.zip, update.json, changelog.md
 ```
 
-GitHub Actions runs ShellCheck, then all four tests under dash, **mksh** (the shell Android
+GitHub Actions runs ShellCheck, then all three tests under dash, **mksh** (the shell Android
 uses) and busybox ash, and checks that a pushed tag matches the `version` in
 `module.prop`. Push a tag such as `v1.1.4` to publish a release.
 
 ## Status
 
 v1.0, v1.1 and v1.1.4 are confirmed working by the author on a POCO F6 (`peridot`) with the
-Theettam 6.1.176 kernel and KernelSU-Next 3.4.2. v1.2.3 is covered by off-device tests (script
-logic against a fake copy of the phone's frequency tables, run in CI under dash, mksh and busybox
-ash, and the page in a simulated browser) and has not been tried on the phone yet; the same goes
-for v1.1.5 to v1.2.2. Android or Xiaomi services may override some
-values. Every write is checked and the page shows a warning if the kernel did not accept
-it. Please open an issue with that message.
+Theettam 6.1.176 kernel and KernelSU-Next 3.4.2; the limits and the screen-on/off switching were also seen
+working with the kernel profile at None. **v1.3.0 has been tested off-device only** (script logic against a
+fake copy of the phone's frequency tables, in CI under dash, mksh and busybox ash) and has not been tried on
+the phone yet. Android or Xiaomi services may override some values. Every write is checked and the page
+shows a warning if the kernel did not accept it. Please open an issue with that message.
 
 ## License
 
