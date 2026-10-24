@@ -372,8 +372,10 @@ echo "$other" > "$T/cfg/daemon.pid"; S stop >/dev/null
 check "stale pid file of an unrelated process is cleaned up" "no" "$([ -f "$T/cfg/daemon.pid" ] && echo yes || echo no)"
 kill "$other" 2>/dev/null
 echo "--- a watcher that fails to start is reported, not called ok ---"
-mkfake; mkdir -p "$T/failbin"; for n in setsid nohup; do printf '#!/bin/sh\nexit 0\n' > "$T/failbin/$n"; chmod +x "$T/failbin/$n"; done
-out=$(PATH="$T/failbin:$PATH" TUNE_START_TRIES=5 S preset tilt); rc=$?
+# The start is made to fail without touching PATH (busybox ash runs setsid and nohup as built-in applets
+# and would ignore fake ones): the pid file's place is taken by a folder, so no watcher can ever write it.
+mkfake; mkdir -p "$T/cfg/daemon.pid"
+out=$(TUNE_START_TRIES=5 S preset tilt); rc=$?
 check "no watcher: the command fails" 1 "$rc"
 has "no watcher: the failure is reported" "error: the screen on/off watcher did not start" "$out"
 has "no watcher: says the limits themselves are applied" "your limits are applied for the current screen state" "$out"
@@ -381,6 +383,7 @@ if printf '%s\n' "$out" | grep -qx ok; then echo "FAIL no watcher: must not prin
 check "no watcher: limits are applied anyway" 2188800 "$(v cpufreq/policy3/scaling_max_freq)"
 has "no watcher: logged" "watcher did not start" "$(cat "$T/cfg/tune.log")"
 check "no watcher: lock released" "no" "$([ -d "$T/cfg/daemon.lock" ] && echo yes || echo no)"
+rm -rf "$T/cfg/daemon.pid"
 out=$(S preset tilt); rc=$?; check "a working watcher: the command succeeds" 0 "$rc"
 S cfg ENABLED 0 >/dev/null
 
