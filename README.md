@@ -48,6 +48,9 @@ module always uses the screen-on set.
   value that is not in the list, or whose list cannot be read, is skipped with a warning.
 - The phone's own limits are saved at every boot and restored by **Stock**, by the
   "Apply my limits" switch, and when a value is set back to Default.
+- A stock minimum at or above its maximum is never recorded. That reading means something is holding
+  the cluster up (for example a boot boost), so boot waits up to about a minute for it to end, and
+  otherwise keeps the earlier record. A recorded minimum like that is also never written back.
 - Android's own changes (for example a temporary boost) are left alone for any value
   you did not set. Values you did set are re-applied about every 10 to 30 seconds.
 - Recovery if the phone feels wrong: tap **Stock**; or disable or uninstall the module in

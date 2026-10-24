@@ -1,5 +1,30 @@
 # Changelog
 
+## v1.2.2
+Found on a real POCO F6 after flashing v1.2.1: the recorded stock minimums were equal to the maximums
+(little 2016000, big 2572800, prime 2668800 instead of 595200, 633600, 633600). At the moment of the
+boot-time recording every cluster's minimum read equal to its maximum, so something was holding them
+up (most likely a boot boost; the cause is not confirmed), and the module saved that as "stock".
+- Fix: **a minimum at or above its maximum is never recorded as stock.** The recording drops that
+  reading (a cluster that really has one frequency is not affected). With an earlier snapshot the
+  earlier one is kept; with none, the maximum is saved and the minimum is left out.
+- Fix: **boot waits for the boost to end.** When it sees held minimums it looks again every 10 seconds,
+  up to 8 times, before giving up, and says so on screen and in `tune.log`. Applying your preset
+  waits for that, so in that case it can start up to about a minute later.
+- Fix: **a recorded minimum at or above its maximum is never written back.** Snapshots made by earlier
+  versions can already contain one. Stock, Apply and the screen watcher now treat such a minimum as
+  not recorded: the limit stays marked, the command says so and exits 1, and the cluster is not
+  pinned at its top speed. (`status` shows an empty `def_*_min` for it.)
+- Fix: **a restored minimum that had to follow a lower maximum lost its marker.** When the phone's
+  own minimum was above the new maximum, the module wrote the lower value but cleared the "changed by
+  this module" marker as if the phone's own value was back, so Stock never repaired it. The marker now
+  stays until the real value is back.
+- Boot now logs the values it recorded (`tune.log`, line "boot: stock recorded: ..."), so a wrong
+  snapshot can be traced to the boot that made it.
+- Tests: pinned minimums with and without an earlier snapshot, a boost that ends during boot, a
+  single-frequency cluster, a pinned recorded snapshot at Stock, a clamped minimum across screen
+  off and on, and the boot log line. Each new test was checked by deliberately breaking the code.
+
 ## v1.2.1
 Fixes eight ways the module could report success while the information needed to put the phone's own
 limits back was missing, unsaved or lost, or while a limit you asked for was not in place. Each has a

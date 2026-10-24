@@ -902,4 +902,60 @@ check "refused min: cfg exits 1" 1 "$rc"
 has "refused min: names the limit" "big_min" "$out"
 mkfake
 
+echo "--- a minimum held at its maximum is never recorded as stock ---"
+export TUNE_NO_DAEMON=1
+pinall() { echo 2016000 > "$T/cpufreq/policy0/scaling_min_freq"; echo 2572800 > "$T/cpufreq/policy3/scaling_min_freq"; echo 2668800 > "$T/cpufreq/policy7/scaling_min_freq"; }
+unpin() { echo 595200 > "$T/cpufreq/policy0/scaling_min_freq"; echo 633600 > "$T/cpufreq/policy3/scaling_min_freq"; echo 633600 > "$T/cpufreq/policy7/scaling_min_freq"; }
+dv() { sed -n "s/^$1=//p" "$T/cfg/defaults" 2>/dev/null | head -n 1; }
+mkfake; S boot >/dev/null
+check "good boot records the real minimum" 595200 "$(dv little_min)"
+pinall; out=$(TUNE_BOOT_RETRIES=1 S boot)
+check "pinned boot keeps the earlier little min" 595200 "$(dv little_min)"
+check "pinned boot keeps the earlier big min" 633600 "$(dv big_min)"
+check "pinned boot keeps the earlier prime min" 633600 "$(dv prime_min)"
+has "pinned boot says why" "was at or above the maximum" "$out"
+mkfake; pinall; TUNE_BOOT_RETRIES=1 S boot >/dev/null
+check "pinned boot with no earlier record: no minimum saved (little)" "" "$(dv little_min)"
+check "pinned boot with no earlier record: no minimum saved (big)" "" "$(dv big_min)"
+check "pinned boot with no earlier record: the maximum is still saved" 2572800 "$(dv big_max)"
+check "pinned boot with no earlier record: the GPU is unaffected" 255000000 "$(dv gpu_min)"
+check "pinned boot is written to the log" 1 "$(grep -c 'minimum at or above maximum' "$T/cfg/tune.log")"
+# a boost that ends: boot looks again and records the real values
+mkfake; pinall
+( TUNE_BOOT_RETRIES=8 TUNE_BOOT_WAIT=1 S boot >/dev/null ) & bp=$!
+sleep 2; unpin; wait "$bp"
+check "boot waits out a boost: little min" 595200 "$(dv little_min)"
+check "boot waits out a boost: big min" 633600 "$(dv big_min)"
+check "boot waits out a boost: prime min" 633600 "$(dv prime_min)"
+check "boot logs what it recorded" 1 "$(grep -c 'boot: stock recorded' "$T/cfg/tune.log")"
+# a cluster that really has one frequency is not flagged
+mkfake; echo 633600 > "$T/cpufreq/policy7/scaling_available_frequencies"; echo 633600 > "$T/cpufreq/policy7/scaling_max_freq"; echo 633600 > "$T/cpufreq/policy7/scaling_min_freq"
+TUNE_BOOT_RETRIES=1 S boot >/dev/null
+check "single-frequency cluster: min recorded" 633600 "$(dv prime_min)"
+
+echo "--- a recorded minimum at its maximum is never written back ---"
+mkfake; mkdir -p "$T/cfg"
+printf 'little_min=2016000\nlittle_max=2016000\nbig_min=2572800\nbig_max=2572800\nprime_min=2668800\nprime_max=2668800\ngpu_min=255000000\ngpu_max=900000000\n' > "$T/cfg/defaults"
+out=$(S status | grep '^def_big_min='); check "status does not show a pinned recorded minimum" "def_big_min=" "$out"
+S cfg ENABLED 1 >/dev/null; S cfg ON_BIG_MIN 787200 >/dev/null
+check "custom min applied" 787200 "$(v cpufreq/policy3/scaling_min_freq)"
+out=$(S preset stock); rc=$?
+check "Stock does not pin the minimum at the maximum" 787200 "$(v cpufreq/policy3/scaling_min_freq)"
+has "Stock says the minimum has no recorded value" "not recorded" "$out"
+check "Stock reports it as not finished" 1 "$rc"
+
+echo "--- a minimum clamped to a lower maximum stays marked and comes back ---"
+mkfake; S boot >/dev/null
+S cfg ENABLED 1 >/dev/null; S cfg ON_PRIME_MIN 787200 >/dev/null; S cfg OFF_PRIME_MAX 480000 >/dev/null
+check "prime min is ours now" 1 "$(grep -c '^prime_min$' "$T/cfg/applied")"
+echo 0 > "$T/bl/brightness"; S apply >/dev/null
+check "screen off: the max is lowered below the stock min" 480000 "$(v cpufreq/policy7/scaling_max_freq)"
+check "screen off: the min followed it down" 480000 "$(v cpufreq/policy7/scaling_min_freq)"
+check "screen off: the min is still marked as ours" 1 "$(grep -c '^prime_min$' "$T/cfg/applied")"
+echo 120 > "$T/bl/brightness"; S apply >/dev/null
+check "screen on: the min is back at 787200" 787200 "$(v cpufreq/policy7/scaling_min_freq)"
+S preset stock >/dev/null
+check "Stock: the min is the phone's own again" 633600 "$(v cpufreq/policy7/scaling_min_freq)"
+mkfake
+
 [ "$fail" = 0 ] && echo "all tune tests passed" || { echo "SOME TESTS FAILED"; exit 1; }

@@ -92,6 +92,8 @@ parse_key() {
   PK_C=$(upper "$PK_c")
   return 0
 }
+# How many frequencies the phone lists for a cluster (0 when the list cannot be read).
+list_count() { lc=0; for lf in $(rd "$(avail_node "$1")"); do lc=$((lc + 1)); done; echo "$lc"; }
 list_has() { for f in $(rd "$(avail_node "$1")"); do [ "$f" = "$2" ] && return 0; done; return 1; }
 
 # ---------- a small log (kept short) ----------
@@ -107,7 +109,7 @@ log_msg() {
 
 # ---------- the phone's own values ----------
 capture_defaults() {
-  CAP_BAD=""
+  CAP_BAD=""; CAP_PIN=""
   if [ "$1" != force ]; then
     [ -f "$DEF" ] && return 0                    # already recorded
     [ -s "$APPLIED" ] && return 0                # our own limits are in place: would record them as stock
@@ -130,16 +132,39 @@ capture_defaults() {
       *) CAP_BAD="$CAP_BAD ${c}_${k}" ;;                       # all zeros: not a frequency
     esac
   done; done
-  if [ -n "$CAP_BAD" ]; then
-    # An incomplete reading must never replace a saved snapshot. With nothing saved yet the readable
-    # values are still better than none, so they are kept.
-    log_msg "could not read:$CAP_BAD"
+  # A minimum at or above its maximum is not the phone's own setting: something is holding that cluster
+  # up (a boot boost, another module or app). It is never recorded as stock. (A cluster that really has
+  # a single frequency is not flagged.)
+  for c in $CLUSTERS; do
+    cp_min=$(sed -n "s/^${c}_min=//p" "$DEF.tmp" 2>/dev/null | head -n 1)
+    cp_max=$(sed -n "s/^${c}_max=//p" "$DEF.tmp" 2>/dev/null | head -n 1)
+    if [ -n "$cp_min" ] && [ -n "$cp_max" ] && [ "$cp_min" -ge "$cp_max" ] && [ "$(list_count "$c")" -gt 1 ]; then
+      CAP_PIN="$CAP_PIN $c"
+      grep -v "^${c}_min=" "$DEF.tmp" > "$DEF.tmp2" 2>/dev/null
+      { [ $? -le 1 ] && mv "$DEF.tmp2" "$DEF.tmp"; } 2>/dev/null || { rm -f "$DEF.tmp2" 2>/dev/null; cd_fail; return 2; }
+    fi
+  done
+  if [ -n "$CAP_BAD$CAP_PIN" ]; then
+    # An incomplete or pinned reading must never replace a saved snapshot. With nothing saved yet the
+    # readable values are still better than none, so they are kept.
+    [ -z "$CAP_BAD" ] || log_msg "could not read:$CAP_BAD"
+    [ -z "$CAP_PIN" ] || log_msg "minimum at or above maximum, not recorded as stock for:$CAP_PIN"
     if [ -s "$DEF" ]; then rm -f "$DEF.tmp"; return 0; fi
   fi
   mv "$DEF.tmp" "$DEF" 2>/dev/null || { cd_fail; return 2; }
   return 0
 }
-def_of() { sed -n "s/^$1=//p" "$DEF" 2>/dev/null | head -n 1; }
+def_of() {
+  df_v=$(sed -n "s/^$1=//p" "$DEF" 2>/dev/null | head -n 1)
+  case "$1" in
+    *_min)
+      df_c=${1%_min}; df_x=$(sed -n "s/^${df_c}_max=//p" "$DEF" 2>/dev/null | head -n 1)
+      # A recorded minimum at or above its maximum is a pinned reading, never the phone's own setting:
+      # writing it back would pin the cluster at its top speed. Treat it as not recorded.
+      if [ -n "$df_v" ] && [ -n "$df_x" ] && [ "$df_v" -ge "$df_x" ] && [ "$(list_count "$df_c")" -gt 1 ]; then df_v=""; fi ;;
+  esac
+  echo "$df_v"
+}
 
 # ---------- bookkeeping of what we changed ----------
 is_applied() { grep -qx "$1" "$APPLIED" 2>/dev/null; }
@@ -202,7 +227,8 @@ apply_domain() { # cluster state(on|off|none)
   # keep min <= max
   if [ -z "$ad_dmin" ] && [ -n "$ad_dmax" ] && [ -n "$ad_curmin" ] && [ "$ad_curmin" -gt "$ad_dmax" ]; then ad_dmin=$ad_dmax; ad_rmin=""; fi
   if [ -z "$ad_dmax" ] && [ -n "$ad_dmin" ] && [ -n "$ad_curmax" ] && [ "$ad_curmax" -lt "$ad_dmin" ]; then ad_dmax=$ad_dmin; ad_rmax=""; fi
-  if [ -n "$ad_dmin" ] && [ -n "$ad_dmax" ] && [ "$ad_dmin" -gt "$ad_dmax" ]; then ad_dmin=$ad_dmax; fi
+  # (a minimum clamped to the new maximum is no longer the phone's own value, so it stays marked as ours)
+  if [ -n "$ad_dmin" ] && [ -n "$ad_dmax" ] && [ "$ad_dmin" -gt "$ad_dmax" ]; then ad_dmin=$ad_dmax; ad_rmin=""; fi
   # A limit is recorded as ours BEFORE it is changed: if the record cannot be saved, the limit is left alone.
   if [ -n "$ad_dmin" ] && [ -z "$ad_rmin" ] && ! mark_applied "${ad_c}_min"; then
     echo "error: could not save the record of the $ad_c min limit, so it was not changed"; log_msg "marker write failed for ${ad_c}_min"; return 1
@@ -536,12 +562,24 @@ cmd_resetall() { # kernel profile back to None first (so nothing holds the limit
   return "$ra_rc"
 }
 
+BOOT_RETRIES="${TUNE_BOOT_RETRIES:-8}"   # how often boot looks again when a cluster's minimum is held at its maximum
+BOOT_WAIT="${TUNE_BOOT_WAIT:-10}"        # seconds between those looks
 cmd_boot() {
   rm -f "$APPLIED" "$PIDF" 2>/dev/null
   mkdir -p "$CFG_DIR" 2>/dev/null
-  cb_rc=0
-  capture_defaults force || { echo "error: the phone's own limits could not be saved at boot; an earlier record is kept if there is one"; cb_rc=1; }
+  cb_rc=0; cb_try=0
+  while :; do
+    capture_defaults force; cb_cd=$?
+    # A boot boost can hold every minimum at its maximum for a while. Wait for it instead of recording it.
+    { [ "$cb_cd" = 0 ] && [ -n "$CAP_PIN" ]; } || break
+    cb_try=$((cb_try + 1)); [ "$cb_try" -lt "$BOOT_RETRIES" ] || break
+    log_msg "boot: minimum held at maximum for:$CAP_PIN, looking again in ${BOOT_WAIT}s ($cb_try/$BOOT_RETRIES)"
+    sleep "$BOOT_WAIT"
+  done
+  [ "$cb_cd" = 0 ] || { echo "error: the phone's own limits could not be saved at boot; an earlier record is kept if there is one"; cb_rc=1; }
   [ -z "$CAP_BAD" ] || echo "warn: could not read these frequency values at boot:$CAP_BAD (an earlier record is kept if there is one)"
+  [ -z "$CAP_PIN" ] || echo "warn: the minimum frequency was at or above the maximum for:$CAP_PIN, so it was not recorded as stock (something is holding it up); an earlier record is kept if there is one"
+  [ "$cb_cd" != 0 ] || [ ! -s "$DEF" ] || log_msg "boot: stock recorded: $(tr '\n' ' ' < "$DEF" 2>/dev/null)"
   load_cfg
   [ -z "$CFG_BAD" ] || { echo "$NOREAD"; cb_rc=1; }
   if [ "$ENABLED" = 1 ] && [ -z "$CFG_BAD" ]; then cmd_apply || cb_rc=1; fi
