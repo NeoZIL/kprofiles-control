@@ -7,12 +7,15 @@ CFG_DIR="${CFG_DIR:-/data/adb/kprofiles_ui}"
 CFG="$CFG_DIR/config"
 
 cfg_get() { [ -f "$CFG" ] && sed -n "s/^$1=//p" "$CFG" | head -n 1; }
+# Returns non-zero if the folder cannot be made, the temporary file cannot be written or the config
+# cannot be replaced. The old config is never overwritten by a failed write, and the temporary file
+# is removed again.
 cfg_set() {
-  mkdir -p "$CFG_DIR" 2>/dev/null
-  touch "$CFG"
-  grep -v "^$1=" "$CFG" > "$CFG.tmp" 2>/dev/null
-  echo "$1=$2" >> "$CFG.tmp"
-  mv "$CFG.tmp" "$CFG"
+  mkdir -p "$CFG_DIR" 2>/dev/null || return 1
+  [ ! -d "$CFG" ] || return 1
+  { { grep -v "^$1=" "$CFG" 2>/dev/null; echo "$1=$2"; } > "$CFG.tmp"; } 2>/dev/null || { rm -f "$CFG.tmp" 2>/dev/null; return 1; }
+  mv "$CFG.tmp" "$CFG" 2>/dev/null || { rm -f "$CFG.tmp" 2>/dev/null; return 1; }
+  return 0
 }
 # Persistence is ON unless the config says PERSIST=0.
 persist_on() { [ "$(cfg_get PERSIST)" != "0" ]; }
@@ -38,7 +41,10 @@ set_mode() {
   { echo "$1" > "$KP"; } 2>/dev/null
   now=$(read_mode)
   [ "$now" = "$1" ] || { echo "error: wrote $1 but the kernel reports ${now:-nothing}"; return 1; }
-  persist_on && cfg_set MODE "$1"
+  if persist_on && ! cfg_set MODE "$1"; then
+    echo "error: the kernel accepted mode $1, but saving it to $CFG failed, so it will not be re-applied at boot"
+    return 1
+  fi
   return 0
 }
 
@@ -48,14 +54,19 @@ set_auto() {
   { echo "$v" > "$AUTO"; } 2>/dev/null
   now=$(read_auto)
   [ "$now" = "$v" ] || { echo "error: wrote $v but the kernel reports ${now:-nothing}"; return 1; }
-  persist_on && cfg_set AUTO "$v"
+  if persist_on && ! cfg_set AUTO "$v"; then
+    echo "error: the kernel accepted auto $v, but saving it to $CFG failed, so it will not be re-applied at boot"
+    return 1
+  fi
   return 0
 }
 
 set_persist() {
   case "$1" in
-    1) cfg_set PERSIST 1; cfg_set MODE "$(read_mode)"; cfg_set AUTO "$(read_auto)" ;;
-    0) cfg_set PERSIST 0 ;;
+    1) if ! { cfg_set PERSIST 1 && cfg_set MODE "$(read_mode)" && cfg_set AUTO "$(read_auto)"; }; then
+         echo "error: could not save the persistence setting to $CFG"; return 1
+       fi ;;
+    0) if ! cfg_set PERSIST 0; then echo "error: could not save the persistence setting to $CFG"; return 1; fi ;;
     *) echo "error: persist must be 0 or 1"; return 1 ;;
   esac
   return 0

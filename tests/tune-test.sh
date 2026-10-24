@@ -619,4 +619,55 @@ check "action with a refused restore: exits non-zero" 1 "$rc"
 has "action with a refused restore: shows the warning" "could not put the phone's own value back" "$out"
 mkfake
 
+echo "--- uninstall resets the kernel profile BEFORE it restores the limits ---"
+# Stand-in for a kernel where the Battery profile holds the limit down: the big max can only be written
+# once kp.sh has set the profile to None. (The node is a folder, so writes fail, until then.)
+setup_locked() {
+  mkfake; S boot >/dev/null; S preset tilt >/dev/null; sh "$HERE/../module/kp.sh" mode 1 >/dev/null
+  rm -f "$T/cpufreq/policy3/scaling_max_freq"; mkdir "$T/cpufreq/policy3/scaling_max_freq"
+  rm -rf "$T/modu"; cp -r "$HERE/../module" "$T/modu"
+  sed "s#/data/adb/kprofiles_ui#$T/cfg#" "$HERE/../module/uninstall.sh" > "$T/modu/uninstall.sh"
+  mv "$T/modu/kp.sh" "$T/modu/kp-real.sh"
+  cat > "$T/modu/kp.sh" <<'WRAP'
+#!/bin/sh
+D=$(dirname "$0")
+sh "$D/kp-real.sh" "$@"; rc=$?
+if [ "$1" = mode ] && [ "$2" = 0 ] && [ "$rc" = 0 ] && [ -d "$BIGNODE" ]; then rmdir "$BIGNODE"; echo 2188800 > "$BIGNODE"; fi
+exit $rc
+WRAP
+}
+export BIGNODE="$T/cpufreq/policy3/scaling_max_freq"
+setup_locked
+sh "$T/modu/uninstall.sh" >/dev/null 2>&1; rc=$?
+check "locked limit: uninstall succeeds because the profile is reset first" 0 "$rc"
+check "locked limit: the big max is back to the phone's own value" 2572800 "$(v cpufreq/policy3/scaling_max_freq)"
+check "locked limit: the kernel profile is None" 0 "$(v kp/kp_mode)"
+check "locked limit: saved settings removed" no "$([ -e "$T/cfg" ] && echo yes || echo no)"
+# the profile cannot be reset: nothing can be restored, and everything is kept
+setup_locked; rm -rf "$T/kp/kp_mode"; mkdir "$T/kp/kp_mode"
+sh "$T/modu/uninstall.sh" >/dev/null 2>&1; rc=$?
+check "profile reset fails: uninstall exits 1" 1 "$rc"
+check "profile reset fails: recorded stock values kept" yes "$([ -s "$T/cfg/defaults" ] && echo yes || echo no)"
+check "profile reset fails: settings kept" yes "$([ -s "$T/cfg/tune.conf" ] && echo yes || echo no)"
+check "profile reset fails: marker kept" 1 "$(grep -cx big_max "$T/cfg/applied" 2>/dev/null)"
+rmdir "$T/kp/kp_mode"; echo 1 > "$T/kp/kp_mode"                     # the profile can be reset now
+sh "$T/modu/uninstall.sh" >/dev/null 2>&1; rc=$?
+check "after the profile can be reset: uninstall succeeds" 0 "$rc"
+check "after the profile can be reset: limit restored" 2572800 "$(v cpufreq/policy3/scaling_max_freq)"
+check "after the profile can be reset: saved settings removed" no "$([ -e "$T/cfg" ] && echo yes || echo no)"
+# the profile resets but the restore is still refused: kept, and the profile is already None
+mkfake; S boot >/dev/null; S preset tilt >/dev/null; sh "$HERE/../module/kp.sh" mode 1 >/dev/null
+rm -f "$T/cpufreq/policy3/scaling_max_freq"; mkdir "$T/cpufreq/policy3/scaling_max_freq"
+rm -rf "$T/modu"; cp -r "$HERE/../module" "$T/modu"; sed "s#/data/adb/kprofiles_ui#$T/cfg#" "$HERE/../module/uninstall.sh" > "$T/modu/uninstall.sh"
+sh "$T/modu/uninstall.sh" >/dev/null 2>&1; rc=$?
+check "restore refused after the reset: uninstall exits 1" 1 "$rc"
+check "restore refused after the reset: the profile was reset first" 0 "$(v kp/kp_mode)"
+check "restore refused after the reset: recovery data kept" 1 "$([ -s "$T/cfg/defaults" ] && [ -s "$T/cfg/tune.conf" ] && grep -qx big_max "$T/cfg/applied" && echo 1 || echo 0)"
+rmdir "$T/cpufreq/policy3/scaling_max_freq"; echo 2188800 > "$T/cpufreq/policy3/scaling_max_freq"
+sh "$T/modu/uninstall.sh" >/dev/null 2>&1; rc=$?
+check "restore works again: uninstall succeeds and cleans up" "0 no" "$rc $([ -e "$T/cfg" ] && echo yes || echo no)"
+check "uninstall.sh runs tune.sh resetall" 1 "$(grep -c 'tune.sh" resetall' "$HERE/../module/uninstall.sh")"
+check "uninstall.sh no longer calls kp.sh itself" 0 "$(grep -v '^ *#' "$HERE/../module/uninstall.sh" | grep -c 'kp.sh')"
+mkfake
+
 [ "$fail" = 0 ] && echo "all tune tests passed" || { echo "SOME TESTS FAILED"; exit 1; }

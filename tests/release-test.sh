@@ -67,6 +67,8 @@ exit 0
 GH
 cat > "$T/bin/git" <<'GIT'
 #!/bin/sh
+# git fetch ...: succeeds, unless FAKE_GIT_FETCH_FAIL is set (a network error)
+if [ "$1" = fetch ]; then echo "git $*" >> "$FAKE/calls"; [ -z "$FAKE_GIT_FETCH_FAIL" ] || { echo "fatal: unable to access remote" >&2; exit 128; }; exit 0; fi
 # git show <tag>:module/module.prop  ->  the versionCode recorded for that tag
 ref=${2%%:*}
 [ -f "$FAKE/props_$ref" ] || exit 128
@@ -256,6 +258,19 @@ run; check "release never becomes visible: job fails" 1 $?
 check "release never becomes visible: stays a draft" "draft" "$(cat "$F/state_v2.3.4")"
 check "release never becomes visible: never published" 0 "$(calls 'draft=false')"
 reset; run FAKE_GH_FAIL=tag; check "other lookup errors are still not retried" 0 "$(grep -c 'looking again' "$T/out")"
+
+# 15. A failed tag fetch is an error: the previous versionCode must not be read from stale tags.
+reset; latest v2.3.3 41; run
+check "tags are fetched before promotion" 1 "$([ "$(calls 'git fetch --tags')" -ge 1 ] && echo 1 || echo 0)"
+reset; latest v2.3.3 41; run FAKE_GIT_FETCH_FAIL=1; check "failed tag fetch: the job fails" 1 $?
+check "failed tag fetch: says so" 1 "$(grep -c 'cannot fetch tags' "$T/out")"
+check "failed tag fetch: the release is not published" 0 "$(calls 'draft=false')"
+check "failed tag fetch: the release stays a draft" "draft" "$(cat "$F/state_v2.3.4")"
+check "failed tag fetch: latest unchanged" "v2.3.3" "$(cat "$F/latest")"
+reset; latest v2.3.3 41; echo published > "$F/state_v2.3.4"; : > "$F/assets_v2.3.4"
+run FAKE_GIT_FETCH_FAIL=1; check "failed tag fetch (published release): the job fails" 1 $?
+check "failed tag fetch (published release): not promoted" "v2.3.3" "$(cat "$F/latest")"
+reset; run FAKE_GIT_FETCH_FAIL=1; check "first release (nothing to compare): a fetch failure does not matter" 0 $?
 
 # 8. Missing build output is refused.
 reset; rm -f "$R/dist/changelog.md"; run; check "missing file refused" 1 $?

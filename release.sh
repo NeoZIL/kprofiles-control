@@ -113,7 +113,10 @@ decide_latest() {
   esac
   MAKE_LATEST=yes
   if [ -n "$LATEST" ] && [ "$LATEST" != "$TAG" ]; then
-    [ "$1" != fresh ] || git fetch --tags --quiet 2>/dev/null || true
+    if [ "$1" = fresh ]; then
+      git fetch --tags --quiet 2>/dev/null ||
+        die "cannot fetch tags to verify the latest release; stopping instead of guessing"
+    fi
     PREV=$(git show "$LATEST:module/module.prop" 2>/dev/null | tr -d '\r' | sed -n 's/^versionCode=//p' | head -n 1)
     printf '%s\n' "$PREV" | grep -Eq '^[0-9]+$' || die "cannot read the versionCode of the current latest release $LATEST"
     if [ "$CODE" -eq "$PREV" ]; then

@@ -1,15 +1,32 @@
 # Changelog
 
+## v1.1.9
+- Fix: uninstall now runs `tune.sh resetall`, which sets the kernel profile to None BEFORE it restores
+  the limits. Before, the limits were restored first, while a restrictive profile such as Battery
+  could still be holding them down, so the restore could be refused. `uninstall.sh` deletes
+  `/data/adb/kprofiles_ui` only when `resetall` succeeded (watcher stopped, every limit put back and
+  verified, profile None); otherwise everything stays, it says so on stderr and exits 1. A kernel
+  without Kprofiles has nothing to reset and does not block the uninstall.
+- Fix: `kp.sh` no longer claims success when it cannot save a choice. `cfg_set` now fails if the folder
+  cannot be made, the temporary file cannot be written or the config cannot be replaced; it never
+  overwrites the old config in that case and removes its temporary file. `mode`, `auto`, `persist`,
+  `apply` and `cycle` then exit 1 with an error that says the kernel DID accept the value but saving
+  it failed (so it will not be re-applied at boot), not that the kernel write failed.
+- Fix: `release.sh` no longer ignores a failed `git fetch --tags`. The fresh fetch before promotion is
+  what makes a release published while the job ran readable; if it fails the job stops (the release
+  stays a draft, or is left unpromoted) instead of deciding from stale tags.
+- Tests: uninstall resets the profile before restoring (a stand-in kernel only unlocks the limit once
+  the profile is None); a failed profile reset and a refused restore each keep the recovery data and
+  succeed once fixed; `kp.sh` with an unwritable, impossible or directory config; a failed tag fetch in
+  `release.sh`. Each new check fails on the code it replaces.
+
 ## v1.1.8
 - Fix: uninstall no longer throws away the recovery data after a failed restore. `apply_state` used to
   report success even when the kernel refused to take the phone's own value back, so `tune.sh stop`
   said ok and `uninstall.sh` deleted the saved settings, the recorded stock values and the "changed"
   markers that a later restore needs. A refused restore now makes `apply_state` fail, and `stop`
-  prints `error:` and exits 1 instead of `ok`. `uninstall.sh` deletes its folder only when the watcher
-  stopped, every limit was put back and the kernel profile is None; otherwise everything stays, it
-  says so on stderr and exits 1.
-- Fix: uninstall checks the reset of the kernel profile. A failed `kp.sh mode 0` used to be ignored.
-  (A kernel without Kprofiles has nothing to reset and does not block the uninstall.)
+  prints `error:` and exits 1 instead of `ok`. `uninstall.sh` also checks the reset of the kernel
+  profile.
 - Fix: Stock, Apply and any setting change exit non-zero, with an `error:` line, when a restore of the
   phone's own value was refused (the warning naming the limit is still shown, and the limit stays
   marked for a retry). Before, they ended in `ok`.
@@ -17,16 +34,13 @@
   the real `error:` / `warn:` lines, says the preset was not fully applied, and exits 1. Warnings are
   shown on success too.
 - Fix: `kp.sh apply` and `kp.sh cycle` exit non-zero when a requested mode or auto change failed (the
-  resulting state is still printed, and `cycle` no longer says "switched" after a failure). Before,
-  the final `status` decided the exit code. The kernel's refusal no longer prints a stray shell
-  error line either.
+  resulting state is still printed, and `cycle` no longer says "switched" after a failure). The
+  kernel's refusal no longer prints a stray shell error line either.
 - Fix: `tune.sh boot` no longer prints `boot done` after a failed apply or watcher start. It prints
   `boot finished with errors`, logs it in `tune.log`, and exits 1.
-- Tests: a refused restore through Stock, `stop`, a setting change and uninstall (data kept, then
-  removed once the restore works); a failed kernel-profile reset during uninstall; boot after a failed
+- Tests: a refused restore through Stock, `stop`, a setting change and uninstall; boot after a failed
   watcher start; the Action button on success, failed watcher start and refused restore; and
-  `kp.sh apply` / `cycle` with a refused mode and a refused auto setting. Each new check fails on
-  v1.1.7.
+  `kp.sh apply` / `cycle` with a refused mode and a refused auto setting.
 
 ## v1.1.7
 - Fix: a restore the kernel refuses no longer makes the module forget the limit. Before, a failed
