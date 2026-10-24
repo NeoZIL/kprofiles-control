@@ -1,5 +1,35 @@
 # Changelog
 
+## v1.2.3
+An audit of v1.2.2 (before it was flashed) reproduced one hole in the new stock protection and one gap in
+the boot order. Neither was seen on a phone.
+- Fix: **an unreadable frequency list no longer hides a pinned minimum.** v1.2.2 let a minimum that sat at
+  its maximum through when the cluster's list of available frequencies was missing, empty or unreadable,
+  because it counted that as "this cluster has a single frequency". Reproduced: with the big cluster's list
+  removed and its minimum at its maximum (2572800), boot recorded 2572800 as stock and never looked again.
+  Now only a list that can be read and holds exactly one real frequency counts as a single-frequency
+  cluster; a missing, empty, unreadable or malformed list (a lone word that is not a positive number)
+  is "unknown", and the minimum is treated as pinned: not recorded, the earlier snapshot is kept, and boot
+  looks again. The same rule is used when a recorded minimum is about to be written back, so a pinned
+  recorded minimum is not written back either when the list has disappeared.
+- Fix: **boot no longer applies the kernel profile blindly when stock could not be recorded.** `service.sh`
+  ran `tune.sh boot; kp.sh apply` regardless of the result. Now `tune.sh boot` exits 2 when the phone's
+  own limits could not be saved AND no earlier record exists, and `service.sh` then does **not** apply the
+  kernel profile at that boot (a Battery profile would keep the real values from being recorded
+  afterwards) and says so in `boot.log` and `tune.log`. Exit status 0 or 1 (any other error, already
+  reported) still applies the profile, as before. Anything else (for example `tune.sh` cannot run) skips
+  it too. Reboot, or open the app, to try again.
+- Tests: missing, empty, unreadable, malformed and zero lists with a pinned minimum (saved snapshot,
+  retries, exit status, kernel value, log); a genuine one-frequency list; a good snapshot that must
+  survive a suspicious reading; restoring after the list disappears (a pinned record is not written
+  back and stays marked, a good record is restored); and the real `service.sh` run against a fake phone
+  for the normal order, a failed save with and without an earlier record, another error, and a missing
+  `tune.sh`. The old text check of `service.sh` was replaced by these. Each new test fails on the
+  v1.2.2 code, and six deliberate breaks of the fixes were each caught.
+- Tests: the temporary `sleep` processes of the tune test are now stopped if a run is interrupted, so
+  they cannot keep an output pipe open. (A stall reported in an independent run could not be
+  reproduced: the suite finishes in about 80 seconds here.)
+
 ## v1.2.2
 Found on a real POCO F6 after flashing v1.2.1: the recorded stock minimums were equal to the maximums
 (little 2016000, big 2572800, prime 2668800 instead of 595200, 633600, 633600). At the moment of the

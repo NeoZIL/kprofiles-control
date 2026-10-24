@@ -28,7 +28,9 @@ reap() {
   kill -9 $ra 2>/dev/null
   return 0
 }
-cleanup() { reap; rm -rf "$T"; }
+# Also stops the background "sleep" stand-ins this test starts (a run that is interrupted or aborted must not
+# leave one behind: it would keep the caller's output pipe open for minutes and look like a stalled test).
+cleanup() { for bg in ${bystander:-} ${other:-} ${holder:-}; do kill "$bg" 2>/dev/null; done; reap; rm -rf "$T"; }
 trap cleanup EXIT
 fail=0
 check() { if [ "$2" = "$3" ]; then echo "ok   $1"; else echo "FAIL $1: expected '$2' got '$3'"; fail=1; fi; }
@@ -224,16 +226,60 @@ out=$(S preset tilt); has "preset skips unavailable value" "warn: preset value 1
 check "skipped value not saved" "" "$(sed -n 's/^OFF_LITTLE_MAX=//p' "$T/cfg/tune.conf")"
 check "valid preset values still applied" 2188800 "$(v cpufreq/policy3/scaling_max_freq)"
 
-echo "--- boot order: record stock values BEFORE the kernel profile is applied ---"
-SVC="$HERE/../module/service.sh"
-a=$(grep -n 'tune.sh" boot' "$SVC" | head -n 1 | cut -d: -f1); b=$(grep -n 'kp.sh" apply' "$SVC" | head -n 1 | cut -d: -f1)
-if [ -n "$a" ] && [ -n "$b" ] && [ "$a" -le "$b" ] && [ "$(sed -n "${a}p" "$SVC" | grep -c 'kp.sh')" -ge 0 ]; then
-  # on one line: tune boot must come first in the command list
-  line=$(grep 'tune.sh" boot' "$SVC" | head -n 1)
-  case "$line" in *'tune.sh" boot'*'kp.sh" apply'*) echo "ok   service.sh runs tune boot before kp apply" ;; *) echo "FAIL service.sh order"; fail=1 ;; esac
-else
-  echo "FAIL service.sh lines not found"; fail=1
-fi
+echo "--- boot order: the real service.sh records stock BEFORE it applies the kernel profile ---"
+# A copy of the shipped service.sh and the module, with only three things changed so it can run here:
+# the data folder, the 25 s settle wait, and a getprop that says "boot completed".
+mksvc() {
+  rm -rf "$T/svc"; mkdir -p "$T/svc/bin"; cp "$HERE/../module/"*.sh "$T/svc/"
+  sed -e "s|^D=/data/adb/kprofiles_ui\$|D=$T/cfg|" -e 's|^sleep 25$|sleep 0|' "$HERE/../module/service.sh" > "$T/svc/service.sh"
+  printf '#!/bin/sh\necho 1\n' > "$T/svc/bin/getprop"; chmod +x "$T/svc/bin/getprop"
+}
+runsvc() { PATH="$T/svc/bin:$PATH" TUNE_BOOT_WAIT=0 TUNE_BOOT_RETRIES=2 sh "$T/svc/service.sh"; }
+kpsave() { sh "$HERE/../module/kp.sh" mode "$1" >/dev/null; echo 0 > "$T/kp/kp_mode"; }   # saved choice; the kernel is back at 0 (a reboot)
+mksvc
+check "service copy: data folder replaced" 1 "$(grep -c "^D=$T/cfg\$" "$T/svc/service.sh")"
+check "service copy: settle wait replaced" 1 "$(grep -c '^sleep 0$' "$T/svc/service.sh")"
+mkfake; kpsave 1; runsvc
+check "boot: stock was recorded first (big max)" 2572800 "$(sed -n 's/^big_max=//p' "$T/cfg/defaults")"
+check "boot: stock was recorded first (big min)" 633600 "$(sed -n 's/^big_min=//p' "$T/cfg/defaults")"
+check "boot: the kernel profile was applied afterwards" 1 "$(v kp/kp_mode)"
+has "boot.log: reports a clean boot" "boot done" "$(cat "$T/cfg/boot.log")"
+
+echo "--- boot: the phone's own limits cannot be saved and none are on record ---"
+mkfake; kpsave 1; mkdir -p "$T/cfg/defaults"          # the snapshot file cannot be written (it is a folder)
+S boot >/dev/null; rc=$?
+check "no record, save fails: tune.sh boot exits 2" 2 "$rc"
+check "no record, save fails: the log says so" 1 "$(grep -c 'not on record; the kernel profile is not applied' "$T/cfg/tune.log")"
+runsvc
+check "no record, save fails: the kernel profile is NOT applied" 0 "$(v kp/kp_mode)"
+has "no record, save fails: boot.log reports it" "kernel profile was NOT applied" "$(cat "$T/cfg/boot.log")"
+has "no record, save fails: boot.log has the status" "exit status 2" "$(cat "$T/cfg/boot.log")"
+mkfake; kpsave 1; mkdir -p "$T/cfg/defaults.tmp"      # the temporary file cannot be written (it is a folder)
+runsvc
+check "no record, temp file fails: the kernel profile is NOT applied" 0 "$(v kp/kp_mode)"
+check "no record, temp file fails: nothing was recorded" no "$([ -f "$T/cfg/defaults" ] && echo yes || echo no)"
+
+echo "--- boot: the save fails but an earlier record exists ---"
+mkfake; S boot >/dev/null; cp "$T/cfg/defaults" "$T/defaults.keep"; kpsave 1; mkdir "$T/cfg/defaults.tmp"
+S boot >/dev/null; rc=$?
+check "earlier record, save fails: tune.sh boot exits 1" 1 "$rc"
+runsvc
+check "earlier record, save fails: the record is untouched" 0 "$(cmp -s "$T/defaults.keep" "$T/cfg/defaults"; echo $?)"
+check "earlier record, save fails: the kernel profile IS applied" 1 "$(v kp/kp_mode)"
+has "earlier record, save fails: boot.log reports the error" "exit status 1" "$(cat "$T/cfg/boot.log")"
+
+echo "--- boot: another error (unreadable settings) still applies the kernel profile ---"
+mkfake; kpsave 1; mkdir -p "$T/cfg/tune.conf"
+runsvc
+check "other error: the kernel profile IS applied" 1 "$(v kp/kp_mode)"
+check "other error: stock was still recorded" 2572800 "$(sed -n 's/^big_max=//p' "$T/cfg/defaults")"
+
+echo "--- boot: tune.sh cannot run at all ---"
+mkfake; kpsave 1; rm -f "$T/svc/tune.sh"
+runsvc
+check "tune.sh missing: the kernel profile is NOT applied" 0 "$(v kp/kp_mode)"
+has "tune.sh missing: boot.log says the profile was skipped" "kernel profile was NOT applied" "$(cat "$T/cfg/boot.log")"
+mksvc
 
 echo "--- the shipped uninstall.sh deletes one fixed folder and reads nothing from the environment ---"
 check "uninstall.sh: fixed delete target" 1 "$(grep -c '^ *rm -rf /data/adb/kprofiles_ui$' "$HERE/../module/uninstall.sh")"
@@ -715,7 +761,7 @@ check "settings damaged: uninstall restored the phone's own value" 2572800 "$(v 
 # 4. the phone's own values cannot be SAVED
 mkfake; mkdir -p "$T/cfg/defaults.tmp"
 out=$(S boot); rc=$?
-check "snapshot unsavable: boot exits 1" 1 "$rc"
+check "snapshot unsavable, nothing on record: boot exits 2" 2 "$rc"
 has "snapshot unsavable: boot says so" "could not be saved at boot" "$out"
 check "snapshot unsavable: no snapshot file" no "$([ -f "$T/cfg/defaults" ] && echo yes || echo no)"
 out=$(S preset tilt); rc=$?
@@ -728,13 +774,13 @@ check "saved snapshot, save fails again: boot exits 1" 1 "$rc"
 check "saved snapshot, save fails again: the earlier snapshot is untouched" "$snap" "$(cksum < "$T/cfg/defaults")"
 mkfake; rm -rf "$T/cfg"; mkdir -p "$T/cfg/defaults"                 # the snapshot path is a folder
 out=$(S boot); rc=$?
-check "snapshot path is a folder: boot exits 1" 1 "$rc"
+check "snapshot path is a folder, nothing on record: boot exits 2" 2 "$rc"
 check "snapshot path is a folder: nothing moved into it" 0 "$(ls "$T/cfg/defaults" | wc -l | tr -d ' ')"
 # the final move of the snapshot into place fails (a stand-in mv refuses it)
 mkfake; rm -rf "$T/cfg"
 inj 'mv() { for ij_a; do case "$ij_a" in *defaults.tmp) return 1 ;; esac; done; command mv "$@"; }'
 out=$(SI boot); rc=$?
-check "snapshot move fails: boot exits 1" 1 "$rc"
+check "snapshot move fails, nothing on record: boot exits 2" 2 "$rc"
 has "snapshot move fails: boot says so" "could not be saved at boot" "$out"
 check "snapshot move fails: no snapshot file claimed" no "$([ -f "$T/cfg/defaults" ] && echo yes || echo no)"
 check "snapshot move fails: no temporary file left" no "$([ -e "$T/cfg/defaults.tmp" ] && echo yes || echo no)"
@@ -956,6 +1002,66 @@ echo 120 > "$T/bl/brightness"; S apply >/dev/null
 check "screen on: the min is back at 787200" 787200 "$(v cpufreq/policy7/scaling_min_freq)"
 S preset stock >/dev/null
 check "Stock: the min is the phone's own again" 633600 "$(v cpufreq/policy7/scaling_min_freq)"
+mkfake
+
+echo "--- a pinned minimum is never recorded when the frequency list is not readable ---"
+nolist_case() { # name, command that breaks the big cluster's list
+  mkfake; eval "$2"; echo 2572800 > "$T/cpufreq/policy3/scaling_min_freq"
+  out=$(TUNE_BOOT_RETRIES=3 TUNE_BOOT_WAIT=0 S boot); rc=$?
+  check "$1: exit status" 0 "$rc"
+  check "$1: the pinned minimum is not recorded" "" "$(dv big_min)"
+  check "$1: the maximum is recorded" 2572800 "$(dv big_max)"
+  check "$1: another cluster's minimum is recorded" 595200 "$(dv little_min)"
+  check "$1: boot looked again twice" 2 "$(grep -c 'looking again' "$T/cfg/tune.log")"
+  check "$1: the kernel minimum was not touched" 2572800 "$(v cpufreq/policy3/scaling_min_freq)"
+  has "$1: boot warns" "was at or above the maximum for: big" "$out"
+}
+nolist_case "list missing"    'rm -f "$T/cpufreq/policy3/scaling_available_frequencies"'
+nolist_case "list empty"      ': > "$T/cpufreq/policy3/scaling_available_frequencies"'
+nolist_case "list unreadable" 'rm -f "$T/cpufreq/policy3/scaling_available_frequencies"; mkdir "$T/cpufreq/policy3/scaling_available_frequencies"'
+nolist_case "list malformed"  'echo abc > "$T/cpufreq/policy3/scaling_available_frequencies"'
+nolist_case "list is a zero"  'echo 0 > "$T/cpufreq/policy3/scaling_available_frequencies"'
+# a list with exactly one real frequency is a genuine single-speed cluster: recorded, no retry, no warning
+mkfake; echo 2572800 > "$T/cpufreq/policy3/scaling_available_frequencies"; echo 2572800 > "$T/cpufreq/policy3/scaling_min_freq"
+out=$(TUNE_BOOT_RETRIES=3 TUNE_BOOT_WAIT=0 S boot)
+check "one-frequency list: the minimum is recorded" 2572800 "$(dv big_min)"
+check "one-frequency list: no retry" 0 "$(grep -c 'looking again' "$T/cfg/tune.log" 2>/dev/null)"
+case "$out" in *"at or above the maximum"*) echo "FAIL one-frequency list: unexpected warning"; fail=1 ;; *) echo "ok   one-frequency list: no warning" ;; esac
+# an existing good snapshot survives a suspicious reading when the list is gone
+mkfake; S boot >/dev/null; cp "$T/cfg/defaults" "$T/defaults.keep"
+rm -f "$T/cpufreq/policy3/scaling_available_frequencies"; echo 2572800 > "$T/cpufreq/policy3/scaling_min_freq"
+TUNE_BOOT_RETRIES=3 TUNE_BOOT_WAIT=0 S boot >/dev/null; rc=$?
+check "good snapshot, pinned reading, no list: exit status" 0 "$rc"
+check "good snapshot, pinned reading, no list: snapshot unchanged" 0 "$(cmp -s "$T/defaults.keep" "$T/cfg/defaults"; echo $?)"
+check "good snapshot, pinned reading, no list: boot looked again twice" 2 "$(grep -c 'looking again' "$T/cfg/tune.log")"
+# status (which also records when nothing is saved yet) behaves the same
+mkfake; rm -f "$T/cpufreq/policy3/scaling_available_frequencies"; echo 2572800 > "$T/cpufreq/policy3/scaling_min_freq"
+S status >/dev/null
+check "status with pinned minimum and no list: not recorded" "" "$(dv big_min)"
+
+echo "--- restoring when the frequency list disappears after a minimum was changed ---"
+# (a) the recorded minimum is a pinned reading (as an older version could have saved it): never written back
+mkfake; mkdir -p "$T/cfg"
+printf 'little_min=595200\nlittle_max=2016000\nbig_min=2572800\nbig_max=2572800\nprime_min=633600\nprime_max=2668800\ngpu_min=255000000\ngpu_max=900000000\n' > "$T/cfg/defaults"
+cp "$T/cfg/defaults" "$T/defaults.keep"
+S cfg ENABLED 1 >/dev/null; S cfg ON_BIG_MIN 787200 >/dev/null
+check "pinned record: custom minimum applied and marked" 1 "$(grep -c '^big_min$' "$T/cfg/applied")"
+rm -f "$T/cpufreq/policy3/scaling_available_frequencies"
+out=$(S preset stock); rc=$?
+check "pinned record, list gone: the minimum is NOT pinned at the maximum" 787200 "$(v cpufreq/policy3/scaling_min_freq)"
+check "pinned record, list gone: exit status 1" 1 "$rc"
+has "pinned record, list gone: says nothing is recorded" "not recorded" "$out"
+check "pinned record, list gone: the changed-marker stays" 1 "$(grep -c '^big_min$' "$T/cfg/applied")"
+check "pinned record, list gone: the record is untouched" 0 "$(cmp -s "$T/defaults.keep" "$T/cfg/defaults"; echo $?)"
+check "pinned record, list gone: status shows no recorded minimum" "def_big_min=" "$(S status | grep '^def_big_min=')"
+# (b) a good record: the list is not needed to put the phone's own minimum back
+mkfake; S boot >/dev/null; S cfg ENABLED 1 >/dev/null; S cfg ON_BIG_MIN 787200 >/dev/null
+check "good record: custom minimum applied and marked" 1 "$(grep -c '^big_min$' "$T/cfg/applied")"
+rm -f "$T/cpufreq/policy3/scaling_available_frequencies"
+S preset stock >/dev/null; rc=$?
+check "good record, list gone: the phone's own minimum is back" 633600 "$(v cpufreq/policy3/scaling_min_freq)"
+check "good record, list gone: exit status 0" 0 "$rc"
+check "good record, list gone: the changed-marker is cleared" 0 "$(grep -c '^big_min$' "$T/cfg/applied")"
 mkfake
 
 [ "$fail" = 0 ] && echo "all tune tests passed" || { echo "SOME TESTS FAILED"; exit 1; }

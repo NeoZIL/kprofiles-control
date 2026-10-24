@@ -92,8 +92,17 @@ parse_key() {
   PK_C=$(upper "$PK_c")
   return 0
 }
-# How many frequencies the phone lists for a cluster (0 when the list cannot be read).
-list_count() { lc=0; for lf in $(rd "$(avail_node "$1")"); do lc=$((lc + 1)); done; echo "$lc"; }
+# True only when the phone's list for this cluster can be read and holds exactly ONE frequency, a plain
+# positive number: a cluster that really has a single speed (its minimum then equals its maximum). A list
+# that is missing, empty, unreadable, malformed or longer is NOT that: it is "unknown" (or a normal
+# cluster), and must never make a minimum that sits at its maximum look like the phone's own setting.
+lone_freq() {
+  lo_n=0; lo_v=""
+  for lf in $(rd "$(avail_node "$1")"); do lo_n=$((lo_n + 1)); lo_v=$lf; done
+  [ "$lo_n" = 1 ] || return 1
+  case "$lo_v" in ""|*[!0-9]*) return 1 ;; esac
+  [ "$lo_v" -gt 0 ] 2>/dev/null
+}
 list_has() { for f in $(rd "$(avail_node "$1")"); do [ "$f" = "$2" ] && return 0; done; return 1; }
 
 # ---------- a small log (kept short) ----------
@@ -133,12 +142,12 @@ capture_defaults() {
     esac
   done; done
   # A minimum at or above its maximum is not the phone's own setting: something is holding that cluster
-  # up (a boot boost, another module or app). It is never recorded as stock. (A cluster that really has
-  # a single frequency is not flagged.)
+  # up (a boot boost, another module or app). It is never recorded as stock. Only a cluster that the
+  # phone's own list shows to have exactly one frequency is exempt; an unreadable list does not count.
   for c in $CLUSTERS; do
     cp_min=$(sed -n "s/^${c}_min=//p" "$DEF.tmp" 2>/dev/null | head -n 1)
     cp_max=$(sed -n "s/^${c}_max=//p" "$DEF.tmp" 2>/dev/null | head -n 1)
-    if [ -n "$cp_min" ] && [ -n "$cp_max" ] && [ "$cp_min" -ge "$cp_max" ] && [ "$(list_count "$c")" -gt 1 ]; then
+    if [ -n "$cp_min" ] && [ -n "$cp_max" ] && [ "$cp_min" -ge "$cp_max" ] && ! lone_freq "$c"; then
       CAP_PIN="$CAP_PIN $c"
       grep -v "^${c}_min=" "$DEF.tmp" > "$DEF.tmp2" 2>/dev/null
       { [ $? -le 1 ] && mv "$DEF.tmp2" "$DEF.tmp"; } 2>/dev/null || { rm -f "$DEF.tmp2" 2>/dev/null; cd_fail; return 2; }
@@ -160,8 +169,9 @@ def_of() {
     *_min)
       df_c=${1%_min}; df_x=$(sed -n "s/^${df_c}_max=//p" "$DEF" 2>/dev/null | head -n 1)
       # A recorded minimum at or above its maximum is a pinned reading, never the phone's own setting:
-      # writing it back would pin the cluster at its top speed. Treat it as not recorded.
-      if [ -n "$df_v" ] && [ -n "$df_x" ] && [ "$df_v" -ge "$df_x" ] && [ "$(list_count "$df_c")" -gt 1 ]; then df_v=""; fi ;;
+      # writing it back would pin the cluster at its top speed. Treat it as not recorded (unless the
+      # phone's list shows a single frequency; a missing list is unknown, not proof of that).
+      if [ -n "$df_v" ] && [ -n "$df_x" ] && [ "$df_v" -ge "$df_x" ] && ! lone_freq "$df_c"; then df_v=""; fi ;;
   esac
   echo "$df_v"
 }
@@ -576,7 +586,13 @@ cmd_boot() {
     log_msg "boot: minimum held at maximum for:$CAP_PIN, looking again in ${BOOT_WAIT}s ($cb_try/$BOOT_RETRIES)"
     sleep "$BOOT_WAIT"
   done
-  [ "$cb_cd" = 0 ] || { echo "error: the phone's own limits could not be saved at boot; an earlier record is kept if there is one"; cb_rc=1; }
+  # cb_nostock: the snapshot could not be SAVED and there is no earlier one, so the phone's own limits are
+  # on record nowhere. service.sh must not apply the kernel profile then (exit status 2, see the end).
+  cb_nostock=""
+  if [ "$cb_cd" != 0 ]; then
+    echo "error: the phone's own limits could not be saved at boot; an earlier record is kept if there is one"; cb_rc=1
+    { [ -f "$DEF" ] && [ -s "$DEF" ]; } || cb_nostock=1
+  fi
   [ -z "$CAP_BAD" ] || echo "warn: could not read these frequency values at boot:$CAP_BAD (an earlier record is kept if there is one)"
   [ -z "$CAP_PIN" ] || echo "warn: the minimum frequency was at or above the maximum for:$CAP_PIN, so it was not recorded as stock (something is holding it up); an earlier record is kept if there is one"
   [ "$cb_cd" != 0 ] || [ ! -s "$DEF" ] || log_msg "boot: stock recorded: $(tr '\n' ' ' < "$DEF" 2>/dev/null)"
@@ -588,6 +604,11 @@ cmd_boot() {
   else
     echo "boot finished with errors: enabled=$ENABLED preset=$PRESET (see the messages above)"
     log_msg "boot finished with errors"
+  fi
+  if [ -n "$cb_nostock" ]; then
+    echo "error: the phone's own limits are not on record, so the kernel profile must not be applied at this boot (exit status 2)"
+    log_msg "boot: the phone's own limits are not on record; the kernel profile is not applied at this boot"
+    return 2
   fi
   return "$cb_rc"
 }
