@@ -35,7 +35,7 @@ status() {
 set_mode() {
   case "$1" in 0|1|2|3) ;; *) echo "error: mode must be 0, 1, 2 or 3"; return 1 ;; esac
   [ -e "$KP" ] || { echo "error: $KP not found (no Kprofiles in this kernel?)"; return 1; }
-  echo "$1" > "$KP" 2>/dev/null
+  { echo "$1" > "$KP"; } 2>/dev/null
   now=$(read_mode)
   [ "$now" = "$1" ] || { echo "error: wrote $1 but the kernel reports ${now:-nothing}"; return 1; }
   persist_on && cfg_set MODE "$1"
@@ -45,7 +45,7 @@ set_mode() {
 set_auto() {
   case "$1" in Y|y|1) v=Y ;; N|n|0) v=N ;; *) echo "error: auto must be Y or N"; return 1 ;; esac
   [ -e "$AUTO" ] || { echo "error: $AUTO not found (no Kprofiles in this kernel?)"; return 1; }
-  echo "$v" > "$AUTO" 2>/dev/null
+  { echo "$v" > "$AUTO"; } 2>/dev/null
   now=$(read_auto)
   [ "$now" = "$v" ] || { echo "error: wrote $v but the kernel reports ${now:-nothing}"; return 1; }
   persist_on && cfg_set AUTO "$v"
@@ -61,18 +61,23 @@ set_persist() {
   return 0
 }
 
+# apply and cycle report the resulting state either way, but exit non-zero if a requested change failed.
 apply() {
   persist_on || { echo "persist is off, nothing to apply"; return 0; }
+  ap_rc=0
   m=$(cfg_get MODE); a=$(cfg_get AUTO)
-  [ -n "$m" ] && set_mode "$m"
-  [ -n "$a" ] && set_auto "$a"
+  if [ -n "$m" ]; then set_mode "$m" || ap_rc=1; fi
+  if [ -n "$a" ]; then set_auto "$a" || ap_rc=1; fi
   status
+  return "$ap_rc"
 }
 
 cycle() {
+  cy_rc=0
   case "$(read_mode)" in 1) n=2 ;; 2) n=3 ;; 3) n=1 ;; *) n=2 ;; esac
-  if set_mode "$n"; then echo "Kprofiles: switched to $(name_of "$n")"; fi
+  if set_mode "$n"; then echo "Kprofiles: switched to $(name_of "$n")"; else cy_rc=1; fi
   status
+  return "$cy_rc"
 }
 
 case "$1" in

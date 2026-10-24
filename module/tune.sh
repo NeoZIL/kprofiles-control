@@ -151,6 +151,7 @@ apply_domain() { # cluster state(on|off|none)
   if [ -n "$ad_note" ]; then
     echo "warn: could not put the phone's own value back for:$ad_note; it stays marked as changed so a later Stock or Apply tries again"
     log_msg "restore refused by the kernel for:$ad_note (kept marked, will be retried)"
+    return 1       # the restore is incomplete: callers must not treat it as done
   fi
   return 0
 }
@@ -170,7 +171,8 @@ apply_none_logged() {
   [ -z "$anl" ] || log_msg "watcher $$: $(printf '%s' "$anl" | tr '\n' ';')"
   return 0
 }
-apply_state() { load_cfg; for c in $CLUSTERS; do apply_domain "$c" "$1"; done; return 0; }
+# Returns 1 when any restore of the phone's own value was refused by the kernel (the limit stays marked).
+apply_state() { load_cfg; as_rc=0; for c in $CLUSTERS; do apply_domain "$c" "$1" || as_rc=1; done; return "$as_rc"; }
 
 # scr_get sets ST (on|off) with shell built-ins only: the watcher calls it every second, and
 # the old $(cat ...) started two extra processes each time.
@@ -304,6 +306,7 @@ run_daemon() {
 }
 
 # ---------- commands ----------
+NORESTORE="error: some of the phone's own values could not be put back (see the warning above); your settings and the recorded values are kept, so Stock or Apply can try again"
 NOSTOCK="warn: the phone's own limits are not recorded yet (the kernel Battery profile is on), so Stock cannot put them back until the next reboot"
 cmd_apply() {
   ca_rc=0
@@ -311,7 +314,7 @@ cmd_apply() {
   if [ "$ENABLED" = 1 ]; then
     capture_defaults
     [ -f "$DEF" ] || echo "$NOSTOCK"
-    apply_state "$(want_state)"
+    if ! apply_state "$(want_state)"; then echo "$NORESTORE"; ca_rc=1; fi
     [ ! -f "$DEF" ] || warn_nodefault
     if ! start_daemon; then
       echo "error: your limits are applied for the current screen state, but the watcher that switches them when the screen turns on or off is not running"
@@ -324,7 +327,7 @@ cmd_apply() {
       echo "error: the watcher is still running and may apply the limits again; your settings are kept, try again or reboot"
       ca_rc=1
     fi
-    apply_state none
+    if ! apply_state none; then echo "$NORESTORE"; ca_rc=1; fi
     [ ! -f "$DEF" ] || warn_nodefault
   fi
   return "$ca_rc"
@@ -409,13 +412,20 @@ cmd_resetall() { # kernel profile back to None first (so nothing holds the limit
 }
 
 cmd_boot() {
-  rm -f "$APPLIED" "$PIDF"
+  rm -f "$APPLIED" "$PIDF" 2>/dev/null
   mkdir -p "$CFG_DIR" 2>/dev/null
   capture_defaults force
   [ -z "$CAP_BAD" ] || echo "warn: could not read these frequency values at boot:$CAP_BAD (an earlier record is kept if there is one)"
   load_cfg
-  [ "$ENABLED" = 1 ] && cmd_apply
-  echo "boot done: enabled=$ENABLED preset=$PRESET"
+  cb_rc=0
+  if [ "$ENABLED" = 1 ]; then cmd_apply || cb_rc=1; fi
+  if [ "$cb_rc" = 0 ]; then
+    echo "boot done: enabled=$ENABLED preset=$PRESET"
+  else
+    echo "boot finished with errors: enabled=$ENABLED preset=$PRESET (see the messages above)"
+    log_msg "boot finished with errors"
+  fi
+  return "$cb_rc"
 }
 
 cmd_lists() { for c in $CLUSTERS; do echo "$c=$(rd "$(avail_node $c)")"; done; }
@@ -444,6 +454,10 @@ case "$1" in
   apply)     cmd_apply && echo ok ;;
   boot)      cmd_boot ;;
   daemon)    run_daemon "$2" ;;
-  stop)      if stop_daemon; then apply_state none; echo ok; else apply_state none; echo "error: the watcher did not stop"; exit 1; fi ;;
+  stop)      # stops the watcher AND hands the limits back; ok only if both worked (uninstall relies on this)
+             st_rc=0; st_msg=""
+             stop_daemon || { st_rc=1; st_msg="the watcher did not stop"; }
+             apply_state none || { st_rc=1; st_msg="${st_msg:+$st_msg; }the phone's own values could not all be put back"; }
+             if [ "$st_rc" = 0 ]; then echo ok; else echo "error: $st_msg"; exit 1; fi ;;
   *) echo "usage: tune.sh status | lists | cfg KEY VALUE | preset stock|tilt|saver | resetall | apply | boot | stop"; exit 1 ;;
 esac

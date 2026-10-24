@@ -510,7 +510,7 @@ case "$out" in *ok*) echo "FAIL stop with a stuck watcher printed ok"; fail=1 ;;
 # uninstall keeps the recovery data while the watcher is still running
 rm -rf "$T/modu"; cp -r "$HERE/../module" "$T/modu"
 sed "s#/data/adb/kprofiles_ui#$T/cfg#" "$HERE/../module/uninstall.sh" > "$T/modu/uninstall.sh"
-sh "$T/modu/uninstall.sh"
+sh "$T/modu/uninstall.sh" >/dev/null 2>&1; check "uninstall with a stuck watcher: exits non-zero" 1 "$?"
 check "uninstall with a stuck watcher keeps the recorded stock values" "yes" "$([ -s "$T/cfg/defaults" ] && echo yes || echo no)"
 check "uninstall with a stuck watcher keeps the settings" "yes" "$([ -s "$T/cfg/tune.conf" ] && echo yes || echo no)"
 kill -9 "$stubp" 2>/dev/null; wait "$stubp" 2>/dev/null; rm -f "$T/cfg/daemon.pid"
@@ -526,6 +526,97 @@ check "zero reading with nothing saved: not recorded" "" "$(sed -n 's/^big_max=/
 check "zero reading with nothing saved: the other values are" 2016000 "$(sed -n 's/^little_max=//p' "$T/cfg/defaults")"
 echo 00 > "$T/cpufreq/policy3/scaling_max_freq"; mkfake; echo 00 > "$T/cpufreq/policy3/scaling_max_freq"; S boot >/dev/null
 check "00 is not a frequency either" "" "$(sed -n 's/^big_max=//p' "$T/cfg/defaults")"
+mkfake
+
+echo "--- a restore the kernel refuses makes the command fail, and uninstall keeps the recovery data ---"
+export TUNE_NO_DAEMON=1
+refuse_big() { rm -f "$T/cpufreq/policy3/scaling_max_freq"; mkdir "$T/cpufreq/policy3/scaling_max_freq"; }   # writes to it fail
+accept_big() { rmdir "$T/cpufreq/policy3/scaling_max_freq"; echo 2188800 > "$T/cpufreq/policy3/scaling_max_freq"; }
+mkfake; S boot >/dev/null; S preset tilt >/dev/null; refuse_big
+out=$(S preset stock); rc=$?
+check "refused restore: Stock exits non-zero" 1 "$rc"
+has "refused restore: Stock reports an error" "error: some of the phone's own values could not be put back" "$out"
+if printf '%s\n' "$out" | grep -qx ok; then echo "FAIL refused restore: Stock printed ok"; fail=1; else echo "ok   refused restore: Stock does not print ok"; fi
+out=$(S stop); rc=$?
+check "refused restore: stop exits non-zero" 1 "$rc"
+has "refused restore: stop says what failed" "could not all be put back" "$out"
+if printf '%s\n' "$out" | grep -qx ok; then echo "FAIL refused restore: stop printed ok"; fail=1; else echo "ok   refused restore: stop does not print ok"; fi
+rm -rf "$T/modu"; cp -r "$HERE/../module" "$T/modu"
+sed "s#/data/adb/kprofiles_ui#$T/cfg#" "$HERE/../module/uninstall.sh" > "$T/modu/uninstall.sh"
+sh "$T/modu/uninstall.sh" >/dev/null 2>&1; rc=$?
+check "uninstall after a refused restore: exits non-zero" 1 "$rc"
+check "uninstall after a refused restore: recorded stock values kept" yes "$([ -s "$T/cfg/defaults" ] && echo yes || echo no)"
+check "uninstall after a refused restore: settings kept" yes "$([ -s "$T/cfg/tune.conf" ] && echo yes || echo no)"
+check "uninstall after a refused restore: the marker is kept" 1 "$(grep -cx big_max "$T/cfg/applied" 2>/dev/null)"
+check "uninstall after a refused restore: the other limits were restored" 2668800 "$(v cpufreq/policy7/scaling_max_freq)"
+accept_big                                                              # the kernel takes writes again
+sh "$T/modu/uninstall.sh" >/dev/null 2>&1; rc=$?
+check "uninstall once the restore works: exits 0" 0 "$rc"
+check "uninstall once the restore works: the phone's own value is back" 2572800 "$(v cpufreq/policy3/scaling_max_freq)"
+check "uninstall once the restore works: saved settings removed" no "$([ -e "$T/cfg" ] && echo yes || echo no)"
+# the same while the limits are in use: changing a setting back to default is a restore too
+mkfake; S boot >/dev/null; S preset tilt >/dev/null; refuse_big
+out=$(S cfg ON_BIG_MAX default); rc=$?
+check "refused restore while enabled: the command exits non-zero" 1 "$rc"
+has "refused restore while enabled: reports an error" "error: some of the phone's own values could not be put back" "$out"
+check "refused restore while enabled: the marker is kept" 1 "$(grep -cx big_max "$T/cfg/applied" 2>/dev/null)"
+
+echo "--- uninstall keeps the recovery data when the kernel profile cannot be reset ---"
+mkfake; S boot >/dev/null; S preset tilt >/dev/null; sh "$HERE/../module/kp.sh" mode 3 >/dev/null
+rm -f "$T/kp/kp_mode"; mkdir "$T/kp/kp_mode"                            # the kernel profile node cannot be written
+rm -rf "$T/modu"; cp -r "$HERE/../module" "$T/modu"
+sed "s#/data/adb/kprofiles_ui#$T/cfg#" "$HERE/../module/uninstall.sh" > "$T/modu/uninstall.sh"
+sh "$T/modu/uninstall.sh" >/dev/null 2>&1; rc=$?
+check "kernel profile reset fails: uninstall exits non-zero" 1 "$rc"
+check "kernel profile reset fails: recorded stock values kept" yes "$([ -s "$T/cfg/defaults" ] && echo yes || echo no)"
+check "kernel profile reset fails: settings kept" yes "$([ -s "$T/cfg/tune.conf" ] && echo yes || echo no)"
+check "kernel profile reset fails: the limits themselves were restored" 2572800 "$(v cpufreq/policy3/scaling_max_freq)"
+rmdir "$T/kp/kp_mode"; echo 3 > "$T/kp/kp_mode"
+sh "$T/modu/uninstall.sh" >/dev/null 2>&1; rc=$?
+check "kernel profile resets: uninstall exits 0" 0 "$rc"
+check "kernel profile resets: profile is None" 0 "$(v kp/kp_mode)"
+check "kernel profile resets: saved settings removed" no "$([ -e "$T/cfg" ] && echo yes || echo no)"
+mkfake; S boot >/dev/null; S preset tilt >/dev/null; rm -rf "$T/kp"     # a kernel without Kprofiles has nothing to reset
+sh "$T/modu/uninstall.sh" >/dev/null 2>&1; rc=$?
+check "no Kprofiles in the kernel: uninstall still finishes" 0 "$rc"
+check "no Kprofiles in the kernel: saved settings removed" no "$([ -e "$T/cfg" ] && echo yes || echo no)"
+
+echo "--- boot does not say 'boot done' after a failed apply or watcher start ---"
+mkfake; export TUNE_NO_DAEMON=1; S preset tilt >/dev/null; unset TUNE_NO_DAEMON      # saved: enabled, tilt (no watcher yet)
+mksys; rm -rf "$T/cfg/daemon.pid"; mkdir -p "$T/cfg/daemon.pid"                 # a watcher can never write its pid file
+out=$(TUNE_START_TRIES=5 S boot); rc=$?
+check "boot with a failed watcher start: exits non-zero" 1 "$rc"
+has "boot with a failed watcher start: the error is shown" "error: the screen on/off watcher did not start" "$out"
+has "boot with a failed watcher start: boot says it finished with errors" "boot finished with errors" "$out"
+case "$out" in *"boot done"*) echo "FAIL boot printed 'boot done' after a failure"; fail=1 ;; *) echo "ok   boot does not print 'boot done' after a failure" ;; esac
+check "boot with a failed watcher start: the limits were still applied" 2188800 "$(v cpufreq/policy3/scaling_max_freq)"
+has "boot with a failed watcher start: logged" "boot finished with errors" "$(cat "$T/cfg/tune.log")"
+rm -rf "$T/cfg/daemon.pid"
+mkfake; export TUNE_NO_DAEMON=1; S preset tilt >/dev/null; mksys
+out=$(S boot); rc=$?
+check "boot, all fine: exits 0" 0 "$rc"
+has "boot, all fine: says boot done" "boot done: enabled=1 preset=tilt" "$out"
+mkfake; S preset stock >/dev/null
+out=$(S boot); rc=$?; check "boot with the limits off: exits 0" 0 "$rc"
+mkfake
+
+echo "--- the Action button reports a failed preset instead of announcing success ---"
+rm -rf "$T/modact"; cp -r "$HERE/../module" "$T/modact"
+mkfake; export TUNE_NO_DAEMON=1
+out=$(sh "$T/modact/action.sh" 2>&1); rc=$?
+check "action, all fine: exits 0" 0 "$rc"
+has "action, all fine: announces the preset" "Frequency preset: tilt" "$out"
+mkfake; unset TUNE_NO_DAEMON; mkdir -p "$T/cfg/daemon.pid"                       # the watcher cannot start
+out=$(TUNE_START_TRIES=5 sh "$T/modact/action.sh" 2>&1); rc=$?
+check "action with a failed watcher start: exits non-zero" 1 "$rc"
+has "action with a failed watcher start: shows the real error" "error: the screen on/off watcher did not start" "$out"
+has "action with a failed watcher start: says it was not fully applied" "was NOT fully applied" "$out"
+case "$out" in *"Frequency preset: tilt"*) echo "FAIL action announced success after a failure"; fail=1 ;; *) echo "ok   action does not announce success after a failure" ;; esac
+rm -rf "$T/cfg/daemon.pid"
+mkfake; export TUNE_NO_DAEMON=1; S preset tilt >/dev/null; S preset saver >/dev/null; refuse_big   # a refused restore through the Action button
+out=$(sh "$T/modact/action.sh" 2>&1); rc=$?                                      # saver -> stock
+check "action with a refused restore: exits non-zero" 1 "$rc"
+has "action with a refused restore: shows the warning" "could not put the phone's own value back" "$out"
 mkfake
 
 [ "$fail" = 0 ] && echo "all tune tests passed" || { echo "SOME TESTS FAILED"; exit 1; }
