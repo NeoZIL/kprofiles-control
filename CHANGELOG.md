@@ -1,5 +1,30 @@
 # Changelog
 
+## v1.1.6
+- Fix: two watchers could run at once and the second one undid the first one's work. When a
+  watcher lost its pid file (a wiped settings folder, or a start that raced another) it kept
+  running unseen, never saw the `disable` / `remove` marker of the module, and put the caps back
+  right after the tracked watcher had handed them back. This was the intermittent "limit handed
+  back" failure in the tests. Every watcher now checks, on each pass, that the pid file still names
+  it, and leaves quietly if not. (Reading the file is a shell built-in, so no extra process runs.)
+- The watcher logs when it hands the limits back for a disabled or removed module, and when it
+  leaves because it lost the pid file (`/data/adb/kprofiles_ui/tune.log`).
+- Starting the watcher waits up to ten seconds for it to appear (it used to give up after three,
+  which a heavily loaded phone could exceed), and only as long as it needs.
+- Apply with "Apply my limits" off, and Stop, now report a watcher that will not stop (non-zero
+  exit, `error:` line) instead of saying ok. Your settings are kept.
+- `uninstall.sh` keeps the saved settings and the recorded stock values if the watcher could not be
+  stopped, so a later restore still has what it needs.
+- A stock frequency reading of `0` (or `00`) is no longer recorded as a frequency; it never
+  replaces a saved snapshot.
+- `build.sh` clears `dist/` before any check can fail, so a refused build never leaves an earlier
+  build's zip, manifest or notes behind.
+- Tests: the test run itself leaked watchers into later sections (one section never turned the
+  no-watcher switch back on), which is what made the failure intermittent. Every fake phone now
+  starts by stopping all watchers of the run. New tests cover a watcher without the pid file,
+  a watcher that will not stop (apply, stop, uninstall), zero readings and stale build output.
+  Each new test was checked by deliberately breaking the code.
+
 ## v1.1.5
 - Fix: the background watcher is now started with the module folder passed to it explicitly. Before,
   it worked out its folder from the way the script was started, which fails when the script is
@@ -29,12 +54,7 @@
   `dist/*.zip` can never include a stale one. The zip is now reproducible (fixed file dates, sorted
   file order, fixed permissions): the same source gives the same bytes, which the byte-for-byte check
   above relies on.
-- New tests for all of the above, under dash, mksh and busybox ash in CI. The test script itself had a
-  bug: after one section it set `TUNE_NO_DAEMON=1` without exporting it, so later sections started
-  real watchers that kept running and re-applied limits during the disable / remove test, which made
-  that test fail on slower shells (busybox ash). Fixed, and each watcher section now first waits until
-  no watcher from an earlier section is left. The watcher can also write its output to a file
-  (`TUNE_DAEMON_LOG`, off by default) so test failures show its errors.
+- New tests for all of the above, under dash, mksh and busybox ash in CI.
 
 ## v1.1.4
 - New: **updates straight from the KernelSU-Next manager.** The module now carries an

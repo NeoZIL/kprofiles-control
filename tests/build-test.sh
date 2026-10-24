@@ -130,4 +130,20 @@ check "real module.prop has updateJson" 1 "$(printf '%s\n' "$real" | grep -c '^u
 rm -rf "$T/real"; mkdir -p "$T/real/module"; cp "$HERE/../build.sh" "$HERE/../CHANGELOG.md" "$T/real/"; cp -r "$HERE/../module/." "$T/real/module/"
 ( cd "$T/real" && sh build.sh >/dev/null 2>&1 ); check "real repo builds" 0 $?
 
+# A refused build must not leave an earlier build's files behind (they could be uploaded by mistake).
+mk "$PROP" "$LOG"; ( cd "$T/r" && sh build.sh >/dev/null 2>&1 )
+check "stale test: first build made the files" "yes" "$([ -s "$T/r/dist/update.json" ] && [ -s "$T/r/dist/changelog.md" ] && ls "$T/r/dist"/Kprofiles-Control-*.zip >/dev/null 2>&1 && echo yes || echo no)"
+printf '%s' "$PROP" | sed 's/^version=v2.3.4/version=bogus/' > "$T/r/module/module.prop"
+( cd "$T/r" && sh build.sh >/dev/null 2>&1 ); rc=$?
+check "stale test: bad version is refused" "1" "$rc"
+check "stale test: nothing of the earlier build is left" "" "$(ls -A "$T/r/dist")"
+mk "$PROP" "$LOG"; ( cd "$T/r" && sh build.sh >/dev/null 2>&1 )
+printf '%s' "$PROP" | sed 's/^versionCode=42/versionCode=4x/' > "$T/r/module/module.prop"
+( cd "$T/r" && sh build.sh >/dev/null 2>&1 )
+check "stale test: bad versionCode leaves nothing either" "" "$(ls -A "$T/r/dist")"
+mk "$PROP" "$LOG"; ( cd "$T/r" && sh build.sh >/dev/null 2>&1 )
+printf '# Changelog\n\n## v9.9.9\n- x\n' > "$T/r/CHANGELOG.md"
+( cd "$T/r" && sh build.sh >/dev/null 2>&1 )
+check "stale test: missing changelog section leaves nothing either" "" "$(ls -A "$T/r/dist")"
+
 [ "$fail" = 0 ] && echo "all tests passed" || { echo "SOME TESTS FAILED"; exit 1; }

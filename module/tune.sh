@@ -92,7 +92,8 @@ capture_defaults() {
     case "$v" in
       "") [ -e "$cn" ] && CAP_BAD="$CAP_BAD ${c}_${k}" ;;      # the node exists but gave no reading
       *[!0-9]*) CAP_BAD="$CAP_BAD ${c}_${k}" ;;                # not a plain number
-      *) echo "${c}_${k}=$v" >> "$DEF.tmp" ;;
+      *[!0]*) echo "${c}_${k}=$v" >> "$DEF.tmp" ;;             # a positive number
+      *) CAP_BAD="$CAP_BAD ${c}_${k}" ;;                       # all zeros: not a frequency
     esac
   done; done
   if [ -n "$CAP_BAD" ]; then
@@ -164,6 +165,7 @@ tick() { sleep 0.1 2>/dev/null || sleep 1; }   # a tenth of a second where sleep
 LOCKD="$CFG_DIR/daemon.lock"
 DLOG="${TUNE_DAEMON_LOG:-/dev/null}"       # where the watcher's own output goes (tests set this to see its errors)
 LOCK_TRIES="${TUNE_LOCK_TRIES:-100}"     # about a tenth of a second each
+START_TRIES="${TUNE_START_TRIES:-100}"   # how long start_daemon waits for the new watcher to appear (tenths of a second)
 lock_take() {
   lk=0
   while ! mkdir "$LOCKD" 2>/dev/null; do
@@ -191,7 +193,7 @@ start_daemon() {
       nohup sh "$md/tune.sh" daemon "$md" >>"$DLOG" 2>&1 </dev/null &
     fi
     # Hold the lock until the new watcher has written its pid file, so the next caller sees it.
-    i=0; while [ "$i" -lt 30 ] && ! daemon_alive; do tick; i=$((i + 1)); done
+    i=0; while [ "$i" -lt "$START_TRIES" ] && ! daemon_alive; do tick; i=$((i + 1)); done
   fi
   lock_free
   return 0
@@ -223,6 +225,8 @@ stop_daemon() {
   lock_free
   return "$sd_rc"
 }
+# True while the pid file still names this very process. read is a built-in: no process is started.
+owns_pidf() { wp=""; [ -r "$PIDF" ] && read -r wp 2>/dev/null < "$PIDF"; [ "$wp" = "$$" ]; }
 # An exiting watcher removes the pid file only if it still names this very process.
 pidf_release() { [ "$(cat "$PIDF" 2>/dev/null)" = "$$" ] && rm -f "$PIDF"; return 0; }
 run_daemon() {
@@ -235,11 +239,18 @@ run_daemon() {
   trap 'kill "$sp" 2>/dev/null; pidf_release; exit 0' TERM INT
   last=""; n=0
   while :; do
+    # Only the watcher the pid file names may act. One that lost the file (a wiped folder, a start
+    # that raced another) leaves quietly, so two watchers can never fight over the limits: a second
+    # one used to re-apply the caps right after the first had handed them back.
+    owns_pidf || { log_msg "watcher $$ no longer owns the pid file, leaving"; exit 0; }
     load_cfg
     if [ "$ENABLED" != 1 ]; then apply_state none >/dev/null; break; fi
     # Disabling or removing a module in the manager only drops a marker file. Notice it here and
     # hand the limits back, instead of holding them until the next reboot.
-    if [ -e "$MODDIR/disable" ] || [ -e "$MODDIR/remove" ]; then apply_state none >/dev/null; break; fi
+    if [ -e "$MODDIR/disable" ] || [ -e "$MODDIR/remove" ]; then
+      log_msg "watcher $$: module disabled or removed, handing the limits back"
+      apply_state none >/dev/null; break
+    fi
     st=on
     if [ "$SCREENOFF" = 1 ]; then scr_get; st=$ST; fi
     if [ "$st" != "$last" ] || [ "$n" -ge "$REASSERT_EVERY" ]; then
@@ -256,6 +267,7 @@ run_daemon() {
 # ---------- commands ----------
 NOSTOCK="warn: the phone's own limits are not recorded yet (the kernel Battery profile is on), so Stock cannot put them back until the next reboot"
 cmd_apply() {
+  ca_rc=0
   load_cfg
   if [ "$ENABLED" = 1 ]; then
     capture_defaults
@@ -265,10 +277,13 @@ cmd_apply() {
   else
     capture_defaults
     [ -f "$DEF" ] || [ ! -s "$APPLIED" ] || echo "$NOSTOCK"
-    stop_daemon
+    if ! stop_daemon; then
+      echo "error: the watcher is still running and may apply the limits again; your settings are kept, try again or reboot"
+      ca_rc=1
+    fi
     apply_state none
   fi
-  return 0
+  return "$ca_rc"
 }
 
 cmd_cfg() { # KEY VALUE
@@ -385,6 +400,6 @@ case "$1" in
   apply)     cmd_apply && echo ok ;;
   boot)      cmd_boot ;;
   daemon)    run_daemon "$2" ;;
-  stop)      stop_daemon; apply_state none; echo ok ;;
+  stop)      if stop_daemon; then apply_state none; echo ok; else apply_state none; echo "error: the watcher did not stop"; exit 1; fi ;;
   *) echo "usage: tune.sh status | lists | cfg KEY VALUE | preset stock|tilt|saver | resetall | apply | boot | stop"; exit 1 ;;
 esac

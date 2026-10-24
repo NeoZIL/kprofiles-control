@@ -6,6 +6,10 @@
 set -e
 cd "$(dirname "$0")"
 REPO="${REPO:-${GITHUB_REPOSITORY:-NeoZIL/kprofiles-control}}"
+# dist/ belongs to this script. Clear what it makes FIRST, before any check can fail, so a refused
+# build never leaves an earlier build's zip, manifest or notes behind to be uploaded by mistake.
+mkdir -p dist
+rm -f dist/Kprofiles-Control-*.zip dist/update.json dist/changelog.md
 prop() { tr -d '\r' < module/module.prop | sed -n "s/^$1=//p" | head -n 1; }
 VER=$(prop version)
 CODE=$(prop versionCode)
@@ -20,10 +24,6 @@ printf '%s\n' "$CODE" | grep -Eq '^[1-9][0-9]{0,9}$' && expr "$CODE" \<= 2147483
   { echo "build: versionCode '$CODE' must be a whole number from 1 to 2147483647 without leading zeros" >&2; exit 1; }
 OUT="dist/Kprofiles-Control-${VER}.zip"
 
-mkdir -p dist
-# dist/ belongs to this script: clear every module zip it may have made for an earlier version, so an
-# upload of dist/*.zip can never carry a stale one.
-rm -f dist/Kprofiles-Control-*.zip dist/update.json dist/changelog.md
 
 # Release notes: the "## <version>" section of CHANGELOG.md. A release without notes is an error.
 tr -d '\r' < CHANGELOG.md | awk -v h="## $VER" '
