@@ -1,5 +1,35 @@
 # Changelog
 
+## v1.2.1
+Fixes five ways the module could report success while the information needed to put the phone's own
+limits back was missing, unsaved or lost. Each has a failure-injection test that fails on v1.2.0.
+- Fix: **no recorded original value.** A limit the module had changed, whose original value was never
+  recorded (for example because the kernel Battery profile was on at boot), counted as restored.
+  `preset stock`, `stop` and `resetall` printed ok, and uninstall then deleted the saved settings and
+  markers while the limit was still capped. Now that is a failed restore: exit 1, the limit stays
+  marked, and uninstall keeps everything.
+- Fix: **changed-markers.** A marker that could not be written was ignored, so a limit could be
+  changed with no record that the module owned it (Stock then did nothing and uninstall succeeded).
+  The marker is now saved and read back BEFORE a limit is changed; if that fails the limit is left
+  alone and the command fails. A marker that cannot be cleared after a verified restore is reported
+  and kept (the safe direction); it is checked again next time.
+- Fix: **settings that cannot be read.** `tune.sh cfg` and `kp.sh` replaced an existing settings file
+  with one holding only the new key when reading the old one failed (19 lines became 2, and the
+  command said ok). Now a failed read is a failure: the file is left byte for byte as it was.
+- Fix: **damaged settings.** A settings file that cannot be read or parsed used to stop `tune.sh`
+  outright (exit 2 on every command, including the uninstall restore), or was taken for "no settings".
+  Now `apply`, `cfg` and `boot` say the settings cannot be read and change nothing, `status` still
+  works, and setting a preset, or uninstalling, writes a fresh file and goes on to restore the phone.
+- Fix: **saving the phone's own values.** `capture_defaults` did not check its writes and boot ignored
+  the result. A snapshot that cannot be saved is now reported (boot exits 1), an earlier snapshot is
+  never replaced by a failed one, a snapshot path that is a folder is refused, and no limit is
+  changed when there is no snapshot and none could be saved.
+- Internal: redirections that can fail now use `printf` rather than `:` (a failed redirection on a
+  special built-in ends the whole script in a POSIX shell).
+- Wording: the "not recorded yet" warning no longer says the Battery profile is the only cause.
+- Tests: 54 new checks in `tests/tune-test.sh` and 7 in `tests/kp-test.sh` cover every case above.
+  Run against the v1.2.0 code they fail.
+
 ## v1.2.0
 - Fix: a settings file that cannot be saved no longer slips past the uninstall safety check. `tune.sh`
   used to ignore failures while writing its settings (`cfg_put`, and the preset save in

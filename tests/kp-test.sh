@@ -90,4 +90,17 @@ CFG_DIR="$T/cfg2" sh "$KPSH" mode 2 >/dev/null 2>&1; check "config is a folder: 
 check "config is a folder: nothing was moved into it" "0" "$(ls "$T/cfg2/config" | wc -l | tr -d ' ')"
 check "config is a folder: no temporary file left" "no" "$([ -e "$T/cfg2/config.tmp" ] && echo yes || echo no)"
 
+# An existing config that cannot be READ is never replaced by a file holding only the new key.
+rm -rf "$T/cfg"; echo 0 > "$T/kp_mode"; echo N > "$T/auto_kp"
+sh "$KPSH" mode 2 >/dev/null; sh "$KPSH" auto Y >/dev/null; good=$(cksum < "$T/cfg/config")
+mkdir -p "$T/shim"; printf '#!/bin/sh\nfor a; do case "$a" in */config) exit 2 ;; esac; done\nexec %s "$@"\n' "$(command -v grep)" > "$T/shim/grep"; chmod +x "$T/shim/grep"
+out=$(PATH="$T/shim:$PATH" sh "$KPSH" mode 3 2>&1); rc=$?
+check "config unreadable: mode exits 1" 1 "$rc"
+check "config unreadable: the old config is byte for byte the same" "$good" "$(cksum < "$T/cfg/config")"
+check "config unreadable: no temporary file left" no "$([ -e "$T/cfg/config.tmp" ] && echo yes || echo no)"
+PATH="$T/shim:$PATH" sh "$KPSH" auto N >/dev/null 2>&1; check "config unreadable: auto exits 1" 1 "$?"
+check "config unreadable: still the same after auto" "$good" "$(cksum < "$T/cfg/config")"
+PATH="$T/shim:$PATH" sh "$KPSH" persist 0 >/dev/null 2>&1; check "config unreadable: persist exits 1" 1 "$?"
+check "config unreadable: still the same after persist" "$good" "$(cksum < "$T/cfg/config")"
+rm -rf "$T/shim"
 [ "$fail" = 0 ] && echo "all tests passed" || { echo "SOME TESTS FAILED"; exit 1; }

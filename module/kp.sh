@@ -13,7 +13,14 @@ cfg_get() { [ -f "$CFG" ] && sed -n "s/^$1=//p" "$CFG" | head -n 1; }
 cfg_set() {
   mkdir -p "$CFG_DIR" 2>/dev/null || return 1
   [ ! -d "$CFG" ] || return 1
-  { { grep -v "^$1=" "$CFG" 2>/dev/null; echo "$1=$2"; } > "$CFG.tmp"; } 2>/dev/null || { rm -f "$CFG.tmp" 2>/dev/null; return 1; }
+  { printf "" > "$CFG.tmp"; } 2>/dev/null || return 1
+  if [ -e "$CFG" ]; then
+    # grep exits 0 or 1 when it could read the file; anything else means the old config could not be
+    # read, and it must not be replaced by a file holding only the new key
+    grep -v "^$1=" "$CFG" > "$CFG.tmp" 2>/dev/null; cs_rc=$?
+    [ "$cs_rc" -le 1 ] || { rm -f "$CFG.tmp" 2>/dev/null; return 1; }
+  fi
+  { echo "$1=$2" >> "$CFG.tmp"; } 2>/dev/null || { rm -f "$CFG.tmp" 2>/dev/null; return 1; }
   mv "$CFG.tmp" "$CFG" 2>/dev/null || { rm -f "$CFG.tmp" 2>/dev/null; return 1; }
   return 0
 }

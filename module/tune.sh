@@ -42,7 +42,17 @@ rd() { cat "$1" 2>/dev/null; }
 wr() { { echo "$2" > "$1"; } 2>/dev/null; }
 
 # ---------- config ----------
-load_cfg() { ENABLED=0; SCREENOFF=1; PRESET=stock; [ -f "$CFG" ] && . "$CFG"; return 0; }
+# A settings file that exists but cannot be read or parsed is NOT the same as "no settings": CFG_BAD is
+# set, the defaults (disabled) are loaded, and callers that would change anything refuse to go on.
+# (The dot command aborts a whole script when its file cannot be read, so it is tried in a subshell first.)
+NOREAD="error: the saved settings at $CFG cannot be read, so nothing was changed (set a preset to write them again)"
+load_cfg() {
+  ENABLED=0; SCREENOFF=1; PRESET=stock; CFG_BAD=""
+  if [ -e "$CFG" ]; then
+    if [ -f "$CFG" ] && ( . "$CFG" ) >/dev/null 2>&1; then . "$CFG"; else CFG_BAD=1; fi
+  fi
+  return 0
+}
 # cfg_put KEY VALUE [KEY VALUE ...]: saves one or more settings in ONE replace of the config file, or
 # changes nothing. Fails (and removes its temporary file) if the folder cannot be made, the settings
 # path is a folder, the temporary file cannot be written or it cannot be moved into place.
@@ -58,9 +68,15 @@ cfg_put() {
 "
     shift 2
   done
-  # shellcheck disable=SC2086
-  { { { [ ! -f "$CFG" ] || grep -v $cp_pat "$CFG"; true; } && printf '%s' "$cp_new"; } > "$CFG.tmp"; } 2>/dev/null ||
-    { rm -f "$CFG.tmp" 2>/dev/null; return 1; }
+  { printf "" > "$CFG.tmp"; } 2>/dev/null || return 1
+  if [ -e "$CFG" ]; then
+    # grep exits 0 (kept some lines) or 1 (kept none: fine); anything else means the old file could not
+    # be read, and then it must not be replaced by a file holding only the new keys
+    # shellcheck disable=SC2086
+    grep -v $cp_pat "$CFG" > "$CFG.tmp" 2>/dev/null; cp_rc=$?
+    [ "$cp_rc" -le 1 ] || { rm -f "$CFG.tmp" 2>/dev/null; return 1; }
+  fi
+  { printf '%s' "$cp_new" >> "$CFG.tmp"; } 2>/dev/null || { rm -f "$CFG.tmp" 2>/dev/null; return 1; }
   mv "$CFG.tmp" "$CFG" 2>/dev/null || { rm -f "$CFG.tmp" 2>/dev/null; return 1; }
   return 0
 }
@@ -99,15 +115,18 @@ capture_defaults() {
   # The kernel Battery profile lowers the values we read, so a reading taken now is not stock.
   # This holds for the forced boot-time capture too: keep whatever was recorded before, or nothing.
   [ "$(rd "$KPNODE")" = 1 ] && return 0
-  mkdir -p "$CFG_DIR" 2>/dev/null
-  : > "$DEF.tmp"
+  # Returns 2 when the snapshot could not be SAVED (a saved one is then left exactly as it was).
+  cd_fail() { rm -f "$DEF.tmp" 2>/dev/null; log_msg "could not save the phone's own values"; return 2; }
+  mkdir -p "$CFG_DIR" 2>/dev/null || { log_msg "could not save the phone's own values"; return 2; }
+  [ ! -d "$DEF" ] || { log_msg "could not save the phone's own values"; return 2; }
+  { printf "" > "$DEF.tmp"; } 2>/dev/null || { log_msg "could not save the phone's own values"; return 2; }
   for c in $CLUSTERS; do for k in min max; do
     cn=$(node $c $k)
     v=$(rd "$cn")
     case "$v" in
       "") [ -e "$cn" ] && CAP_BAD="$CAP_BAD ${c}_${k}" ;;      # the node exists but gave no reading
       *[!0-9]*) CAP_BAD="$CAP_BAD ${c}_${k}" ;;                # not a plain number
-      *[!0]*) echo "${c}_${k}=$v" >> "$DEF.tmp" ;;             # a positive number
+      *[!0]*) { echo "${c}_${k}=$v" >> "$DEF.tmp"; } 2>/dev/null || { cd_fail; return 2; } ;;   # a positive number
       *) CAP_BAD="$CAP_BAD ${c}_${k}" ;;                       # all zeros: not a frequency
     esac
   done; done
@@ -117,14 +136,30 @@ capture_defaults() {
     log_msg "could not read:$CAP_BAD"
     if [ -s "$DEF" ]; then rm -f "$DEF.tmp"; return 0; fi
   fi
-  mv "$DEF.tmp" "$DEF"
+  mv "$DEF.tmp" "$DEF" 2>/dev/null || { cd_fail; return 2; }
+  return 0
 }
 def_of() { sed -n "s/^$1=//p" "$DEF" 2>/dev/null | head -n 1; }
 
 # ---------- bookkeeping of what we changed ----------
 is_applied() { grep -qx "$1" "$APPLIED" 2>/dev/null; }
-mark_applied() { mkdir -p "$CFG_DIR" 2>/dev/null; is_applied "$1" || echo "$1" >> "$APPLIED"; }
-unmark_applied() { grep -vx "$1" "$APPLIED" > "$APPLIED.tmp" 2>/dev/null; mv "$APPLIED.tmp" "$APPLIED" 2>/dev/null; }
+# mark_applied fails (returns 1) unless the marker is really on file afterwards.
+mark_applied() {
+  mkdir -p "$CFG_DIR" 2>/dev/null || return 1
+  is_applied "$1" && return 0
+  { echo "$1" >> "$APPLIED"; } 2>/dev/null || return 1
+  is_applied "$1"
+}
+# unmark_applied fails unless the marker is really gone afterwards. A marker that stays is the safe
+# direction (the limit is simply checked again next time), so callers only warn about it.
+unmark_applied() {
+  [ -e "$APPLIED" ] || return 0
+  { printf "" > "$APPLIED.tmp"; } 2>/dev/null || return 1
+  grep -vx "$1" "$APPLIED" > "$APPLIED.tmp" 2>/dev/null; um_rc=$?
+  [ "$um_rc" -le 1 ] || { rm -f "$APPLIED.tmp" 2>/dev/null; return 1; }
+  mv "$APPLIED.tmp" "$APPLIED" 2>/dev/null || { rm -f "$APPLIED.tmp" 2>/dev/null; return 1; }
+  ! is_applied "$1"
+}
 
 # ---------- applying ----------
 apply_domain() { # cluster state(on|off|none)
@@ -132,9 +167,20 @@ apply_domain() { # cluster state(on|off|none)
   eval "ad_wmin=\${${ad_S}_${ad_C}_MIN:-}"
   eval "ad_wmax=\${${ad_S}_${ad_C}_MAX:-}"
   ad_dmin=$ad_wmin; ad_dmax=$ad_wmax; ad_rmin=""; ad_rmax=""
-  if [ -z "$ad_dmin" ] && is_applied "${ad_c}_min"; then ad_dmin=$(def_of "${ad_c}_min"); ad_rmin=1; fi
-  if [ -z "$ad_dmax" ] && is_applied "${ad_c}_max"; then ad_dmax=$(def_of "${ad_c}_max"); ad_rmax=1; fi
-  [ -z "$ad_dmin$ad_dmax" ] && return 0
+  ad_nodef=""
+  if [ -z "$ad_dmin" ] && is_applied "${ad_c}_min"; then
+    ad_dmin=$(def_of "${ad_c}_min"); ad_rmin=1; [ -n "$ad_dmin" ] || ad_nodef="$ad_nodef ${ad_c}_min"
+  fi
+  if [ -z "$ad_dmax" ] && is_applied "${ad_c}_max"; then
+    ad_dmax=$(def_of "${ad_c}_max"); ad_rmax=1; [ -n "$ad_dmax" ] || ad_nodef="$ad_nodef ${ad_c}_max"
+  fi
+  if [ -z "$ad_dmin$ad_dmax" ]; then
+    # Nothing to write. If a limit of ours has no recorded original value it can NOT be put back: that
+    # is a failed restore (it stays marked), never a silent success.
+    [ -z "$ad_nodef" ] && return 0
+    log_msg "no recorded original value for:$ad_nodef (kept marked)"
+    return 1
+  fi
   ad_pmin=$(node "$ad_c" min); ad_pmax=$(node "$ad_c" max)
   [ -e "$ad_pmax" ] || { echo "warn: $ad_c controls not found on this phone"; return 0; }
   ad_curmin=$(rd "$ad_pmin"); ad_curmax=$(rd "$ad_pmax")
@@ -142,6 +188,13 @@ apply_domain() { # cluster state(on|off|none)
   if [ -z "$ad_dmin" ] && [ -n "$ad_dmax" ] && [ -n "$ad_curmin" ] && [ "$ad_curmin" -gt "$ad_dmax" ]; then ad_dmin=$ad_dmax; ad_rmin=""; fi
   if [ -z "$ad_dmax" ] && [ -n "$ad_dmin" ] && [ -n "$ad_curmax" ] && [ "$ad_curmax" -lt "$ad_dmin" ]; then ad_dmax=$ad_dmin; ad_rmax=""; fi
   if [ -n "$ad_dmin" ] && [ -n "$ad_dmax" ] && [ "$ad_dmin" -gt "$ad_dmax" ]; then ad_dmin=$ad_dmax; fi
+  # A limit is recorded as ours BEFORE it is changed: if the record cannot be saved, the limit is left alone.
+  if [ -n "$ad_dmin" ] && [ -z "$ad_rmin" ] && ! mark_applied "${ad_c}_min"; then
+    echo "error: could not save the record of the $ad_c min limit, so it was not changed"; log_msg "marker write failed for ${ad_c}_min"; return 1
+  fi
+  if [ -n "$ad_dmax" ] && [ -z "$ad_rmax" ] && ! mark_applied "${ad_c}_max"; then
+    echo "error: could not save the record of the $ad_c max limit, so it was not changed"; log_msg "marker write failed for ${ad_c}_max"; return 1
+  fi
   # write min, then max, then min again (so the order never blocks a change)
   [ -n "$ad_dmin" ] && [ "$ad_curmin" != "$ad_dmin" ] && wr "$ad_pmin" "$ad_dmin"
   [ -n "$ad_dmax" ] && [ "$ad_curmax" != "$ad_dmax" ] && wr "$ad_pmax" "$ad_dmax"
@@ -153,21 +206,25 @@ apply_domain() { # cluster state(on|off|none)
   # Remember what we changed. A limit of ours is forgotten only once the phone's own value has been
   # verified back in place; a restore the kernel refused stays marked, so Stock or Apply can retry it.
   ad_note=""
-  if [ -n "$ad_dmin" ]; then
-    if [ -z "$ad_rmin" ]; then mark_applied "${ad_c}_min"
-    elif [ -n "$ad_okmin" ]; then unmark_applied "${ad_c}_min"
+  if [ -n "$ad_dmin" ] && [ -n "$ad_rmin" ]; then
+    if [ -n "$ad_okmin" ]; then
+      unmark_applied "${ad_c}_min" || { echo "warn: ${ad_c}_min is back, but its changed-marker could not be cleared; it will be checked again next time"; log_msg "marker not cleared for ${ad_c}_min"; }
     else ad_note="$ad_note ${ad_c}_min"; fi
   fi
-  if [ -n "$ad_dmax" ]; then
-    if [ -z "$ad_rmax" ]; then mark_applied "${ad_c}_max"
-    elif [ -n "$ad_okmax" ]; then unmark_applied "${ad_c}_max"
+  if [ -n "$ad_dmax" ] && [ -n "$ad_rmax" ]; then
+    if [ -n "$ad_okmax" ]; then
+      unmark_applied "${ad_c}_max" || { echo "warn: ${ad_c}_max is back, but its changed-marker could not be cleared; it will be checked again next time"; log_msg "marker not cleared for ${ad_c}_max"; }
     else ad_note="$ad_note ${ad_c}_max"; fi
+  fi
+  if [ -n "$ad_nodef" ]; then
+    log_msg "no recorded original value for:$ad_nodef (kept marked)"
   fi
   if [ -n "$ad_note" ]; then
     echo "warn: could not put the phone's own value back for:$ad_note; it stays marked as changed so a later Stock or Apply tries again"
     log_msg "restore refused by the kernel for:$ad_note (kept marked, will be retried)"
     return 1       # the restore is incomplete: callers must not treat it as done
   fi
+  [ -z "$ad_nodef" ] || return 1     # a limit with no recorded original value was left as it is
   return 0
 }
 # Limits we changed whose original value was never recorded: Stock has nothing to put back for them.
@@ -300,6 +357,7 @@ run_daemon() {
     # one used to re-apply the caps right after the first had handed them back.
     owns_pidf || { log_msg "watcher $$ no longer owns the pid file, leaving"; exit 0; }
     load_cfg
+    [ -z "$CFG_BAD" ] || log_msg "watcher $$: the saved settings cannot be read, handing the limits back"
     if [ "$ENABLED" != 1 ]; then apply_none_logged; break; fi
     # Disabling or removing a module in the manager only drops a marker file. Notice it here and
     # hand the limits back, instead of holding them until the next reboot.
@@ -322,12 +380,17 @@ run_daemon() {
 
 # ---------- commands ----------
 NORESTORE="error: some of the phone's own values could not be put back (see the warning above); your settings and the recorded values are kept, so Stock or Apply can try again"
-NOSTOCK="warn: the phone's own limits are not recorded yet (the kernel Battery profile is on), so Stock cannot put them back until the next reboot"
+NOSTOCK="warn: the phone's own limits are not recorded yet (for example because the kernel Battery profile was on), so Stock cannot put them back until the next reboot"
 cmd_apply() {
   ca_rc=0
   load_cfg
+  [ -z "$CFG_BAD" ] || { echo "$NOREAD"; return 1; }
   if [ "$ENABLED" = 1 ]; then
-    capture_defaults
+    capture_defaults; ca_cd=$?
+    if [ "$ca_cd" != 0 ] && [ ! -f "$DEF" ]; then
+      echo "error: the phone's own limits could not be saved, so no limit was changed"; return 1
+    fi
+    [ "$ca_cd" = 0 ] || echo "warn: the phone's own limits could not be saved again; the earlier record is kept"
     [ -f "$DEF" ] || echo "$NOSTOCK"
     if ! apply_state "$(want_state)"; then echo "$NORESTORE"; ca_rc=1; fi
     [ ! -f "$DEF" ] || warn_nodefault
@@ -336,7 +399,7 @@ cmd_apply() {
       ca_rc=1
     fi
   else
-    capture_defaults
+    capture_defaults || echo "warn: the phone's own limits could not be saved"
     [ -f "$DEF" ] || [ ! -s "$APPLIED" ] || echo "$NOSTOCK"
     if ! stop_daemon; then
       echo "error: the watcher is still running and may apply the limits again; your settings are kept, try again or reboot"
@@ -363,6 +426,7 @@ cmd_cfg() { # KEY VALUE
         list_has "$PK_c" "$val" || { echo "error: $val is not an available $PK_c frequency on this phone"; return 1; }
       fi
       load_cfg
+      [ -z "$CFG_BAD" ] || { echo "$NOREAD"; return 1; }
       if [ "$PK_K" = MIN ]; then okn="${PK_S}_${PK_C}_MAX"; else okn="${PK_S}_${PK_C}_MIN"; fi
       eval "other=\${$okn:-}"
       if [ -n "$val" ] && [ -n "$other" ]; then
@@ -435,11 +499,12 @@ cmd_resetall() { # kernel profile back to None first (so nothing holds the limit
 cmd_boot() {
   rm -f "$APPLIED" "$PIDF" 2>/dev/null
   mkdir -p "$CFG_DIR" 2>/dev/null
-  capture_defaults force
+  cb_rc=0
+  capture_defaults force || { echo "error: the phone's own limits could not be saved at boot; an earlier record is kept if there is one"; cb_rc=1; }
   [ -z "$CAP_BAD" ] || echo "warn: could not read these frequency values at boot:$CAP_BAD (an earlier record is kept if there is one)"
   load_cfg
-  cb_rc=0
-  if [ "$ENABLED" = 1 ]; then cmd_apply || cb_rc=1; fi
+  [ -z "$CFG_BAD" ] || { echo "$NOREAD"; cb_rc=1; }
+  if [ "$ENABLED" = 1 ] && [ -z "$CFG_BAD" ]; then cmd_apply || cb_rc=1; fi
   if [ "$cb_rc" = 0 ]; then
     echo "boot done: enabled=$ENABLED preset=$PRESET"
   else

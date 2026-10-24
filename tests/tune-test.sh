@@ -626,6 +626,114 @@ check "cfg keeps each key once" 1 "$(grep -c '^ON_BIG_MAX=' "$T/cfg/tune.conf")"
 check "cfg keeps PRESET once" 1 "$(grep -c '^PRESET=' "$T/cfg/tune.conf")"
 check "cfg leaves no temporary file" no "$([ -e "$T/cfg/tune.conf.tmp" ] && echo yes || echo no)"
 
+echo "--- v1.2.1 failure injection: recovery data is never lost, and no failure is reported as success ---"
+rununinst() { # runs the real uninstall.sh against the test folders; prints nothing, returns its status
+  rm -rf "$T/modu"; cp -r "$HERE/../module" "$T/modu"
+  sed "s#/data/adb/kprofiles_ui#$T/cfg#" "$HERE/../module/uninstall.sh" > "$T/modu/uninstall.sh"
+  sh "$T/modu/uninstall.sh" >/dev/null 2>&1
+}
+marked() { grep -cx "$1" "$T/cfg/applied" 2>/dev/null; }
+# 1. no stock snapshot while one of our limits is in place
+mkfake; S boot >/dev/null; S preset tilt >/dev/null; cp "$T/cfg/defaults" "$T/defaults.keep"; rm -f "$T/cfg/defaults"
+out=$(S preset stock); rc=$?
+check "no snapshot: Stock exits 1" 1 "$rc"
+has "no snapshot: Stock says the restore is incomplete" "could not be put back" "$out"
+check "no snapshot: the limit is left as it is" 2188800 "$(v cpufreq/policy3/scaling_max_freq)"
+check "no snapshot: the changed-marker is kept" 1 "$(marked big_max)"
+rununinst; rc=$?
+check "no snapshot: uninstall exits 1" 1 "$rc"
+check "no snapshot: uninstall keeps the settings" yes "$([ -s "$T/cfg/tune.conf" ] && echo yes || echo no)"
+check "no snapshot: uninstall keeps the markers" 1 "$(marked big_max)"
+cp "$T/defaults.keep" "$T/cfg/defaults"; rununinst; rc=$?
+check "snapshot back: uninstall exits 0" 0 "$rc"
+check "snapshot back: the phone's own value is restored" 2572800 "$(v cpufreq/policy3/scaling_max_freq)"
+mkfake; echo 1 > "$T/kp/kp_mode"; S boot >/dev/null                  # Battery profile on at boot: nothing was recorded
+check "Battery profile at boot: no snapshot was taken" no "$([ -f "$T/cfg/defaults" ] && echo yes || echo no)"
+S preset tilt >/dev/null; rununinst; rc=$?
+check "Battery profile at boot, limits changed: uninstall exits 1" 1 "$rc"
+check "Battery profile at boot, limits changed: recovery data kept" yes "$([ -d "$T/cfg" ] && echo yes || echo no)"
+S stop >/dev/null 2>&1; check "stop with no snapshot: exits 1" 1 "$(S stop >/dev/null 2>&1; echo $?)"
+# 2. the changed-marker cannot be saved: the limit must not be changed
+mkfake; S boot >/dev/null; mkdir "$T/cfg/applied"
+out=$(S preset tilt); rc=$?
+check "marker unwritable: preset exits 1" 1 "$rc"
+has "marker unwritable: says the record could not be saved" "could not save the record" "$out"
+check "marker unwritable: big max not changed" 2572800 "$(v cpufreq/policy3/scaling_max_freq)"
+check "marker unwritable: prime max not changed" 2668800 "$(v cpufreq/policy7/scaling_max_freq)"
+check "marker unwritable: gpu max not changed" 900000000 "$(v gpu/max_freq)"
+rmdir "$T/cfg/applied"
+# the marker cannot be cleared: the value is back, the marker stays, and it is said
+mkfake; S boot >/dev/null; S preset tilt >/dev/null; mkdir "$T/cfg/applied.tmp"
+out=$(S preset stock); rc=$?
+check "marker not clearable: the phone's own value is back" 2572800 "$(v cpufreq/policy3/scaling_max_freq)"
+has "marker not clearable: says so" "marker could not be cleared" "$out"
+check "marker not clearable: the marker stays (safe direction)" 1 "$(marked big_max)"
+rmdir "$T/cfg/applied.tmp"; S apply >/dev/null
+check "marker clearable again: it is cleared" 0 "$(marked big_max)"
+# 3. the existing settings cannot be READ: they are never replaced by a file with only the new key
+mkfake; S boot >/dev/null; S preset tilt >/dev/null; before=$(cfgsum); bigmax=$(v cpufreq/policy3/scaling_max_freq)
+mkdir -p "$T/shim"; REALGREP=$(command -v grep)
+printf '#!/bin/sh\nfor a; do case "$a" in *tune.conf) exit 2 ;; esac; done\nexec %s "$@"\n' "$REALGREP" > "$T/shim/grep"; chmod +x "$T/shim/grep"
+out=$(PATH="$T/shim:$PATH" S cfg ON_BIG_MAX 2073600); rc=$?
+check "settings unreadable: cfg exits 1" 1 "$rc"
+has "settings unreadable: cfg says nothing was saved" "error: could not save" "$out"
+check "settings unreadable: the old settings are byte for byte the same" "$before" "$(cfgsum)"
+check "settings unreadable: no temporary file left" no "$([ -e "$T/cfg/tune.conf.tmp" ] && echo yes || echo no)"
+check "settings unreadable: nothing was applied" "$bigmax" "$(v cpufreq/policy3/scaling_max_freq)"
+rm -rf "$T/shim"
+# a settings file that is damaged (cannot be parsed) is not "no settings"
+mkfake; S boot >/dev/null; S preset tilt >/dev/null; bigmax=$(v cpufreq/policy3/scaling_max_freq)
+printf 'ENABLED=1\nthis is ( broken\n' > "$T/cfg/tune.conf"; bad=$(cfgsum)
+out=$(S apply); rc=$?
+check "settings damaged: apply exits 1" 1 "$rc"
+has "settings damaged: apply says they cannot be read" "cannot be read" "$out"
+check "settings damaged: apply changed nothing" "$bigmax" "$(v cpufreq/policy3/scaling_max_freq)"
+out=$(S status); rc=$?
+check "settings damaged: status still works" 0 "$rc"
+out=$(S cfg ON_BIG_MAX 2073600); rc=$?
+check "settings damaged: cfg exits 1" 1 "$rc"
+check "settings damaged: cfg leaves the file alone" "$bad" "$(cfgsum)"
+out=$(S preset stock); rc=$?
+check "settings damaged: a preset writes them again" 0 "$rc"
+check "settings damaged: and the phone is back to stock" 2572800 "$(v cpufreq/policy3/scaling_max_freq)"
+mkfake; S boot >/dev/null; printf 'ENABLED=1\nthis is ( broken\n' > "$T/cfg/tune.conf"
+out=$(S boot); rc=$?
+check "settings damaged: boot exits 1" 1 "$rc"
+has "settings damaged: boot says so" "cannot be read" "$out"
+mkfake; S boot >/dev/null; S preset tilt >/dev/null; printf 'ENABLED=1\nthis is ( broken\n' > "$T/cfg/tune.conf"
+rununinst; rc=$?
+check "settings damaged: uninstall still restores and exits 0" 0 "$rc"
+check "settings damaged: uninstall restored the phone's own value" 2572800 "$(v cpufreq/policy3/scaling_max_freq)"
+# 4. the phone's own values cannot be SAVED
+mkfake; mkdir -p "$T/cfg/defaults.tmp"
+out=$(S boot); rc=$?
+check "snapshot unsavable: boot exits 1" 1 "$rc"
+has "snapshot unsavable: boot says so" "could not be saved at boot" "$out"
+check "snapshot unsavable: no snapshot file" no "$([ -f "$T/cfg/defaults" ] && echo yes || echo no)"
+out=$(S preset tilt); rc=$?
+check "snapshot unsavable: apply exits 1" 1 "$rc"
+has "snapshot unsavable: apply refuses to change a limit" "no limit was changed" "$out"
+check "snapshot unsavable: big max not changed" 2572800 "$(v cpufreq/policy3/scaling_max_freq)"
+rmdir "$T/cfg/defaults.tmp"; S boot >/dev/null; snap=$(cksum < "$T/cfg/defaults"); mkdir "$T/cfg/defaults.tmp"
+out=$(S boot); rc=$?
+check "saved snapshot, save fails again: boot exits 1" 1 "$rc"
+check "saved snapshot, save fails again: the earlier snapshot is untouched" "$snap" "$(cksum < "$T/cfg/defaults")"
+mkfake; rm -rf "$T/cfg"; mkdir -p "$T/cfg/defaults"                 # the snapshot path is a folder
+out=$(S boot); rc=$?
+check "snapshot path is a folder: boot exits 1" 1 "$rc"
+check "snapshot path is a folder: nothing moved into it" 0 "$(ls "$T/cfg/defaults" | wc -l | tr -d ' ')"
+# the final move of the snapshot into place fails (a stand-in mv refuses it)
+mkfake; rm -rf "$T/cfg"; mkdir -p "$T/shim"; REALMV=$(command -v mv)
+printf '#!/bin/sh\nfor a; do case "$a" in *defaults.tmp) exit 1 ;; esac; done\nexec %s "$@"\n' "$REALMV" > "$T/shim/mv"; chmod +x "$T/shim/mv"
+out=$(PATH="$T/shim:$PATH" S boot); rc=$?
+check "snapshot move fails: boot exits 1" 1 "$rc"
+has "snapshot move fails: boot says so" "could not be saved at boot" "$out"
+check "snapshot move fails: no snapshot file claimed" no "$([ -f "$T/cfg/defaults" ] && echo yes || echo no)"
+check "snapshot move fails: no temporary file left" no "$([ -e "$T/cfg/defaults.tmp" ] && echo yes || echo no)"
+out=$(PATH="$T/shim:$PATH" S preset tilt); rc=$?
+check "snapshot move fails: apply exits 1 and changes no limit" "1 2572800" "$rc $(v cpufreq/policy3/scaling_max_freq)"
+rm -rf "$T/shim"
+
 echo "--- boot does not say 'boot done' after a failed apply or watcher start ---"
 mkfake; export TUNE_NO_DAEMON=1; S preset tilt >/dev/null; unset TUNE_NO_DAEMON      # saved: enabled, tilt (no watcher yet)
 mksys; rm -rf "$T/cfg/daemon.pid"; mkdir -p "$T/cfg/daemon.pid"                 # a watcher can never write its pid file
