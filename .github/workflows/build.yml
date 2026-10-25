@@ -20,7 +20,7 @@ jobs:
       group: ${{ startsWith(github.ref, 'refs/tags/v') && 'kprofiles-release' || format('build-{0}', github.ref) }}
       cancel-in-progress: false
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0   # tags are needed to read the versionCode of the current latest release
 
@@ -87,7 +87,7 @@ jobs:
       - name: Build zip
         run: sh build.sh
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: Kprofiles-Control
           path: |

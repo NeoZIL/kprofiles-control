@@ -1,5 +1,36 @@
 # Changelog
 
+## v2.0.0
+WebUI recovery-lock fixes and a CI update. The tuning engine, the kernel-profile scripts, the watcher and
+the restore rules are unchanged from v1.4.4; the page is the only module file that differs.
+- Fix: **the page missed the most common refused limit.** When the kernel rejects a write and reads back
+  nothing, the engine prints `warn: big max wanted 2188800, kernel says ` with an empty reading. The page
+  only recognised `kernel says` followed by digits, so that case did not lock the page to Reset everything
+  and the notice was not shown as a recovery failure. Reproduced against v1.4.4's page. It now recognises
+  the message with or without a reading.
+- Fix: **the page locked itself for a harmless warning.** `big_min is back, but its changed-marker could
+  not be cleared` means the limit WAS restored and only a small bookkeeping file could not be written. The
+  page took it for a frequency failure, entered the recovery lock, and stored the lock, so it survived a
+  reload. Reproduced against v1.4.4's page. Failure detection now matches only the engine's own wording for
+  a refused or unrestorable frequency (`kernel says`, `could not put ... back`, `could not be put back`,
+  `did not take the requested limit`, `the kernel did not take these limits`, `not every limit could be
+  applied`, `restore refused by the kernel`), instead of broad patterns that could match anything that
+  mentions a cluster and "could not".
+- Fix: **a recovery lock that could never clear.** The lock cleared only if Reset everything printed no
+  warnings at all, so an unrelated warning (for example that the phone's own limits are not recorded yet)
+  kept the stored lock forever. Now a Reset everything that ends without an error and without a frequency
+  failure message, followed by a fresh status read, clears the lock; any warnings are still shown, in the
+  result notice. A failed Reset everything keeps the lock and shows the latest response under the original
+  failure details.
+- CI: the workflow now uses `actions/checkout@v7` and `actions/upload-artifact@v7` (both published).
+- Tests: the three page checks that asserted the old clearing rules now assert the new ones, and a new
+  `tests/webui-test.js` (run by `tests/build-test.sh` when node is installed, as in CI) takes the page's own
+  `isFrequencyMismatch` and checks it against 14 real engine messages: 8 that must lock the page and 6
+  harmless ones that must not. Two of those fail on v1.4.4's page, and it also checks that every inline
+  script parses.
+- Version: v2.0.0, versionCode 22. The major number is a milestone choice; there is no engine change and
+  no settings or recovery-data format change, so installing over v1.4.4 keeps everything.
+
 ## v1.4.4
 WebUI-only guardrails for profile switching. The tuning engine and kernel-profile scripts are unchanged.
 - UX: **Battery tilt and Battery saver cannot be selected directly from one another in the WebUI.** Select Stock or Reset everything first; that neutral step returns the UI to a state where either preset can be chosen.

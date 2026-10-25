@@ -172,7 +172,7 @@ select{width:100%;font:inherit;font-size:.9rem;color:var(--text);background:var(
   var cooldownMessage = "", cooldownKind = "ok";
   var RECOVERY_LOCK_KEY = "kprofiles-ui-frequency-recovery-v1";
   var RECOVERY_MESSAGE_KEY = "kprofiles-ui-frequency-recovery-message-v1";
-  var recoveryLock = false, recoveryMessage = "";
+  var recoveryLock = false, recoveryMessage = "", recoveryLatest = "";
   try {
     recoveryLock = window.localStorage.getItem(RECOVERY_LOCK_KEY) === "1";
     recoveryMessage = window.localStorage.getItem(RECOVERY_MESSAGE_KEY) || "";
@@ -202,25 +202,32 @@ select{width:100%;font:inherit;font-size:.9rem;color:var(--text);background:var(
     return String(text || "").split(/\r?\n/).map(function (line) { return line.trim(); })
       .filter(function (line) { return /^(warn|error):/i.test(line); }).join("\n");
   }
+  /* Only the engine's own wording for "the kernel did not accept / could not restore a frequency".
+     Broad patterns are deliberately not used: a false match locks the page, and the lock is stored. In
+     particular "big_min is back, but its changed-marker could not be cleared" is NOT a frequency failure
+     (the limit is back; only a small bookkeeping file could not be written). */
   function isFrequencyMismatch(text) {
-    return /kernel says\s+\d+/i.test(text) ||
+    return /kernel says/i.test(text) ||
       /could not put .*value(?:s)? back/i.test(text) ||
       /could not be put back/i.test(text) ||
       /did not take the requested limit/i.test(text) ||
       /the kernel did not take these limits/i.test(text) ||
       /not every limit could be applied/i.test(text) ||
-      /restore refused by the kernel/i.test(text) ||
-      /frequency.{0,40}(?:mismatch|refus|fail|could not|unable)/i.test(text) ||
-      /(?:little|big|prime|gpu)_(?:min|max).{0,100}(?:kernel says|mismatch|refus|could not|did not take)/i.test(text);
+      /restore refused by the kernel/i.test(text);
+  }
+  function recoveryText() {
+    return (recoveryMessage || "Frequency restore/apply failure. All controls are locked except Reset everything.") +
+      (recoveryLatest ? "\n\n" + recoveryLatest : "");
   }
   function enterRecoveryMode(details) {
     recoveryLock = true;
+    recoveryLatest = "";
     recoveryMessage = "FREQUENCY RESTORE / APPLY FAILURE\n" +
       "Kprofiles reported that a CPU/GPU frequency limit did not match the requested value or could not be restored.\n" +
       (details || "The engine reported a frequency mismatch.") + "\n" +
       "All controls are locked except Reset everything. Run Reset everything to recover. If it reports another error, keep this page open and retry Reset everything.";
     persistRecoveryLock();
-    setMsg(recoveryMessage, "err");
+    setMsg(recoveryText(), "err");
   }
   function isBlockedDirectSwitch(target) {
     return !!st && ((st.preset === "tilt" && target === "saver") ||
@@ -400,7 +407,7 @@ select{width:100%;font:inherit;font-size:.9rem;color:var(--text);background:var(
     return Promise.all([T("status"), K("status")]).then(function (rs) {
       var a = rs[0], b = rs[1];
       if (a.errno !== 0 || a.stdout.indexOf("enabled=") < 0) {
-        if (recoveryLock) setMsg(recoveryMessage || "Frequency restore/apply failure. All controls are locked except Reset everything.", "err");
+        if (recoveryLock) setMsg(recoveryText(), "err");
         else setMsg((a.stderr || a.stdout || "Could not read the phone state.").trim(), "err");
         return false;
       }
@@ -409,7 +416,7 @@ select{width:100%;font:inherit;font-size:.9rem;color:var(--text);background:var(
       if (kp && kp.mode === "?") kp = null;
       render();
       if (recoveryLock) {
-        setMsg(recoveryMessage || "Frequency restore/apply failure. All controls are locked except Reset everything.", "err");
+        setMsg(recoveryText(), "err");
       } else if (st.cfg_error === "1") {
         setMsg("The saved settings are unreadable or invalid. Current CPU/GPU limits may still reflect a previously applied preset, and the saved choices are unavailable. Choose a preset to replace the saved settings.", "err");
       } else if (!quiet) setMsg("", "");
@@ -420,12 +427,12 @@ select{width:100%;font:inherit;font-size:.9rem;color:var(--text);background:var(
   function act(cmdLine, okText, isKernel) {
     if (busy || isCoolingDown()) return;
     if (recoveryLock && cmdLine !== "resetall") {
-      setMsg(recoveryMessage || "Frequency restore/apply failure. All controls are locked except Reset everything.", "err");
+      setMsg(recoveryText(), "err");
       return;
     }
     var profileAction = cmdLine === "resetall" || /^preset (stock|tilt|saver)$/.test(cmdLine);
     var succeeded = false, refreshed = false, notice = okText, noticeKind = "ok";
-    var frequencyFailure = false, warns = [], combined = "";
+    var frequencyFailure = false, warns = [], combined = "", wasLocked = recoveryLock;
     if (/^preset (stock|tilt|saver)$/.test(cmdLine)) {
       var targetPreset = cmdLine.slice("preset ".length);
       if (isBlockedDirectSwitch(targetPreset)) {
@@ -458,25 +465,23 @@ select{width:100%;font:inherit;font-size:.9rem;color:var(--text);background:var(
       return refresh(true).then(function (ok) { refreshed = ok === true; });
     }).then(function () {
       if (recoveryLock) {
-        if (cmdLine === "resetall" && succeeded && !frequencyFailure && warns.length === 0 &&
-            refreshed && st && st.cfg_error !== "1") {
+        /* Reset everything that ends without an error and without a frequency-failure message, with a fresh
+           status read, is a clean recovery. Other warnings (for example "not recorded yet") do not keep the
+           lock: the lock is stored, so one that could never clear would lock the page for good. They are shown. */
+        if (cmdLine === "resetall" && succeeded && !frequencyFailure && refreshed && st && st.cfg_error !== "1") {
           recoveryLock = false;
           recoveryMessage = "";
+          recoveryLatest = "";
           persistRecoveryLock();
-          startProfileCooldown("Reset everything succeeded.", "ok");
+          startProfileCooldown("Reset everything succeeded." + (warns.length ? " Warning:\n" + warns.join("\n") : ""), warns.length ? "warn" : "ok");
         } else {
-          if (cmdLine === "resetall") {
+          if (cmdLine === "resetall" && wasLocked) {
             var resetDetails = diagnosticLines(combined);
-            if (resetDetails) {
-              recoveryMessage += "\n\nLatest Reset everything response:\n" + resetDetails;
-            } else if (!succeeded || !refreshed || !st || st.cfg_error === "1") {
-              recoveryMessage += "\n\nReset everything has not been confirmed successful. The recovery lock remains active; retry Reset everything.";
-            } else if (warns.length) {
-              recoveryMessage += "\n\nReset everything returned warnings, so the recovery lock remains active:\n" + warns.join("\n");
-            }
-            persistRecoveryLock();
+            recoveryLatest = resetDetails
+              ? "Latest Reset everything response:\n" + resetDetails
+              : "Reset everything has not been confirmed successful. The recovery lock remains active; retry Reset everything.";
           }
-          setMsg(recoveryMessage || "Frequency restore/apply failure. All controls are locked except Reset everything.", "err");
+          setMsg(recoveryText(), "err");
         }
       } else if (succeeded && profileAction && refreshed && st && st.cfg_error !== "1") {
         startProfileCooldown(notice, noticeKind);
@@ -484,9 +489,8 @@ select{width:100%;font:inherit;font-size:.9rem;color:var(--text);background:var(
       lockUI(false);
     }).catch(function (e) {
       if (recoveryLock) {
-        recoveryMessage += "\n\nThe request failed before recovery could be confirmed: " + String(e);
-        persistRecoveryLock();
-        setMsg(recoveryMessage, "err");
+        recoveryLatest = "The request failed before recovery could be confirmed: " + String(e);
+        setMsg(recoveryText(), "err");
       } else {
         setMsg("Operation failed: " + String(e), "err");
       }

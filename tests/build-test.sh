@@ -144,10 +144,16 @@ check "WebUI preserves engine warn/error lines in recovery notice" yes "$(grep -
 check "WebUI marks errors as assertive alerts" yes "$(grep -Fq 'm.setAttribute("role", kind === "err" ? "alert" : "status")' "$page" && grep -Fq 'm.setAttribute("aria-live", kind === "err" ? "assertive" : "polite")' "$page" && echo yes || echo no)"
 check "Recovery mode locks all controls except Reset everything" yes "$(grep -Fq 'recoveryLock && els[i].id !== "resetAll"' "$page" && grep -Fq 'recoveryLock && cmdLine !== "resetall"' "$page" && echo yes || echo no)"
 check "Recovery lock persists across WebUI reloads where storage is available" yes "$(grep -Fq 'window.localStorage.setItem(RECOVERY_LOCK_KEY, "1")' "$page" && grep -Fq 'window.localStorage.getItem(RECOVERY_LOCK_KEY)' "$page" && echo yes || echo no)"
-check "Only a clean, refreshed Reset everything clears recovery lock" yes "$(grep -Fq 'cmdLine === "resetall" && succeeded && !frequencyFailure && warns.length === 0' "$page" && grep -Fq 'refreshed && st && st.cfg_error !== "1"' "$page" && echo yes || echo no)"
-check "Reset recovery is followed by the eight-second cooldown" yes "$(grep -Fq 'startProfileCooldown("Reset everything succeeded.", "ok")' "$page" && echo yes || echo no)"
+check "Only a clean, refreshed Reset everything clears recovery lock" yes "$(grep -Fq 'cmdLine === "resetall" && succeeded && !frequencyFailure && refreshed && st && st.cfg_error !== "1"' "$page" && grep -Fq 'refreshed && st && st.cfg_error !== "1"' "$page" && echo yes || echo no)"
+check "Reset recovery is followed by the eight-second cooldown" yes "$(grep -Fq 'startProfileCooldown("Reset everything succeeded." + (warns.length' "$page" && echo yes || echo no)"
 check "Persisted recovery lock is applied before initial async requests" yes "$(grep -Fq 'Apply a persisted recovery lock before the first asynchronous status request.' "$page" && echo yes || echo no)"
-check "Readback failure keeps recovery notice visible" yes "$(grep -Fq 'if (recoveryLock) setMsg(recoveryMessage ||' "$page" && echo yes || echo no)"
+check "Readback failure keeps recovery notice visible" yes "$(grep -Fq 'if (recoveryLock) setMsg(recoveryText(), "err")' "$page" && echo yes || echo no)"
+# Behaviour of the page's failure detection against the engine's real messages (needs node; CI has it).
+if command -v node >/dev/null 2>&1; then
+  node "$HERE/webui-test.js" "$page"; check "WebUI behaviour tests (node)" 0 $?
+else
+  echo "skip WebUI behaviour tests (node is not installed here; CI runs them)"
+fi
 rm -rf "$T/real"; mkdir -p "$T/real/module"; cp "$HERE/../build.sh" "$HERE/../CHANGELOG.md" "$T/real/"; cp -r "$HERE/../module/." "$T/real/module/"
 ( cd "$T/real" && sh build.sh >/dev/null 2>&1 ); check "real repo builds" 0 $?
 
