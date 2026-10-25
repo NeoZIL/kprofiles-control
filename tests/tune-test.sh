@@ -271,7 +271,7 @@ runsvc
 check "Battery active, earlier record: the saved kernel profile IS applied" 3 "$(v kp/kp_mode)"
 
 echo "--- boot: no usable frequency value can be read at all ---"
-blank() { for bf in $(find "$T/cpufreq" "$T/gpu" -type f 2>/dev/null); do : > "$bf"; done; }   # every node reads empty
+blank() { find "$T/cpufreq" "$T/gpu" -type f -exec sh -c 'for bf do : > "$bf"; done' sh {} + 2>/dev/null; }   # every node reads empty
 mkfake; blank
 S boot >/dev/null; rc=$?
 check "all reads empty, no record: tune.sh boot exits 2" 2 "$rc"
@@ -607,7 +607,7 @@ stubborn() { # a stand-in watcher that ignores TERM; its pid file names it
   mkfake; mkdir -p "$T/cfg" "$T/stub"
   printf 'trap "" TERM\nwhile :; do sleep 1; done\n' > "$T/stub/tune.sh"
   S preset tilt >/dev/null
-  sh "$T/stub/tune.sh" daemon & stubp=$!
+  sh "$T/stub/tune.sh" daemon >/dev/null 2>&1 & stubp=$!
   echo "$stubp" > "$T/cfg/daemon.pid"; sleep 1
 }
 stubborn
