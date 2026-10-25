@@ -134,6 +134,20 @@ done
 warning=$(grep -F 'The saved settings are unreadable or invalid.' "$HERE/../module/webroot/index.html")
 check "corrupt settings UI warns current limits may remain" 1 "$(printf '%s\n' "$warning" | grep -c 'may still reflect a previously applied preset')"
 check "corrupt settings UI does not claim no limits are applied" 0 "$(printf '%s\n' "$warning" | grep -c 'nothing is applied')"
+page="$HERE/../module/webroot/index.html"
+check "WebUI preset cooldown is eight seconds" 1 "$(grep -Fc 'PROFILE_COOLDOWN_MS = 8000' "$page")"
+check "WebUI blocks direct Tilt-to-Saver and Saver-to-Tilt switching" yes "$(grep -Fq 'st.preset === "tilt" && target === "saver"' "$page" && grep -Fq 'st.preset === "saver" && target === "tilt"' "$page" && echo yes || echo no)"
+check "WebUI explains Stock or Reset as the required bridge" yes "$(grep -Fq 'Select Stock or Reset everything first' "$page" && echo yes || echo no)"
+check "WebUI cooldown starts only after successful profile action" yes "$(grep -Fq 'succeeded && profileAction && refreshed && st && st.cfg_error !== "1"' "$page" && echo yes || echo no)"
+check "WebUI recognizes kernel-reported frequency mismatches" yes "$(grep -Fq 'function isFrequencyMismatch(text)' "$page" && grep -Fq 'kernel says' "$page" && grep -Fq 'the kernel did not take these limits' "$page" && grep -Fq 'restore refused by the kernel' "$page" && echo yes || echo no)"
+check "WebUI preserves engine warn/error lines in recovery notice" yes "$(grep -Fq 'function diagnosticLines(text)' "$page" && grep -Fq 'FREQUENCY RESTORE / APPLY FAILURE' "$page" && echo yes || echo no)"
+check "WebUI marks errors as assertive alerts" yes "$(grep -Fq 'm.setAttribute("role", kind === "err" ? "alert" : "status")' "$page" && grep -Fq 'm.setAttribute("aria-live", kind === "err" ? "assertive" : "polite")' "$page" && echo yes || echo no)"
+check "Recovery mode locks all controls except Reset everything" yes "$(grep -Fq 'recoveryLock && els[i].id !== "resetAll"' "$page" && grep -Fq 'recoveryLock && cmdLine !== "resetall"' "$page" && echo yes || echo no)"
+check "Recovery lock persists across WebUI reloads where storage is available" yes "$(grep -Fq 'window.localStorage.setItem(RECOVERY_LOCK_KEY, "1")' "$page" && grep -Fq 'window.localStorage.getItem(RECOVERY_LOCK_KEY)' "$page" && echo yes || echo no)"
+check "Only a clean, refreshed Reset everything clears recovery lock" yes "$(grep -Fq 'cmdLine === "resetall" && succeeded && !frequencyFailure && warns.length === 0' "$page" && grep -Fq 'refreshed && st && st.cfg_error !== "1"' "$page" && echo yes || echo no)"
+check "Reset recovery is followed by the eight-second cooldown" yes "$(grep -Fq 'startProfileCooldown("Reset everything succeeded.", "ok")' "$page" && echo yes || echo no)"
+check "Persisted recovery lock is applied before initial async requests" yes "$(grep -Fq 'Apply a persisted recovery lock before the first asynchronous status request.' "$page" && echo yes || echo no)"
+check "Readback failure keeps recovery notice visible" yes "$(grep -Fq 'if (recoveryLock) setMsg(recoveryMessage ||' "$page" && echo yes || echo no)"
 rm -rf "$T/real"; mkdir -p "$T/real/module"; cp "$HERE/../build.sh" "$HERE/../CHANGELOG.md" "$T/real/"; cp -r "$HERE/../module/." "$T/real/module/"
 ( cd "$T/real" && sh build.sh >/dev/null 2>&1 ); check "real repo builds" 0 $?
 

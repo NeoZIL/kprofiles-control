@@ -1,5 +1,15 @@
 # Changelog
 
+## v1.4.4
+WebUI-only guardrails for profile switching. The tuning engine and kernel-profile scripts are unchanged.
+- UX: **Battery tilt and Battery saver cannot be selected directly from one another in the WebUI.** Select Stock or Reset everything first; that neutral step returns the UI to a state where either preset can be chosen.
+- UX: after a successful preset application or Reset everything operation, all WebUI controls remain greyed out for 8 seconds. The existing result notice includes a live countdown telling the user when controls can be used again.
+- UX: when the existing engine reports a CPU/GPU frequency mismatch or restore refusal, the page preserves and prominently displays the existing `warn:`/`error:` detail, enters a recovery-only lock, and disables all controls except **Reset everything**. The recovery lock persists across WebUI reloads when browser storage is available.
+- UX: the recovery lock clears only after Reset everything returns cleanly, a fresh status read succeeds, and the settings are not reported invalid; all controls then remain paused for the normal 8-second cooldown. Failed or warning-producing reset attempts leave the recovery lock in place and show the returned details.
+- Scope: these are superficial WebUI safeguards only. They do not poll frequency nodes, serialize operations, or prevent changes issued through ADB or another interface. The tuning engine, kernel-profile scripts, watcher timing, frequency application, locking, and restore behavior are unchanged. The lock responds to reported failures; it cannot detect a silent mismatch that the engine does not report.
+- Tests: add build-test checks for cooldown, bridge rule, frequency-error recognition, preserving notices, recovery lock except Reset everything, persistence, and clean-reset-only unlock.
+- Version: v1.4.4, versionCode 21.
+
 ## v1.4.3
 A re-read of v1.4.2 found three smaller problems. None was seen on a phone.
 - Fix: **Stop could signal a process that is not the watcher.** The check for "is the watcher running" only

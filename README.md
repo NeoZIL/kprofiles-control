@@ -183,13 +183,16 @@ uses) and busybox ash, and checks that a pushed tag matches the `version` in
 
 ## Status
 
-v1.0, v1.1 and v1.1.4 are confirmed working by the author on a POCO F6 (`peridot`) with the
-Theettam 6.1.176 kernel and KernelSU-Next 3.4.2. v1.4.3 is covered by off-device tests (script
-logic against a fake copy of the phone's frequency tables, run in CI under dash, mksh and busybox
-ash, and the page in a simulated browser) and has not been tried on the phone yet; the same goes
-for v1.1.5 to v1.4.2. Android or Xiaomi services may override some
-values. Every write is checked and the page shows a warning if the kernel did not accept
-it. Please open an issue with that message.
+v1.0, v1.1 and v1.1.4 were confirmed working by the author on a POCO F6 (`peridot`) with the
+Theettam 6.1.176 kernel and KernelSU-Next 3.4.2. v1.4.3 has had on-device checks for boot, Tilt,
+Stock restoration, screen transitions, and preset switching; intermittent historical kernel restore
+refusals were observed and their cause remains unconfirmed. v1.4.4 adds WebUI-only switching,
+8-second cooldown, and recovery-lock guardrails; it has not yet been tested on the phone. The page
+shows the engine's warning/error text and leaves only Reset everything available after a reported
+frequency restore/apply mismatch. This is a UI safeguard, not an engine fix, and it cannot detect a
+silent mismatch the engine does not report. Android or Xiaomi services may override some values.
+Every write is checked and the page shows a warning if the kernel did not accept it. Please open an
+issue with that message.
 
 ## License
 

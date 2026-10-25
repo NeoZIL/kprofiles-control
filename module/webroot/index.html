@@ -99,6 +99,7 @@ select{width:100%;font:inherit;font-size:.9rem;color:var(--text);background:var(
       </button>
     </div>
     <p class="hint" id="customNote" style="margin:10px 0 0;display:none">You have custom values, so no preset is highlighted.</p>
+    <p class="hint" id="profileRuleNote" role="status" aria-live="polite" style="margin:10px 0 0">To switch between Battery tilt and Battery saver, select Stock or Reset everything first. All controls pause for 8 seconds after a successful profile change.</p>
     <button class="opt" id="resetAll" style="margin-top:10px">
       <span class="t">Reset everything</span>
       <span class="d">Stock limits and the kernel profile set to None.</span>
@@ -167,9 +168,109 @@ select{width:100%;font:inherit;font-size:.9rem;color:var(--text);background:var(
     ["gpu", "GPU", ""]
   ];
   var busy = false, lists = null, st = null, kp = null;
+  var PROFILE_COOLDOWN_MS = 8000, cooldownUntil = 0, cooldownTimer = null;
+  var cooldownMessage = "", cooldownKind = "ok";
+  var RECOVERY_LOCK_KEY = "kprofiles-ui-frequency-recovery-v1";
+  var RECOVERY_MESSAGE_KEY = "kprofiles-ui-frequency-recovery-message-v1";
+  var recoveryLock = false, recoveryMessage = "";
+  try {
+    recoveryLock = window.localStorage.getItem(RECOVERY_LOCK_KEY) === "1";
+    recoveryMessage = window.localStorage.getItem(RECOVERY_MESSAGE_KEY) || "";
+  } catch (e) { /* Storage may be unavailable in some manager WebViews. */ }
 
   function $(id) { return document.getElementById(id); }
-  function setMsg(text, kind) { var m = $("msg"); m.textContent = text || ""; m.className = kind || ""; }
+  function setMsg(text, kind) {
+    var m = $("msg");
+    m.textContent = text || "";
+    m.className = kind || "";
+    m.setAttribute("role", kind === "err" ? "alert" : "status");
+    m.setAttribute("aria-live", kind === "err" ? "assertive" : "polite");
+  }
+  function isCoolingDown() { return Date.now() < cooldownUntil; }
+  function persistRecoveryLock() {
+    try {
+      if (recoveryLock) {
+        window.localStorage.setItem(RECOVERY_LOCK_KEY, "1");
+        window.localStorage.setItem(RECOVERY_MESSAGE_KEY, recoveryMessage);
+      } else {
+        window.localStorage.removeItem(RECOVERY_LOCK_KEY);
+        window.localStorage.removeItem(RECOVERY_MESSAGE_KEY);
+      }
+    } catch (e) { /* Keep the in-page lock even if storage is unavailable. */ }
+  }
+  function diagnosticLines(text) {
+    return String(text || "").split(/\r?\n/).map(function (line) { return line.trim(); })
+      .filter(function (line) { return /^(warn|error):/i.test(line); }).join("\n");
+  }
+  function isFrequencyMismatch(text) {
+    return /kernel says\s+\d+/i.test(text) ||
+      /could not put .*value(?:s)? back/i.test(text) ||
+      /could not be put back/i.test(text) ||
+      /did not take the requested limit/i.test(text) ||
+      /the kernel did not take these limits/i.test(text) ||
+      /not every limit could be applied/i.test(text) ||
+      /restore refused by the kernel/i.test(text) ||
+      /frequency.{0,40}(?:mismatch|refus|fail|could not|unable)/i.test(text) ||
+      /(?:little|big|prime|gpu)_(?:min|max).{0,100}(?:kernel says|mismatch|refus|could not|did not take)/i.test(text);
+  }
+  function enterRecoveryMode(details) {
+    recoveryLock = true;
+    recoveryMessage = "FREQUENCY RESTORE / APPLY FAILURE\n" +
+      "Kprofiles reported that a CPU/GPU frequency limit did not match the requested value or could not be restored.\n" +
+      (details || "The engine reported a frequency mismatch.") + "\n" +
+      "All controls are locked except Reset everything. Run Reset everything to recover. If it reports another error, keep this page open and retry Reset everything.";
+    persistRecoveryLock();
+    setMsg(recoveryMessage, "err");
+  }
+  function isBlockedDirectSwitch(target) {
+    return !!st && ((st.preset === "tilt" && target === "saver") ||
+      (st.preset === "saver" && target === "tilt"));
+  }
+  function syncControlLocks() {
+    var disabled = busy || isCoolingDown();
+    var els = document.querySelectorAll(".opt, input, select");
+    for (var i = 0; i < els.length; i++) {
+      var target = els[i].getAttribute("data-preset");
+      var bridgeBlocked = target && isBlockedDirectSwitch(target);
+      var recoveryBlocked = recoveryLock && els[i].id !== "resetAll";
+      els[i].disabled = disabled || !!bridgeBlocked || recoveryBlocked;
+      if (recoveryBlocked) els[i].title = "Frequency error recovery is active. Use Reset everything.";
+      else if (bridgeBlocked) els[i].title = "Switch to Stock or use Reset everything before selecting this profile.";
+      else if (els[i].hasAttribute && (els[i].hasAttribute("data-preset") || els[i].id === "resetAll")) els[i].removeAttribute("title");
+    }
+    var note = $("profileRuleNote");
+    if (note) {
+      if (st && st.preset === "tilt") {
+        note.textContent = "Battery saver is locked while Battery tilt is active. Select Stock or Reset everything first. After a successful profile change, all controls pause for 8 seconds.";
+      } else if (st && st.preset === "saver") {
+        note.textContent = "Battery tilt is locked while Battery saver is active. Select Stock or Reset everything first. After a successful profile change, all controls pause for 8 seconds.";
+      } else {
+        note.textContent = "To switch between Battery tilt and Battery saver, select Stock or Reset everything first. All controls pause for 8 seconds after a successful profile change.";
+      }
+      if (recoveryLock) note.textContent = "Frequency restore/apply error detected. All controls are locked except Reset everything. After recovery succeeds, controls remain paused for 8 seconds.";
+    }
+  }
+  function startProfileCooldown(message, kind) {
+    if (cooldownTimer) clearInterval(cooldownTimer);
+    cooldownMessage = message || "Profile applied.";
+    cooldownKind = kind || "ok";
+    cooldownUntil = Date.now() + PROFILE_COOLDOWN_MS;
+    function tick() {
+      var seconds = Math.max(0, Math.ceil((cooldownUntil - Date.now()) / 1000));
+      if (seconds <= 0) {
+        clearInterval(cooldownTimer);
+        cooldownTimer = null;
+        cooldownUntil = 0;
+        syncControlLocks();
+        setMsg(cooldownMessage, cooldownKind);
+        return;
+      }
+      syncControlLocks();
+      setMsg(cooldownMessage + " Please wait " + seconds + " second" + (seconds === 1 ? "" : "s") + " before changing profiles.", cooldownKind);
+    }
+    tick();
+    cooldownTimer = setInterval(tick, 200);
+  }
 
   function exec(cmd) {
     return new Promise(function (resolve) {
@@ -212,8 +313,7 @@ select{width:100%;font:inherit;font-size:.9rem;color:var(--text);background:var(
 
   function lockUI(on) {
     busy = on;
-    var els = document.querySelectorAll(".opt, input, select");
-    for (var i = 0; i < els.length; i++) els[i].disabled = on;
+    syncControlLocks();
   }
 
   /* ---------- build the pickers once ---------- */
@@ -293,42 +393,105 @@ select{width:100%;font:inherit;font-size:.9rem;color:var(--text);background:var(
       }
       $("swKpPersist").checked = kp.persist === "1";
     }
+    syncControlLocks();
   }
 
   function refresh(quiet) {
     return Promise.all([T("status"), K("status")]).then(function (rs) {
       var a = rs[0], b = rs[1];
       if (a.errno !== 0 || a.stdout.indexOf("enabled=") < 0) {
-        setMsg((a.stderr || a.stdout || "Could not read the phone state.").trim(), "err");
-        return;
+        if (recoveryLock) setMsg(recoveryMessage || "Frequency restore/apply failure. All controls are locked except Reset everything.", "err");
+        else setMsg((a.stderr || a.stdout || "Could not read the phone state.").trim(), "err");
+        return false;
       }
       st = kv(a.stdout);
       kp = (b.errno === 0 && /mode=/.test(b.stdout)) ? kv(b.stdout.replace(/ /g, "\n")) : null;
       if (kp && kp.mode === "?") kp = null;
       render();
-      if (st.cfg_error === "1") {
+      if (recoveryLock) {
+        setMsg(recoveryMessage || "Frequency restore/apply failure. All controls are locked except Reset everything.", "err");
+      } else if (st.cfg_error === "1") {
         setMsg("The saved settings are unreadable or invalid. Current CPU/GPU limits may still reflect a previously applied preset, and the saved choices are unavailable. Choose a preset to replace the saved settings.", "err");
       } else if (!quiet) setMsg("", "");
+      return true;
     });
   }
 
   function act(cmdLine, okText, isKernel) {
-    if (busy) return;
+    if (busy || isCoolingDown()) return;
+    if (recoveryLock && cmdLine !== "resetall") {
+      setMsg(recoveryMessage || "Frequency restore/apply failure. All controls are locked except Reset everything.", "err");
+      return;
+    }
+    var profileAction = cmdLine === "resetall" || /^preset (stock|tilt|saver)$/.test(cmdLine);
+    var succeeded = false, refreshed = false, notice = okText, noticeKind = "ok";
+    var frequencyFailure = false, warns = [], combined = "";
+    if (/^preset (stock|tilt|saver)$/.test(cmdLine)) {
+      var targetPreset = cmdLine.slice("preset ".length);
+      if (isBlockedDirectSwitch(targetPreset)) {
+        setMsg("Direct switching between Battery tilt and Battery saver is disabled. Select Stock or Reset everything first.", "warn");
+        return;
+      }
+    }
     lockUI(true);
     setMsg("Working…", "");
     (isKernel ? K(cmdLine) : T(cmdLine)).then(function (r) {
       var out = (r.stdout || "").trim();
-      var failed = r.errno !== 0 || /^error:/m.test(out);
-      var warns = out.split("\n").filter(function (l) { return /^warn:/.test(l); });
-      if (failed) {
-        setMsg((out || r.stderr || "That did not work.").trim(), "err");
+      combined = [r.stdout || "", r.stderr || ""].filter(function (s) { return !!String(s).trim(); }).join("\n").trim();
+      var failed = r.errno !== 0 || /^error:/m.test(combined);
+      warns = combined.split(/\r?\n/).filter(function (l) { return /^warn:/i.test(l.trim()); });
+      frequencyFailure = !isKernel && isFrequencyMismatch(combined);
+      if (frequencyFailure) {
+        succeeded = false;
+        enterRecoveryMode(diagnosticLines(combined) || combined || out || "The frequency change was not confirmed.");
+      } else if (failed) {
+        setMsg((combined || "That did not work.").trim(), "err");
       } else if (warns.length) {
-        setMsg("Applied, with a warning:\n" + warns.join("\n"), "warn");
+        notice = "Applied, with a warning:\n" + warns.join("\n");
+        noticeKind = "warn";
+        succeeded = true;
+        setMsg(notice, noticeKind);
       } else {
+        succeeded = true;
         setMsg(okText, "ok");
       }
-      return refresh(true);
-    }).then(function () { lockUI(false); });
+      return refresh(true).then(function (ok) { refreshed = ok === true; });
+    }).then(function () {
+      if (recoveryLock) {
+        if (cmdLine === "resetall" && succeeded && !frequencyFailure && warns.length === 0 &&
+            refreshed && st && st.cfg_error !== "1") {
+          recoveryLock = false;
+          recoveryMessage = "";
+          persistRecoveryLock();
+          startProfileCooldown("Reset everything succeeded.", "ok");
+        } else {
+          if (cmdLine === "resetall") {
+            var resetDetails = diagnosticLines(combined);
+            if (resetDetails) {
+              recoveryMessage += "\n\nLatest Reset everything response:\n" + resetDetails;
+            } else if (!succeeded || !refreshed || !st || st.cfg_error === "1") {
+              recoveryMessage += "\n\nReset everything has not been confirmed successful. The recovery lock remains active; retry Reset everything.";
+            } else if (warns.length) {
+              recoveryMessage += "\n\nReset everything returned warnings, so the recovery lock remains active:\n" + warns.join("\n");
+            }
+            persistRecoveryLock();
+          }
+          setMsg(recoveryMessage || "Frequency restore/apply failure. All controls are locked except Reset everything.", "err");
+        }
+      } else if (succeeded && profileAction && refreshed && st && st.cfg_error !== "1") {
+        startProfileCooldown(notice, noticeKind);
+      }
+      lockUI(false);
+    }).catch(function (e) {
+      if (recoveryLock) {
+        recoveryMessage += "\n\nThe request failed before recovery could be confirmed: " + String(e);
+        persistRecoveryLock();
+        setMsg(recoveryMessage, "err");
+      } else {
+        setMsg("Operation failed: " + String(e), "err");
+      }
+      lockUI(false);
+    });
   }
 
   /* ---------- wiring ---------- */
@@ -337,6 +500,10 @@ select{width:100%;font:inherit;font-size:.9rem;color:var(--text);background:var(
     if (!b) return;
     var p = b.getAttribute("data-preset");
     var names = { stock: "Stock", tilt: "Battery tilt", saver: "Battery saver" };
+    if (isBlockedDirectSwitch(p)) {
+      setMsg("Direct switching between Battery tilt and Battery saver is disabled. Select Stock or Reset everything first.", "warn");
+      return;
+    }
     act("preset " + p, names[p] + " applied.");
   });
   $("resetAll").addEventListener("click", function () {
@@ -360,6 +527,9 @@ select{width:100%;font:inherit;font-size:.9rem;color:var(--text);background:var(
     var on = $("swKpPersist").checked;
     act("persist " + (on ? "1" : "0"), on ? "Kernel profile will be kept after reboot." : "Kernel profile will not be kept.", true);
   });
+
+  /* Apply a persisted recovery lock before the first asynchronous status request. */
+  syncControlLocks();
 
   /* ---------- start ---------- */
   exec("tr -d '\\r' < " + BASE + "module.prop | sed -n 's/^version=//p' | head -n 1").then(function (r) {
