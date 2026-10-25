@@ -42,15 +42,51 @@ rd() { cat "$1" 2>/dev/null; }
 wr() { { echo "$2" > "$1"; } 2>/dev/null; }
 
 # ---------- config ----------
-# A settings file that exists but cannot be read or parsed is NOT the same as "no settings": CFG_BAD is
-# set, the defaults (disabled) are loaded, and callers that would change anything refuse to go on.
+# A settings file that exists but cannot be read, parsed, or validated is NOT the same as "no settings":
+# CFG_BAD is set, safe defaults are loaded, and callers that would change anything refuse to go on.
 # (The dot command aborts a whole script when its file cannot be read, so it is tried in a subshell first.)
-NOREAD="error: the saved settings at $CFG cannot be read, so nothing was changed (set a preset to write them again)"
+cfg_reset() {
+  ENABLED=0; SCREENOFF=1; PRESET=stock
+  for cv_s in ON OFF; do for cv_c in LITTLE BIG PRIME GPU; do for cv_k in MIN MAX; do eval "${cv_s}_${cv_c}_${cv_k}="; done; done; done
+}
+cfg_values_valid() {
+  case "$ENABLED" in 0|1) ;; *) return 1 ;; esac
+  case "$SCREENOFF" in 0|1) ;; *) return 1 ;; esac
+  case "$PRESET" in stock|tilt|saver|custom) ;; *) return 1 ;; esac
+  for cv_s in ON OFF; do for cv_cu in LITTLE BIG PRIME GPU; do
+    cv_c=$(lower "$cv_cu")
+    eval "cv_min=\${${cv_s}_${cv_cu}_MIN:-}"; eval "cv_max=\${${cv_s}_${cv_cu}_MAX:-}"
+    for cv_k in MIN MAX; do
+      eval "cv_val=\${${cv_s}_${cv_cu}_${cv_k}:-}"
+      [ -n "$cv_val" ] || continue
+      case "$cv_val" in *[!0-9]*) return 1 ;; esac
+      [ "$cv_val" -gt 0 ] 2>/dev/null || return 1
+    done
+    if [ -n "$cv_min" ] && [ -n "$cv_max" ] && [ "$cv_min" -gt "$cv_max" ] 2>/dev/null; then return 1; fi
+  done; done
+  return 0
+}
+# This checks the current kernel lists separately from basic config parsing. Status and Apply need the full
+# check; the screen watcher does it only when reasserting/changing limits, not on every polling iteration.
+cfg_values_available() {
+  for cv_s in ON OFF; do for cv_cu in LITTLE BIG PRIME GPU; do
+    cv_c=$(lower "$cv_cu")
+    for cv_k in MIN MAX; do
+      eval "cv_val=\${${cv_s}_${cv_cu}_${cv_k}:-}"
+      [ -n "$cv_val" ] || continue
+      if [ -e "$(node "$cv_c" max)" ]; then list_has "$cv_c" "$cv_val" || return 1; fi
+    done
+  done; done
+  return 0
+}
+NOREAD="error: the saved settings at $CFG cannot be read or validated, so nothing was changed (set a preset to write them again)"
 load_cfg() {
-  ENABLED=0; SCREENOFF=1; PRESET=stock; CFG_BAD=""
+  cfg_reset; CFG_BAD=""
   if [ -e "$CFG" ]; then
     if [ -f "$CFG" ] && ( . "$CFG" ) >/dev/null 2>&1; then . "$CFG"; else CFG_BAD=1; fi
   fi
+  if [ -z "$CFG_BAD" ] && ! cfg_values_valid; then CFG_BAD=1; fi
+  [ -z "$CFG_BAD" ] || cfg_reset
   return 0
 }
 # cfg_put KEY VALUE [KEY VALUE ...]: saves one or more settings in ONE replace of the config file, or
@@ -357,7 +393,17 @@ want_state() { load_cfg; if [ "$SCREENOFF" = 1 ]; then screen_state; else echo o
 daemon_alive() {
   [ -f "$PIDF" ] || return 1
   dp=$(cat "$PIDF" 2>/dev/null); [ -n "$dp" ] || return 1
-  kill -0 "$dp" 2>/dev/null && grep -q "tune.sh" "/proc/$dp/cmdline" 2>/dev/null
+  kill -0 "$dp" 2>/dev/null || return 1
+  # Match the script path, daemon argument, and module folder for THIS module. Do not match only the
+  # basename: another module can also run tune.sh, and a reused PID must never be signalled by Stop.
+  md=$(abs_moddir)
+  dcmd=$({ tr '\0' '\n' < "/proc/$dp/cmdline"; } 2>/dev/null) || return 1
+  # argv[0] varies by shell (sh, dash, mksh, or an Android shell path); the remaining three arguments
+  # are the identity we control: this exact tune.sh, the word daemon, and this exact module folder.
+  dargs=$(printf '%s\n' "$dcmd" | sed '1d')
+  expected=$(printf '%s/tune.sh\ndaemon\n%s' "$md" "$md")
+  [ "$dargs" = "$expected" ] && return 0
+  return 1
 }
 tick() { sleep 0.1 2>/dev/null || sleep 1; }   # a tenth of a second where sleep allows it
 # Start and stop take one lock, so two callers can never start, or stop, a watcher at the same time.
@@ -472,6 +518,10 @@ run_daemon() {
         [ -n "$dg_logged" ] || log_msg "watcher $$: no usable record of the phone's own values while limits are in place, not changing any more limits"
         dg_logged=1; n=0
       else
+        if ! cfg_values_available; then
+          log_msg "watcher $$: a saved frequency is not available on this phone, handing the limits back"
+          apply_none_logged; break
+        fi
         dg_logged=""; apply_state "$st" >/dev/null; last=$st; n=0
       fi
     fi
@@ -498,6 +548,11 @@ cmd_apply() {
   ca_rc=0
   load_cfg
   [ -z "$CFG_BAD" ] || { echo "$NOREAD"; return 1; }
+  if ! cfg_values_available; then
+    CFG_BAD=1; cfg_reset
+    log_msg "apply refused: a saved frequency is not available on this phone"
+    echo "$NOREAD"; return 1
+  fi
   if [ "$ENABLED" = 1 ]; then
     capture_defaults; ca_cd=$?
     if [ "$ca_cd" != 0 ] && ! have_def; then
@@ -662,6 +717,10 @@ cmd_lists() { for c in $CLUSTERS; do echo "$c=$(rd "$(avail_node $c)")"; done; }
 cmd_status() {
   capture_defaults
   load_cfg
+  if [ -z "$CFG_BAD" ] && ! cfg_values_available; then CFG_BAD=1; cfg_reset; fi
+  # A settings file that exists but cannot be read or validated shows up as safe defaults below (disabled,
+  # stock), which is NOT the same as "no settings": cfg_error=1 tells the page to warn instead of looking normal.
+  [ -z "$CFG_BAD" ] || echo "cfg_error=1"
   echo "enabled=$ENABLED"; echo "screenoff=$SCREENOFF"; echo "preset=$PRESET"
   echo "screen=$(screen_state)"; echo "state=$(want_state)"; echo "bl=$(rd "$BL")"
   if daemon_alive; then echo "daemon=1"; else echo "daemon=0"; fi

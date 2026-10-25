@@ -1,2 +1,10 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+# Scripts and the module's own files must have LF line endings in every checkout, also on Windows:
+# a CRLF in a shell script or in module.prop breaks the module on Android.
+*.sh text eol=lf
+*.prop text eol=lf
+*.html text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+*.yml text eol=lf

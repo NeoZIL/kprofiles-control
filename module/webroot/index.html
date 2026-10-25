@@ -306,7 +306,9 @@ select{width:100%;font:inherit;font-size:.9rem;color:var(--text);background:var(
       kp = (b.errno === 0 && /mode=/.test(b.stdout)) ? kv(b.stdout.replace(/ /g, "\n")) : null;
       if (kp && kp.mode === "?") kp = null;
       render();
-      if (!quiet) setMsg("", "");
+      if (st.cfg_error === "1") {
+        setMsg("The saved settings are unreadable or invalid. Current CPU/GPU limits may still reflect a previously applied preset, and the saved choices are unavailable. Choose a preset to replace the saved settings.", "err");
+      } else if (!quiet) setMsg("", "");
     });
   }
 

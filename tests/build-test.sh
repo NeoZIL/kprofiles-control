@@ -127,6 +127,13 @@ cmp -s "$T/first.zip" "$T/r/dist/Kprofiles-Control-v2.3.4.zip"; check "zip is re
 # The real module must point at a manifest that matches the real build.
 real=$(tr -d '\r' < "$HERE/../module/module.prop")
 check "real module.prop has updateJson" 1 "$(printf '%s\n' "$real" | grep -c '^updateJson=https://github.com/.*/releases/latest/download/update.json$')"
+# Scripts and module.prop keep LF line endings in every checkout (a CRLF breaks them on Android).
+for pat in '*.sh text eol=lf' '*.prop text eol=lf' '*.html text eol=lf' '*.json text eol=lf' '*.md text eol=lf' '*.yml text eol=lf'; do
+  check ".gitattributes forces LF for: $pat" 1 "$(grep -cxF "$pat" "$HERE/../.gitattributes")"
+done
+warning=$(grep -F 'The saved settings are unreadable or invalid.' "$HERE/../module/webroot/index.html")
+check "corrupt settings UI warns current limits may remain" 1 "$(printf '%s\n' "$warning" | grep -c 'may still reflect a previously applied preset')"
+check "corrupt settings UI does not claim no limits are applied" 0 "$(printf '%s\n' "$warning" | grep -c 'nothing is applied')"
 rm -rf "$T/real"; mkdir -p "$T/real/module"; cp "$HERE/../build.sh" "$HERE/../CHANGELOG.md" "$T/real/"; cp -r "$HERE/../module/." "$T/real/module/"
 ( cd "$T/real" && sh build.sh >/dev/null 2>&1 ); check "real repo builds" 0 $?
 

@@ -271,7 +271,10 @@ runsvc
 check "Battery active, earlier record: the saved kernel profile IS applied" 3 "$(v kp/kp_mode)"
 
 echo "--- boot: no usable frequency value can be read at all ---"
-blank() { find "$T/cpufreq" "$T/gpu" -type f -exec sh -c 'for bf do : > "$bf"; done' sh {} + 2>/dev/null; }   # every node reads empty
+blank() {
+  # shellcheck disable=SC2016
+  find "$T/cpufreq" "$T/gpu" -type f -exec sh -c 'for bf do : > "$bf"; done' sh {} + 2>/dev/null
+}   # every node reads empty
 mkfake; blank
 S boot >/dev/null; rc=$?
 check "all reads empty, no record: tune.sh boot exits 2" 2 "$rc"
@@ -443,12 +446,19 @@ w=$(cat "$T/cfg/daemon.pid"); echo 4242424 > "$T/cfg/daemon.pid"        # anothe
 kill "$w"; sleep 1
 check "foreign pid file survives the old watcher's exit" 4242424 "$(cat "$T/cfg/daemon.pid" 2>/dev/null)"
 rm -f "$T/cfg/daemon.pid"
-echo "--- a stale pid file never makes stop signal an unrelated process ---"
-sleep 300 & bystander=$!
-mkfake; mkdir -p "$T/cfg"; echo "$bystander" > "$T/cfg/daemon.pid"
+echo "--- a stale pid file never makes stop signal an unrelated tune.sh daemon ---"
+mkfake; mkdir -p "$T/cfg" "$T/elsewhere"
+cat > "$T/elsewhere/tune.sh" <<'EOF_UNRELATED'
+#!/bin/sh
+sp=""
+trap 'kill "$sp" 2>/dev/null; exit 0' TERM INT
+while :; do sleep 300 & sp=$!; wait "$sp"; done
+EOF_UNRELATED
+sh "$T/elsewhere/tune.sh" daemon "$T/elsewhere" >/dev/null 2>&1 & bystander=$!
+echo "$bystander" > "$T/cfg/daemon.pid"
 S stop >/dev/null
-if kill -0 "$bystander" 2>/dev/null; then echo "ok   unrelated process left alone"; else echo "FAIL unrelated process was killed"; fail=1; fi
-kill "$bystander" 2>/dev/null
+if kill -0 "$bystander" 2>/dev/null; then echo "ok   unrelated tune.sh daemon left alone"; else echo "FAIL unrelated tune.sh daemon was killed"; fail=1; fi
+kill "$bystander" 2>/dev/null; wait "$bystander" 2>/dev/null
 export TUNE_NO_DAEMON=1
 
 echo "--- watcher started by name from inside the module folder still gets the real module folder ---"
@@ -469,15 +479,23 @@ done
 export TUNE_NO_DAEMON=1
 
 echo "--- stop reports a watcher that will not exit and keeps its pid file ---"
+export TUNE_NO_DAEMON=1
+mkfake; mkdir -p "$T/cfg"; rm -rf "$T/modu"; mkdir -p "$T/modu"
+cp "$HERE/../module/"*.sh "$T/modu/"
+sed "s|trap 'kill \"\$sp\" 2>/dev/null; pidf_release; exit 0' TERM INT|trap ':' TERM INT|" \
+  "$T/modu/tune.sh" > "$T/modu/tune.tmp"
+mv "$T/modu/tune.tmp" "$T/modu/tune.sh"
+printf 'ENABLED=1\nSCREENOFF=1\nPRESET=tilt\n' > "$T/cfg/tune.conf"
+TUNE="$T/modu/tune.sh"
 unset TUNE_NO_DAEMON
-mkfake; mkdir -p "$T/cfg" "$T/stub"
-printf 'trap "" TERM\nwhile :; do sleep 1; done\n' > "$T/stub/tune.sh"
-sh "$T/stub/tune.sh" & stubp=$!
-echo "$stubp" > "$T/cfg/daemon.pid"; sleep 1
+sh "$TUNE" daemon "$T/modu" >/dev/null 2>&1 & stubp=$!
+i=0; while [ "$i" -lt 10 ] && [ "$(cat "$T/cfg/daemon.pid" 2>/dev/null)" != "$stubp" ]; do sleep 1; i=$((i + 1)); done
 out=$(S stop); has "stubborn watcher: stop warns" "did not stop within 3 seconds" "$out"
 check "stubborn watcher: pid file kept" "$stubp" "$(cat "$T/cfg/daemon.pid" 2>/dev/null)"
 kill -9 "$stubp" 2>/dev/null; wait "$stubp" 2>/dev/null
 rm -f "$T/cfg/daemon.pid"
+TUNE="$HERE/../module/tune.sh"
+unset TUNE_NO_DAEMON
 echo "--- stop never removes a pid file that names another process ---"
 mkfake; mkdir -p "$T/cfg"; sleep 300 & other=$!
 echo "$other" > "$T/cfg/daemon.pid"; S stop >/dev/null
@@ -603,12 +621,19 @@ export TUNE_NO_DAEMON=1
 
 echo "--- a watcher that will not stop is reported, and nothing is thrown away ---"
 export TUNE_NO_DAEMON=1
-stubborn() { # a stand-in watcher that ignores TERM; its pid file names it
-  mkfake; mkdir -p "$T/cfg" "$T/stub"
-  printf 'trap "" TERM\nwhile :; do sleep 1; done\n' > "$T/stub/tune.sh"
+stubborn() { # run the real watcher from this module path, with TERM ignored only in the test copy
+  mkfake; rm -rf "$T/modu"; mkdir -p "$T/modu"
+  cp "$HERE/../module/"*.sh "$T/modu/"
+  sed -e "s|trap 'kill \"\$sp\" 2>/dev/null; pidf_release; exit 0' TERM INT|trap ':' TERM INT|" \
+      -e 's|if \[ "$ENABLED" != 1 \]; then apply_none_logged; break; fi|: # test-only stubborn watcher ignores disabled settings|' \
+      "$T/modu/tune.sh" > "$T/modu/tune.tmp"
+  mv "$T/modu/tune.tmp" "$T/modu/tune.sh"
+  TUNE="$T/modu/tune.sh"
   S preset tilt >/dev/null
-  sh "$T/stub/tune.sh" daemon >/dev/null 2>&1 & stubp=$!
-  echo "$stubp" > "$T/cfg/daemon.pid"; sleep 1
+  unset TUNE_NO_DAEMON
+  sh "$TUNE" daemon "$T/modu" >/dev/null 2>&1 & stubp=$!
+  i=0; while [ "$i" -lt 10 ] && [ "$(cat "$T/cfg/daemon.pid" 2>/dev/null)" != "$stubp" ]; do sleep 1; i=$((i + 1)); done
+  [ "$(cat "$T/cfg/daemon.pid" 2>/dev/null)" = "$stubp" ] || { echo "FAIL stubborn watcher started"; fail=1; }
 }
 stubborn
 out=$(S cfg ENABLED 0); rc=$?
@@ -619,8 +644,8 @@ check "apply with a stuck watcher: pid file kept" "$stubp" "$(cat "$T/cfg/daemon
 out=$(S stop); rc=$?
 check "stop with a stuck watcher: non-zero exit" 1 "$rc"
 case "$out" in *ok*) echo "FAIL stop with a stuck watcher printed ok"; fail=1 ;; *) echo "ok   stop with a stuck watcher does not print ok" ;; esac
-# uninstall keeps the recovery data while the watcher is still running
-rm -rf "$T/modu"; cp -r "$HERE/../module" "$T/modu"
+# uninstall keeps the recovery data while the watcher is still running. Keep the test-only tune.sh copy:
+# it is the same module path as the watcher, with only its TERM trap altered for this test.
 sed "s#/data/adb/kprofiles_ui#$T/cfg#" "$HERE/../module/uninstall.sh" > "$T/modu/uninstall.sh"
 sh "$T/modu/uninstall.sh" >/dev/null 2>&1; check "uninstall with a stuck watcher: exits non-zero" 1 "$?"
 check "uninstall with a stuck watcher keeps the recorded stock values" "yes" "$([ -s "$T/cfg/defaults" ] && echo yes || echo no)"
@@ -628,6 +653,8 @@ check "uninstall with a stuck watcher keeps the settings" "yes" "$([ -s "$T/cfg/
 kill -9 "$stubp" 2>/dev/null; wait "$stubp" 2>/dev/null; rm -f "$T/cfg/daemon.pid"
 sh "$T/modu/uninstall.sh"
 check "uninstall removes the saved settings once the watcher is gone" "no" "$([ -e "$T/cfg" ] && echo yes || echo no)"
+TUNE="$HERE/../module/tune.sh"
+export TUNE_NO_DAEMON=1
 
 echo "--- a zero reading is never recorded as a stock frequency ---"
 mkfake; S boot >/dev/null
@@ -1195,5 +1222,49 @@ has "undeletable stale lock: says so" "another start or stop of the watcher is i
 rm -rf "$T/cfg/daemon.lock"
 export TUNE_NO_DAEMON=1
 
+
+echo "--- Stop never signals an unrelated tune.sh daemon ---"
+mkfake; mkdir -p "$T/cfg" "$T/unrel"
+printf 'while :; do sleep 1; done\n' > "$T/unrel/tune.sh"
+sh "$T/unrel/tune.sh" daemon "$T/unrel" >/dev/null 2>&1 & other=$!  # same argv shape, different module path
+sleep 1; echo "$other" > "$T/cfg/daemon.pid"
+out=$(S status); has "unrelated daemon: status says no watcher" "daemon=0" "$out"
+S stop >/dev/null 2>&1
+check "unrelated daemon: still running after Stop" "yes" "$(kill -0 "$other" 2>/dev/null && echo yes || echo no)"
+check "unrelated daemon: the stale pid file is cleaned up" "no" "$([ -f "$T/cfg/daemon.pid" ] && echo yes || echo no)"
+kill "$other" 2>/dev/null; wait "$other" 2>/dev/null
+
+echo "--- status says so when the saved settings cannot be read ---"
+mkfake; S preset tilt >/dev/null
+case "$(S status)" in *cfg_error*) echo "FAIL good settings: status reports cfg_error"; fail=1 ;; *) echo "ok   good settings: no cfg_error line" ;; esac
+printf 'ENABLED=1\nthis is ( not valid\n' > "$T/cfg/tune.conf"
+out=$(S status); has "unreadable settings: status has cfg_error=1" "cfg_error=1" "$out"
+has "unreadable settings: status still lists the rest" "enabled=0" "$out"
+mkfake; case "$(S status)" in *cfg_error*) echo "FAIL no settings file: status reports cfg_error"; fail=1 ;; *) echo "ok   no settings file at all is not an error" ;; esac
+mkfake; S boot >/dev/null; S preset tilt >/dev/null
+before_big=$(v cpufreq/policy3/scaling_max_freq)
+printf 'ENABLED=1\nSCREENOFF=0\nPRESET=custom\nON_BIG_MAX=99999999\n' > "$T/cfg/tune.conf"
+out=$(S status); has "invalid saved frequency: status exposes cfg_error" "cfg_error=1" "$out"
+out=$(S apply); rc=$?
+check "invalid saved frequency: Apply refuses it" 1 "$rc"
+has "invalid saved frequency: Apply explains the corrupted settings" "cannot be read or validated" "$out"
+check "invalid saved frequency: unsupported limit not written" "$before_big" "$(v cpufreq/policy3/scaling_max_freq)"
+printf 'ENABLED=1\nSCREENOFF=2\nPRESET=custom\n' > "$T/cfg/tune.conf"
+has "invalid saved boolean: Status exposes cfg_error" "cfg_error=1" "$(S status)"
+printf 'ENABLED=1\nSCREENOFF=0\nPRESET=night\n' > "$T/cfg/tune.conf"
+has "invalid saved preset name: Status exposes cfg_error" "cfg_error=1" "$(S status)"
+printf 'ENABLED=1\nSCREENOFF=0\nPRESET=custom\nON_BIG_MIN=2188800\nON_BIG_MAX=1593600\n' > "$T/cfg/tune.conf"
+has "inverted saved min/max: Status exposes cfg_error" "cfg_error=1" "$(S status)"
+
+echo "--- watcher hands limits back if a saved frequency is not in the kernel list ---"
+mkfake; unset TUNE_NO_DAEMON; export TUNE_POLL_ON=1 TUNE_POLL_OFF=1 TUNE_REASSERT=1
+S boot >/dev/null; S preset tilt >/dev/null
+check "invalid saved frequency watcher: preset initially applies" 2188800 "$(v cpufreq/policy3/scaling_max_freq)"
+printf 'ENABLED=1\nSCREENOFF=0\nPRESET=custom\nON_BIG_MAX=99999999\n' > "$T/cfg/tune.conf"
+waitfor "invalid saved frequency watcher: original big max restored" 2572800 cpufreq/policy3/scaling_max_freq 15
+waitfor "invalid saved frequency watcher: watcher exits" "" cfg/daemon.pid 15
+has "invalid saved frequency watcher: refusal is logged" "a saved frequency is not available on this phone" "$(cat "$T/cfg/tune.log" 2>/dev/null)"
+check "invalid saved frequency watcher: marker cleared after restore" 0 "$(grep -cx big_max "$T/cfg/applied" 2>/dev/null)"
+export TUNE_NO_DAEMON=1 TUNE_POLL_ON=3 TUNE_POLL_OFF=1 TUNE_REASSERT=10
 
 [ "$fail" = 0 ] && echo "all tune tests passed" || { echo "SOME TESTS FAILED"; exit 1; }

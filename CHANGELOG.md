@@ -1,5 +1,26 @@
 # Changelog
 
+## v1.4.3
+A re-read of v1.4.2 found three smaller problems. None was seen on a phone.
+- Fix: **Stop could signal a process that is not the watcher.** The check for "is the watcher running" only
+  looked for `tune.sh` in a process's command line, so a pid file that named another module's `tune.sh` (or
+  a process that had reused the number) was taken for the watcher and sent a stop signal. Reproduced: a
+  made-up `tune.sh` process was killed by `tune.sh stop`. A process now counts as the watcher only if its
+  command line is `... tune.sh daemon <folder>`; an unrelated one is left alone and the stale pid file is
+  removed.
+- Fix: **an unreadable settings file no longer looks like normal defaults in the page.** `status` printed
+  `enabled=0 preset=stock` for a settings file that exists but cannot be read, the same as for no settings.
+  It now also prints `cfg_error=1` in that case, and the page shows a message saying the settings cannot be
+  read and what to do (Apply and the presets already refused to change anything; that is unchanged).
+- Fix: **line endings.** `.gitattributes` now forces LF for the scripts, `module.prop`, the page and the
+  other text files, so a Windows checkout can no longer hand out CRLF scripts that fail on Android.
+- Tests: Stop with a pid file naming an unrelated `tune.sh` process (it must survive, the stale file must
+  go, Status must say no watcher), `cfg_error` with good, unreadable and missing settings, and the
+  `.gitattributes` rules. Each fails on the code it replaces.
+
+- Follow-up audit hardening before publication: watcher identity now matches this module's exact script path and folder, not just the words `tune.sh daemon`; the unrelated-process regression includes a foreign script invoked with daemon arguments. The corrupt-settings page warning also no longer claims that current limits have been undone, and the line-ending test checks every declared `.gitattributes` rule.
+- Further fail-closed validation: syntactically valid but invalid saved values (frequencies not present in the kernel's available list, invalid booleans/preset names, and inverted min/max pairs) are now reported as `cfg_error=1`. Apply refuses them without changing any limits; Status shows the warning, and the watcher falls back to the safe disabled state so it restores limits it owns. Regression tests cover these invalid settings.
+
 ## v1.4.2
 An audit of v1.4.1 found that the stock snapshot could end up empty. Not seen on a phone.
 - Fix: **an empty stock snapshot is never saved or accepted.** When no CPU or GPU frequency value could be
