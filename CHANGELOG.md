@@ -1,8 +1,40 @@
 # Changelog
 
+## v3.0.0
+WebUI startup and recovery-diagnostic hardening. The tuning engine, kernel-profile scripts, watcher,
+frequency application, locking and restore rules are unchanged from v2.0.0. The WebUI is the only
+functional module file changed; `module.prop` changes for version metadata.
+- Fix: **profile controls cannot be used before the current state is known.** On initial load, every
+  control except Reset everything stays disabled until the first successful status response. This
+  prevents the Tilt/Saver bridge rule from being bypassed while the page is still loading and does not
+  require any frequency polling.
+- Fix: **the latest failed recovery attempt survives a reload.** The most recent Reset everything error
+  details are now stored separately with the recovery lock and shown again after a WebUI reload. A
+  successful, verified recovery clears both stored messages.
+- Fix: **the start-up lock covered the buttons but not the pickers.** The 16 min/max pickers are built after
+  the first lock pass and were left enabled until the first status arrived, so a custom limit could be saved
+  while the current preset was still unknown. They are now locked as soon as they are built, and the page
+  itself refuses every command except Reset everything until the first status has been read, so a toggle or
+  tap that still reaches a handler sends nothing.
+- Fix: **a failed first status no longer leaves the page locked until Reset everything.** If the frequency
+  lists or the first status cannot be read, the page tries again by itself three times (3 s apart), then shows
+  a "Try again" button. Before, the only control left usable was Reset everything, which also resets the
+  saved settings and the kernel profile, so a slow first read could push someone into it.
+- Tests: add regression checks for the initial status gate and persistence of the latest recovery details, and
+  `tests/webui-dom-test.js`, which runs the page's real script against a small fake DOM, a fake localStorage
+  and a controllable `ksu.exec`. It checks what the page does: which controls are usable while the first
+  status is pending, that no command reaches the engine except Reset, the retry and the button, the stored
+  lock after a reload, the stored latest response after a failed Reset, and that a clean Reset clears all
+  three stored keys. Each of the three fixes above was removed in turn and the test failed.
+- Documentation: clarify that only the WebUI changes functionally; `module.prop` also changes for the
+  version and versionCode.
+- Version: v3.0.0, versionCode 23. This is a major-version milestone; settings format and recovery data
+  remain compatible with v2.0.0.
+
 ## v2.0.0
-WebUI recovery-lock fixes and a CI update. The tuning engine, the kernel-profile scripts, the watcher and
-the restore rules are unchanged from v1.4.4; the page is the only module file that differs.
+WebUI recovery-lock fixes and a CI update. The tuning engine, kernel-profile scripts, watcher and restore
+rules are unchanged from v1.4.4. The WebUI is the only functional module file changed; `module.prop` also
+differs for version metadata.
 - Fix: **the page missed the most common refused limit.** When the kernel rejects a write and reads back
   nothing, the engine prints `warn: big max wanted 2188800, kernel says ` with an empty reading. The page
   only recognised `kernel says` followed by digits, so that case did not lock the page to Reset everything

@@ -142,15 +142,22 @@ check "WebUI cooldown starts only after successful profile action" yes "$(grep -
 check "WebUI recognizes kernel-reported frequency mismatches" yes "$(grep -Fq 'function isFrequencyMismatch(text)' "$page" && grep -Fq 'kernel says' "$page" && grep -Fq 'the kernel did not take these limits' "$page" && grep -Fq 'restore refused by the kernel' "$page" && echo yes || echo no)"
 check "WebUI preserves engine warn/error lines in recovery notice" yes "$(grep -Fq 'function diagnosticLines(text)' "$page" && grep -Fq 'FREQUENCY RESTORE / APPLY FAILURE' "$page" && echo yes || echo no)"
 check "WebUI marks errors as assertive alerts" yes "$(grep -Fq 'm.setAttribute("role", kind === "err" ? "alert" : "status")' "$page" && grep -Fq 'm.setAttribute("aria-live", kind === "err" ? "assertive" : "polite")' "$page" && echo yes || echo no)"
-check "Recovery mode locks all controls except Reset everything" yes "$(grep -Fq 'recoveryLock && els[i].id !== "resetAll"' "$page" && grep -Fq 'recoveryLock && cmdLine !== "resetall"' "$page" && echo yes || echo no)"
+check "Recovery mode locks all controls except Reset everything" yes "$(grep -Fq 'recoveryBlocked = recoveryLock && !isReset' "$page" && grep -Fq 'recoveryLock && cmdLine !== "resetall"' "$page" && echo yes || echo no)"
 check "Recovery lock persists across WebUI reloads where storage is available" yes "$(grep -Fq 'window.localStorage.setItem(RECOVERY_LOCK_KEY, "1")' "$page" && grep -Fq 'window.localStorage.getItem(RECOVERY_LOCK_KEY)' "$page" && echo yes || echo no)"
 check "Only a clean, refreshed Reset everything clears recovery lock" yes "$(grep -Fq 'cmdLine === "resetall" && succeeded && !frequencyFailure && refreshed && st && st.cfg_error !== "1"' "$page" && grep -Fq 'refreshed && st && st.cfg_error !== "1"' "$page" && echo yes || echo no)"
 check "Reset recovery is followed by the eight-second cooldown" yes "$(grep -Fq 'startProfileCooldown("Reset everything succeeded." + (warns.length' "$page" && echo yes || echo no)"
 check "Persisted recovery lock is applied before initial async requests" yes "$(grep -Fq 'Apply a persisted recovery lock before the first asynchronous status request.' "$page" && echo yes || echo no)"
 check "Readback failure keeps recovery notice visible" yes "$(grep -Fq 'if (recoveryLock) setMsg(recoveryText(), "err")' "$page" && echo yes || echo no)"
+check "WebUI starts with status readiness closed" 1 "$(grep -Fc 'statusReady = false' "$page")"
+check "WebUI locks non-reset controls until first status succeeds" yes "$(grep -Fq 'initialBlocked = !statusReady && !isReset' "$page" && grep -Fq 'els[i].disabled = disabled || !!bridgeBlocked || initialBlocked || recoveryBlocked' "$page" && echo yes || echo no)"
+check "Reset everything is exempt from initial status lock" yes "$(grep -Fq 'var isReset = els[i].id === "resetAll"' "$page" && grep -Fq 'initialBlocked = !statusReady && !isReset' "$page" && echo yes || echo no)"
+check "First valid status response sets readiness" yes "$(grep -Fq 'st = kv(a.stdout);' "$page" && grep -Fq 'statusReady = true;' "$page" && echo yes || echo no)"
+check "Latest recovery detail has a persistent storage key" yes "$(grep -Fq 'RECOVERY_LATEST_KEY' "$page" && grep -Fq 'getItem(RECOVERY_LATEST_KEY)' "$page" && grep -Fq 'setItem(RECOVERY_LATEST_KEY, recoveryLatest)' "$page" && echo yes || echo no)"
+check "Failed reset attempt persists latest recovery details" yes "$(grep -Fq 'Latest Reset everything response:' "$page" && grep -Fq 'persistRecoveryLock();' "$page" && echo yes || echo no)"
 # Behaviour of the page's failure detection against the engine's real messages (needs node; CI has it).
 if command -v node >/dev/null 2>&1; then
   node "$HERE/webui-test.js" "$page"; check "WebUI behaviour tests (node)" 0 $?
+  node "$HERE/webui-dom-test.js" "$page"; check "WebUI start-up lock and stored recovery notice (node, fake DOM)" 0 $?
 else
   echo "skip WebUI behaviour tests (node is not installed here; CI runs them)"
 fi

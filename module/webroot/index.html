@@ -40,6 +40,8 @@ h1{font-size:1.35rem;margin:6px 0 2px}
 .opt[aria-checked="true"]{border-color:var(--accent);background:var(--accent-soft)}
 .opt:active{transform:scale(.99)}
 .opt:disabled,select:disabled,.sw input:disabled{opacity:.6}
+.retry{display:none;width:100%;margin:0 0 12px;font:inherit;font-weight:600;color:inherit;background:transparent;
+  border:1px solid var(--line);border-radius:12px;padding:11px 12px;cursor:pointer}
 .sw{display:flex;align-items:flex-start;gap:12px;padding:8px 0}
 .sw + .sw{border-top:1px solid var(--line)}
 .sw .txt{flex:1}
@@ -72,6 +74,7 @@ select{width:100%;font:inherit;font-size:.9rem;color:var(--text);background:var(
   <p class="sub">CPU and GPU speed limits, plus the kernel profile. <span id="ver"></span></p>
 
   <div id="msg" role="status" aria-live="polite"></div>
+  <button type="button" class="retry" id="retryLoad">Try again</button>
 
   <section class="card" aria-label="State">
     <h2>Right now</h2>
@@ -167,15 +170,17 @@ select{width:100%;font:inherit;font-size:.9rem;color:var(--text);background:var(
     ["prime", "Prime core", "CPU7"],
     ["gpu", "GPU", ""]
   ];
-  var busy = false, lists = null, st = null, kp = null;
+  var busy = false, lists = null, st = null, kp = null, statusReady = false;
   var PROFILE_COOLDOWN_MS = 8000, cooldownUntil = 0, cooldownTimer = null;
   var cooldownMessage = "", cooldownKind = "ok";
   var RECOVERY_LOCK_KEY = "kprofiles-ui-frequency-recovery-v1";
   var RECOVERY_MESSAGE_KEY = "kprofiles-ui-frequency-recovery-message-v1";
+  var RECOVERY_LATEST_KEY = "kprofiles-ui-frequency-recovery-latest-v1";
   var recoveryLock = false, recoveryMessage = "", recoveryLatest = "";
   try {
     recoveryLock = window.localStorage.getItem(RECOVERY_LOCK_KEY) === "1";
     recoveryMessage = window.localStorage.getItem(RECOVERY_MESSAGE_KEY) || "";
+    recoveryLatest = window.localStorage.getItem(RECOVERY_LATEST_KEY) || "";
   } catch (e) { /* Storage may be unavailable in some manager WebViews. */ }
 
   function $(id) { return document.getElementById(id); }
@@ -192,9 +197,11 @@ select{width:100%;font:inherit;font-size:.9rem;color:var(--text);background:var(
       if (recoveryLock) {
         window.localStorage.setItem(RECOVERY_LOCK_KEY, "1");
         window.localStorage.setItem(RECOVERY_MESSAGE_KEY, recoveryMessage);
+        window.localStorage.setItem(RECOVERY_LATEST_KEY, recoveryLatest);
       } else {
         window.localStorage.removeItem(RECOVERY_LOCK_KEY);
         window.localStorage.removeItem(RECOVERY_MESSAGE_KEY);
+        window.localStorage.removeItem(RECOVERY_LATEST_KEY);
       }
     } catch (e) { /* Keep the in-page lock even if storage is unavailable. */ }
   }
@@ -239,15 +246,19 @@ select{width:100%;font:inherit;font-size:.9rem;color:var(--text);background:var(
     for (var i = 0; i < els.length; i++) {
       var target = els[i].getAttribute("data-preset");
       var bridgeBlocked = target && isBlockedDirectSwitch(target);
-      var recoveryBlocked = recoveryLock && els[i].id !== "resetAll";
-      els[i].disabled = disabled || !!bridgeBlocked || recoveryBlocked;
+      var isReset = els[i].id === "resetAll";
+      var initialBlocked = !statusReady && !isReset;
+      var recoveryBlocked = recoveryLock && !isReset;
+      els[i].disabled = disabled || !!bridgeBlocked || initialBlocked || recoveryBlocked;
       if (recoveryBlocked) els[i].title = "Frequency error recovery is active. Use Reset everything.";
       else if (bridgeBlocked) els[i].title = "Switch to Stock or use Reset everything before selecting this profile.";
       else if (els[i].hasAttribute && (els[i].hasAttribute("data-preset") || els[i].id === "resetAll")) els[i].removeAttribute("title");
     }
     var note = $("profileRuleNote");
     if (note) {
-      if (st && st.preset === "tilt") {
+      if (!statusReady && !recoveryLock) {
+        note.textContent = "Reading the current phone state. Profile and settings controls stay disabled until the first status check succeeds.";
+      } else if (st && st.preset === "tilt") {
         note.textContent = "Battery saver is locked while Battery tilt is active. Select Stock or Reset everything first. After a successful profile change, all controls pause for 8 seconds.";
       } else if (st && st.preset === "saver") {
         note.textContent = "Battery tilt is locked while Battery saver is active. Select Stock or Reset everything first. After a successful profile change, all controls pause for 8 seconds.";
@@ -351,6 +362,7 @@ select{width:100%;font:inherit;font-size:.9rem;color:var(--text);background:var(
         g.appendChild(sel);
       });
     });
+    syncControlLocks();   /* the new pickers must start locked too: the first status may not have arrived yet */
   }
 
   /* ---------- show the state ---------- */
@@ -412,6 +424,7 @@ select{width:100%;font:inherit;font-size:.9rem;color:var(--text);background:var(
         return false;
       }
       st = kv(a.stdout);
+      statusReady = true;
       kp = (b.errno === 0 && /mode=/.test(b.stdout)) ? kv(b.stdout.replace(/ /g, "\n")) : null;
       if (kp && kp.mode === "?") kp = null;
       render();
@@ -428,6 +441,10 @@ select{width:100%;font:inherit;font-size:.9rem;color:var(--text);background:var(
     if (busy || isCoolingDown()) return;
     if (recoveryLock && cmdLine !== "resetall") {
       setMsg(recoveryText(), "err");
+      return;
+    }
+    if (!statusReady && cmdLine !== "resetall") {
+      setMsg("The phone state has not been read yet, so nothing was changed. Wait a moment, or tap Try again if it is shown.", "warn");
       return;
     }
     var profileAction = cmdLine === "resetall" || /^preset (stock|tilt|saver)$/.test(cmdLine);
@@ -480,6 +497,7 @@ select{width:100%;font:inherit;font-size:.9rem;color:var(--text);background:var(
             recoveryLatest = resetDetails
               ? "Latest Reset everything response:\n" + resetDetails
               : "Reset everything has not been confirmed successful. The recovery lock remains active; retry Reset everything.";
+            persistRecoveryLock();
           }
           setMsg(recoveryText(), "err");
         }
@@ -490,6 +508,7 @@ select{width:100%;font:inherit;font-size:.9rem;color:var(--text);background:var(
     }).catch(function (e) {
       if (recoveryLock) {
         recoveryLatest = "The request failed before recovery could be confirmed: " + String(e);
+        persistRecoveryLock();
         setMsg(recoveryText(), "err");
       } else {
         setMsg("Operation failed: " + String(e), "err");
@@ -532,7 +551,7 @@ select{width:100%;font:inherit;font-size:.9rem;color:var(--text);background:var(
     act("persist " + (on ? "1" : "0"), on ? "Kernel profile will be kept after reboot." : "Kernel profile will not be kept.", true);
   });
 
-  /* Apply a persisted recovery lock before the first asynchronous status request. */
+  /* Apply a persisted recovery lock before the first asynchronous status request. Normal controls also stay locked until status is known. */
   syncControlLocks();
 
   /* ---------- start ---------- */
@@ -540,20 +559,35 @@ select{width:100%;font:inherit;font-size:.9rem;color:var(--text);background:var(
     var v = (r.stdout || "").trim();
     if (r.errno === 0 && /^v[0-9][0-9.]*$/.test(v)) $("ver").textContent = "Installed: " + v;
   });
-  T("lists").then(function (r) {
-    if (r.errno !== 0 || r.stdout.indexOf("=") < 0) {
-      setMsg((r.stderr || r.stdout || "Could not read the available frequencies.").trim(), "err");
-      return;
-    }
-    var o = kv(r.stdout);
-    lists = {};
-    DOMS.forEach(function (dm) {
-      lists[dm[0]] = (o[dm[0]] || "").split(/\s+/).filter(function (x) { return /^[0-9]+$/.test(x); }).map(Number);
+  /* The first status read opens the controls. If it (or the frequency lists) cannot be read, try again by
+     itself a few times, then offer a button; otherwise the only way out would be Reset everything. */
+  var START_RETRIES = 3, START_RETRY_MS = 3000, startTries = 0, startTimer = null;
+  function showRetry(on) { $("retryLoad").style.display = on ? "block" : "none"; }
+  function startLoad() {
+    if (startTimer) { clearTimeout(startTimer); startTimer = null; }
+    showRetry(false);
+    startTries++;
+    return T("lists").then(function (r) {
+      if (r.errno !== 0 || r.stdout.indexOf("=") < 0) {
+        setMsg((r.stderr || r.stdout || "Could not read the available frequencies.").trim(), "err");
+        return false;
+      }
+      var o = kv(r.stdout);
+      lists = {};
+      DOMS.forEach(function (dm) {
+        lists[dm[0]] = (o[dm[0]] || "").split(/\s+/).filter(function (x) { return /^[0-9]+$/.test(x); }).map(Number);
+      });
+      buildGrid("gridOn", "on");
+      buildGrid("gridOff", "off");
+      return refresh(false);
+    }).catch(function () { return false; }).then(function (loaded) {
+      if (loaded === true) return;
+      if (startTries <= START_RETRIES) startTimer = setTimeout(startLoad, START_RETRY_MS);
+      else showRetry(true);
     });
-    buildGrid("gridOn", "on");
-    buildGrid("gridOff", "off");
-    return refresh(false);
-  });
+  }
+  $("retryLoad").addEventListener("click", function () { startTries = 0; startLoad(); });
+  startLoad();
 })();
 </script>
 </body>

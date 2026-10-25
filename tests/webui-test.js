@@ -8,6 +8,15 @@ const src = fs.readFileSync(page, "utf8");
 let fail = 0;
 const check = (name, ok, extra) => { console.log((ok ? "ok   " : "FAIL ") + name + (ok ? "" : ": " + extra)); if (!ok) fail = 1; };
 
+// UI safeguards that do not require a browser or a live KernelSU manager.
+check("status readiness gate starts closed", /statusReady = false/.test(src), "initial status can still be unknown");
+check("non-reset controls are disabled until status is ready", /initialBlocked = !statusReady && !isReset/.test(src), "initial loading lock missing");
+check("Reset everything remains available while initial status is unknown", /initialBlocked = !statusReady && !isReset/.test(src) && /var isReset = els\[i\]\.id === "resetAll"/.test(src), "reset should be exempt from initial loading lock");
+check("first valid status response opens readiness gate", /st = kv\(a\.stdout\);\s*statusReady = true;/.test(src), "status-ready flag is not set after valid status");
+check("latest recovery detail has its own storage key", /RECOVERY_LATEST_KEY/.test(src) && /getItem\(RECOVERY_LATEST_KEY\)/.test(src) && /setItem\(RECOVERY_LATEST_KEY, recoveryLatest\)/.test(src), "latest recovery error is not loaded and saved");
+check("latest reset failure persists recovery details", /recoveryLatest = resetDetails[\s\S]{0,260}persistRecoveryLock\(\);/.test(src), "failed reset details are not persisted");
+check("request exception persists recovery details", /request failed before recovery could be confirmed[\s\S]{0,120}persistRecoveryLock\(\);/.test(src), "request failure details are not persisted");
+
 // every inline script must at least parse
 const scripts = [...src.matchAll(/<script[^>]*>([\s\S]*?)<\/script>/g)];
 check("the page has an inline script", scripts.length > 0, "none found");

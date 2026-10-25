@@ -179,7 +179,7 @@ sh build.sh             # writes dist/Kprofiles-Control-<version>.zip, update.js
 
 GitHub Actions runs ShellCheck, then all four tests under dash, **mksh** (the shell Android
 uses) and busybox ash, and checks that a pushed tag matches the `version` in
-`module.prop`. Push a tag such as `v2.0.0` to publish a release.
+`module.prop`. Push a tag such as `v3.0.0` to publish a release.
 
 ## Status
 
@@ -187,10 +187,11 @@ v1.0, v1.1 and v1.1.4 were confirmed working by the author on a POCO F6 (`perido
 Theettam 6.1.176 kernel and KernelSU-Next 3.4.2. v1.4.3 has had on-device checks for boot, Tilt,
 Stock restoration, screen transitions, and preset switching; intermittent historical kernel restore
 refusals were observed and their cause remains unconfirmed. v1.4.4 added WebUI-only switching,
-8-second cooldown, and recovery-lock guardrails. v2.0.0 fixes how the page recognises a refused limit
-and lets a clean Reset everything clear the lock; it has not yet been tested on the phone. The page
-shows the engine's warning/error text and leaves only Reset everything available after a reported
-frequency restore/apply mismatch. This is a UI safeguard, not an engine fix, and it cannot detect a
+8-second cooldown, and recovery-lock guardrails. v2.0.0 improved frequency-failure recognition and
+recovery unlock rules. v3.0.0 keeps profile controls disabled until the first successful status read and
+persists the latest failed-reset detail across WebUI reloads; it has not yet been tested on the phone.
+The page shows the engine's warning/error text and leaves only Reset everything available after a
+reported frequency restore/apply mismatch. This is a UI safeguard, not an engine fix, and it cannot detect a
 silent mismatch the engine does not report. Android or Xiaomi services may override some values.
 Every write is checked and the page shows a warning if the kernel did not accept it. Please open an
 issue with that message.
