@@ -1123,4 +1123,77 @@ check "good record, list gone: exit status 0" 0 "$rc"
 check "good record, list gone: the changed-marker is cleared" 0 "$(grep -c '^big_min$' "$T/cfg/applied")"
 mkfake
 
+echo "--- Apply never changes limits when module-owned limits exist but no stock record does ---"
+export TUNE_NO_DAEMON=1
+snap() { # every limit node and the marker file, as one comparable text
+  for f in "$T"/cpufreq/policy*/scaling_*_freq "$T"/gpu/*_freq; do printf '%s=%s\n' "${f#"$T"/}" "$(cat "$f" 2>/dev/null)"; done
+  echo "applied:"; cat "$T/cfg/applied" 2>/dev/null
+}
+for variant in empty missing; do
+  mkfake; S boot >/dev/null; S preset tilt >/dev/null
+  check "$variant record: tilt changed the big max first" 2188800 "$(v cpufreq/policy3/scaling_max_freq)"
+  if [ "$variant" = empty ]; then : > "$T/cfg/defaults"; else rm -f "$T/cfg/defaults"; fi
+  snap > "$T/snap.before"
+  out=$(S preset saver); rc=$?
+  check "$variant record: saver is refused (exit status)" 1 "$rc"
+  has "$variant record: says why" "not on record, so no further limit was changed" "$out"
+  if printf '%s\n' "$out" | grep -qx ok; then echo "FAIL $variant record: printed ok"; fail=1; else echo "ok   $variant record: no ok line"; fi
+  snap > "$T/snap.after"
+  check "$variant record: no frequency node and no marker changed" "$(cat "$T/snap.before")" "$(cat "$T/snap.after")"
+  check "$variant record: big max still the tilt value" 2188800 "$(v cpufreq/policy3/scaling_max_freq)"
+  check "$variant record: prime max still the tilt value" 2457600 "$(v cpufreq/policy7/scaling_max_freq)"
+  check "$variant record: no new little max marker" 0 "$(grep -cx little_max "$T/cfg/applied")"
+  if [ "$variant" = empty ]; then check "$variant record: the record is still zero bytes" 0 "$(wc -c < "$T/cfg/defaults" | tr -d ' ')"
+  else check "$variant record: no record was invented" no "$([ -e "$T/cfg/defaults" ] && echo yes || echo no)"; fi
+  has "$variant record: logged" "apply refused" "$(cat "$T/cfg/tune.log")"
+  # the other ways to ask for the same change
+  snap > "$T/snap.before"
+  S apply >/dev/null 2>&1; check "$variant record: plain Apply is refused too" 1 $?
+  S cfg OFF_LITTLE_MAX 441600 >/dev/null 2>&1; check "$variant record: a changed limit is refused too" 1 $?
+  snap > "$T/snap.after"
+  check "$variant record: still nothing changed" "$(cat "$T/snap.before")" "$(cat "$T/snap.after")"
+  out=$(S status); case "$out" in *"apply refused"*|*"error:"*) echo "FAIL $variant record: status output polluted"; fail=1 ;; *) echo "ok   $variant record: status output is unchanged" ;; esac
+  # Stock still says what it cannot do, without a misleading "could not be saved" line
+  out=$(S preset stock); has "$variant record: Stock names the missing record" "not recorded yet" "$out"
+  case "$out" in *"could not be saved"*) echo "FAIL $variant record: Stock blamed a failed save"; fail=1 ;; *) echo "ok   $variant record: Stock does not blame a failed save" ;; esac
+done
+# a good record still lets Apply carry on (the fix must not block the normal case)
+mkfake; S boot >/dev/null; S preset tilt >/dev/null
+out=$(S preset saver); rc=$?
+check "good record: saver is applied" 0 "$rc"
+check "good record: the limits changed" 1593600 "$(v cpufreq/policy3/scaling_max_freq)"
+# the same on a boot-time snapshot: nothing is marked yet, so a first Apply may record stock
+mkfake; mkdir -p "$T/cfg"; : > "$T/cfg/defaults"
+out=$(S preset tilt); rc=$?
+check "empty record, no marker of ours: Apply records stock and proceeds" 0 "$rc"
+check "empty record, no marker of ours: stock was recorded" 2572800 "$(sed -n 's/^big_max=//p' "$T/cfg/defaults")"
+
+echo "--- a running watcher does not change more limits without a stock record ---"
+unset TUNE_NO_DAEMON; export TUNE_POLL_ON=1 TUNE_POLL_OFF=1 TUNE_REASSERT=1
+mkfake; S boot >/dev/null; S preset tilt >/dev/null
+i=0; while [ "$i" -lt 10 ] && [ ! -s "$T/cfg/daemon.pid" ]; do sleep 1; i=$((i + 1)); done
+: > "$T/cfg/defaults"; snap > "$T/snap.before"
+S preset saver >/dev/null 2>&1                           # refused, but the new setting is saved for the watcher to find
+sleep 5
+snap > "$T/snap.after"
+check "watcher: no limit changed without a record" "$(cat "$T/snap.before")" "$(cat "$T/snap.after")"
+has "watcher: says it is holding back" "not changing any more limits" "$(cat "$T/cfg/tune.log")"
+check "watcher: logged once, not on every poll" 1 "$(grep -c 'not changing any more limits' "$T/cfg/tune.log")"
+mkfake
+export TUNE_NO_DAEMON=1
+
+echo "--- a lock that cannot be removed ends the wait instead of spinning ---"
+unset TUNE_NO_DAEMON
+mkfake; mkdir -p "$T/cfg"
+# a lock whose recorded owner is dead, and a removal that always fails (a shell function beats rm in every shell)
+mkdir -p "$T/cfg/daemon.lock"; echo 2147483646 > "$T/cfg/daemon.lock/pid"
+inj 'rm() { for ij_a; do case "$ij_a" in *daemon.lock*) return 1 ;; esac; done; command rm "$@"; }'
+out=$(INJ_TARGET="$TUNE" TUNE_LOCK_TRIES=20 timeout 60 sh "$T/inj.sh" preset tilt 2>&1); rc=$?
+check "undeletable stale lock: the command ends (not killed by the timeout)" 1 "$([ "$rc" = 124 ] && echo 0 || echo 1)"
+check "undeletable stale lock: the watcher start fails" 1 "$rc"
+has "undeletable stale lock: says so" "another start or stop of the watcher is in progress" "$out"
+rm -rf "$T/cfg/daemon.lock"
+export TUNE_NO_DAEMON=1
+
+
 [ "$fail" = 0 ] && echo "all tune tests passed" || { echo "SOME TESTS FAILED"; exit 1; }

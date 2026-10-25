@@ -13,6 +13,29 @@ An audit of v1.4.1 found that the stock snapshot could end up empty. Not seen on
   treat only a regular, non-empty file as a usable stock record (a folder in its place is still refused).
   A stale empty file is replaced by a real snapshot on the next capture, Apply warns that nothing is
   recorded, and Apply refuses to change a limit when nothing can be recorded.
+- Fix: **Apply no longer changes limits when module-owned limits exist but no usable stock record does.**
+  `capture_defaults` returned success as soon as the `applied` file had markers, even when `defaults` was
+  empty or missing. Reproduced: boot, Tilt, replace `defaults` with a zero-byte file, then Saver exited 0
+  and printed `ok` while the big max went 2,188,800 -> 1,593,600, the prime max 2,457,600 -> 1,766,400 and
+  the GPU max 736,000,000 -> 633,000,000, with a new `little_max` marker, so a later Stock or uninstall
+  could not put the phone's own values back. It now returns status 2 in that case; Apply, a changed limit
+  and a preset refuse with an `error:` line and exit 1, log `apply refused`, and change no frequency node
+  and no marker. Stock still says the values are not recorded (without blaming a failed save), and Status
+  stays quiet. A reboot records the phone's own values again.
+- Fix: **a running watcher also holds back.** Refusing in Apply was not enough: the new setting is saved
+  before Apply runs, and the watcher re-reads the saved settings and would have applied them itself.
+  With limits of ours in place and no usable record, the watcher now leaves every limit as it is and says
+  so once in the log.
+- Fix: **the lock wait can no longer spin forever.** `lock_take` skipped its counter on the paths that
+  remove a stale lock, so a lock that could not be removed made it loop without end (reproduced with a
+  failing `rm`: the command only ended when killed). Every pass is now counted.
+- CI: each suite (kp, tune, build, release) is its own step under dash, mksh and busybox ash, with its
+  own time limit (and a job limit), so a hang is reported at the suite that hung. The full tune suite takes
+  about 95 seconds here under dash.
+- Tests: Apply with an empty and with a missing `defaults` file while Tilt's markers exist (exit status,
+  message, every frequency node and the marker file compared before and after, no invented record, log,
+  plain Apply, a changed limit, Status output, Stock output); a good record still lets Apply carry on;
+  the running watcher with no record; and an undeletable stale lock. Each fails on the code it replaces.
 - Tests: every reading empty and every node missing, each with and without an earlier snapshot (exit
   status, file left behind, byte-for-byte comparison, log); a zero-byte `defaults` file with Status, with
   Apply, with the Battery profile on, and with nothing readable; and the real `service.sh` against a

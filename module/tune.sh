@@ -124,7 +124,10 @@ capture_defaults() {
   CAP_BAD=""; CAP_PIN=""
   if [ "$1" != force ]; then
     have_def && return 0                          # already recorded (an empty file is not a record)
-    [ -s "$APPLIED" ] && return 0                # our own limits are in place: would record them as stock
+    # Our own limits are in place, so what the kernel shows now is NOT stock and must not be recorded as
+    # such. Without a usable record this is a FAILURE (status 2), never a success: the caller must not
+    # change any further limit that could not be put back. (Callers log it; this runs on every status poll.)
+    [ -s "$APPLIED" ] && return 2
   fi
   # The kernel Battery profile lowers the values we read, so a reading taken now is not stock.
   # This holds for the forced boot-time capture too: keep whatever was recorded before, or nothing.
@@ -367,9 +370,12 @@ lock_take() {
   lk=0
   while ! mkdir "$LOCKD" 2>/dev/null; do
     lo=$(cat "$LOCKD/pid" 2>/dev/null)
-    if [ -n "$lo" ] && ! kill -0 "$lo" 2>/dev/null; then rm -rf "$LOCKD"; continue; fi
-    if [ -z "$lo" ] && [ "$lk" -ge 50 ]; then rm -rf "$LOCKD"; continue; fi   # no pid after ~5 s: the owner died before writing it
-    lk=$((lk + 1)); [ "$lk" -lt "$LOCK_TRIES" ] || return 1
+    # Every pass is counted, including the ones that remove a stale lock: if the removal fails, the loop
+    # still ends after LOCK_TRIES passes instead of spinning for ever.
+    lk=$((lk + 1))
+    if [ -n "$lo" ] && ! kill -0 "$lo" 2>/dev/null; then rm -rf "$LOCKD" 2>/dev/null; [ "$lk" -lt "$LOCK_TRIES" ] || return 1; continue; fi
+    if [ -z "$lo" ] && [ "$lk" -gt 50 ]; then rm -rf "$LOCKD" 2>/dev/null; [ "$lk" -lt "$LOCK_TRIES" ] || return 1; continue; fi   # no pid after ~5 s: the owner died before writing it
+    [ "$lk" -lt "$LOCK_TRIES" ] || return 1
     tick
   done
   echo $$ > "$LOCKD/pid"
@@ -460,7 +466,14 @@ run_daemon() {
     st=on
     if [ "$SCREENOFF" = 1 ]; then scr_get; st=$ST; fi
     if [ "$st" != "$last" ] || [ "$n" -ge "$REASSERT_EVERY" ]; then
-      apply_state "$st" >/dev/null; last=$st; n=0
+      if ! have_def && [ -s "$APPLIED" ]; then
+        # Limits of this module are in place but the phone's own values are not on record: changing more
+        # limits now would be changes that can never be put back. Leave everything as it is.
+        [ -n "$dg_logged" ] || log_msg "watcher $$: no usable record of the phone's own values while limits are in place, not changing any more limits"
+        dg_logged=1; n=0
+      else
+        dg_logged=""; apply_state "$st" >/dev/null; last=$st; n=0
+      fi
     fi
     n=$((n + 1))
     if [ "$st" = off ]; then nap=$POLL_OFF; else nap=$POLL_ON; fi
@@ -488,7 +501,13 @@ cmd_apply() {
   if [ "$ENABLED" = 1 ]; then
     capture_defaults; ca_cd=$?
     if [ "$ca_cd" != 0 ] && ! have_def; then
-      echo "error: the phone's own limits could not be saved, so no limit was changed"; return 1
+      if [ -s "$APPLIED" ]; then
+        log_msg "apply refused: limits of this module are in place but no usable record of the phone's own values exists"
+        echo "error: this module's limits are already in place but the phone's own limits are not on record, so no further limit was changed (a reboot records them again)"
+      else
+        echo "error: the phone's own limits could not be saved, so no limit was changed"
+      fi
+      return 1
     fi
     [ "$ca_cd" = 0 ] || echo "warn: the phone's own limits could not be saved again; the earlier record is kept"
     have_def || echo "$NOSTOCK"
@@ -499,7 +518,8 @@ cmd_apply() {
       ca_rc=1
     fi
   else
-    capture_defaults || echo "warn: the phone's own limits could not be saved"
+    # (With limits of ours in place and no record there is nothing to capture; the line below says so.)
+    if have_def || [ ! -s "$APPLIED" ]; then capture_defaults || echo "warn: the phone's own limits could not be saved"; fi
     have_def || [ ! -s "$APPLIED" ] || echo "$NOSTOCK"
     if ! stop_daemon; then
       echo "error: the watcher is still running and may apply the limits again; your settings are kept, try again or reboot"

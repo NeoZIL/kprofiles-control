@@ -13,6 +13,7 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 90
     # Releases are published one at a time, so a second tag cannot promote itself while the first is
     # still being checked. Other runs (branches, pull requests) are not held up by this.
     concurrency:
@@ -31,31 +32,52 @@ jobs:
       - name: ShellCheck
         run: shellcheck -s sh -S warning -e SC1090,SC2154,SC2034 module/*.sh tests/*.sh build.sh release.sh
 
-      - name: Self-test (dash)
-        run: |
-          sh tests/kp-test.sh
-          sh tests/tune-test.sh
-          sh tests/build-test.sh
-          sh tests/release-test.sh
-
-      - name: Self-test (mksh, the shell Android uses)
+      # Each suite is its own step with its own time limit, so a hang is reported at the suite that hung
+      # (and ends there) instead of holding the whole job until the job limit.
+      - name: dash - kp tests
+        timeout-minutes: 5
+        run: sh tests/kp-test.sh
+      - name: dash - tune tests
+        timeout-minutes: 20
+        run: sh tests/tune-test.sh
+      - name: dash - build tests
+        timeout-minutes: 5
+        run: sh tests/build-test.sh
+      - name: dash - release tests
+        timeout-minutes: 10
+        run: sh tests/release-test.sh
+      - name: mksh shim (the shell Android uses)
         run: |
           mkdir -p "$RUNNER_TEMP/shim-mksh"
           ln -sf "$(command -v mksh)" "$RUNNER_TEMP/shim-mksh/sh"
-          PATH="$RUNNER_TEMP/shim-mksh:$PATH" mksh tests/kp-test.sh
-          PATH="$RUNNER_TEMP/shim-mksh:$PATH" mksh tests/tune-test.sh
-          PATH="$RUNNER_TEMP/shim-mksh:$PATH" mksh tests/build-test.sh
-          PATH="$RUNNER_TEMP/shim-mksh:$PATH" mksh tests/release-test.sh
-
-      - name: Self-test (busybox ash)
+      - name: mksh - kp tests
+        timeout-minutes: 5
+        run: PATH="$RUNNER_TEMP/shim-mksh:$PATH" mksh tests/kp-test.sh
+      - name: mksh - tune tests
+        timeout-minutes: 20
+        run: PATH="$RUNNER_TEMP/shim-mksh:$PATH" mksh tests/tune-test.sh
+      - name: mksh - build tests
+        timeout-minutes: 5
+        run: PATH="$RUNNER_TEMP/shim-mksh:$PATH" mksh tests/build-test.sh
+      - name: mksh - release tests
+        timeout-minutes: 10
+        run: PATH="$RUNNER_TEMP/shim-mksh:$PATH" mksh tests/release-test.sh
+      - name: busybox ash shim
         run: |
           mkdir -p "$RUNNER_TEMP/shim-bb"
           ln -sf "$(command -v busybox)" "$RUNNER_TEMP/shim-bb/sh"
-          PATH="$RUNNER_TEMP/shim-bb:$PATH" busybox sh tests/kp-test.sh
-          PATH="$RUNNER_TEMP/shim-bb:$PATH" busybox sh tests/tune-test.sh
-          PATH="$RUNNER_TEMP/shim-bb:$PATH" busybox sh tests/build-test.sh
-          PATH="$RUNNER_TEMP/shim-bb:$PATH" busybox sh tests/release-test.sh
-
+      - name: busybox ash - kp tests
+        timeout-minutes: 5
+        run: PATH="$RUNNER_TEMP/shim-bb:$PATH" busybox sh tests/kp-test.sh
+      - name: busybox ash - tune tests
+        timeout-minutes: 20
+        run: PATH="$RUNNER_TEMP/shim-bb:$PATH" busybox sh tests/tune-test.sh
+      - name: busybox ash - build tests
+        timeout-minutes: 5
+        run: PATH="$RUNNER_TEMP/shim-bb:$PATH" busybox sh tests/build-test.sh
+      - name: busybox ash - release tests
+        timeout-minutes: 10
+        run: PATH="$RUNNER_TEMP/shim-bb:$PATH" busybox sh tests/release-test.sh
       - name: Tag matches module version (tags only)
         if: startsWith(github.ref, 'refs/tags/v')
         run: |
