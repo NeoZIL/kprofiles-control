@@ -117,16 +117,19 @@ log_msg() {
 }
 
 # ---------- the phone's own values ----------
+# A usable stock record is a regular file with something in it. A zero-byte file is not one, and neither
+# is a folder standing where the file should be (-s alone is true for a folder).
+have_def() { [ -f "$DEF" ] && [ -s "$DEF" ]; }
 capture_defaults() {
   CAP_BAD=""; CAP_PIN=""
   if [ "$1" != force ]; then
-    [ -f "$DEF" ] && return 0                    # already recorded
+    have_def && return 0                          # already recorded (an empty file is not a record)
     [ -s "$APPLIED" ] && return 0                # our own limits are in place: would record them as stock
   fi
   # The kernel Battery profile lowers the values we read, so a reading taken now is not stock.
   # This holds for the forced boot-time capture too: keep whatever was recorded before, or nothing.
   if [ "$(rd "$KPNODE")" = 1 ]; then
-    [ -s "$DEF" ] && return 0                    # an earlier record exists and is kept untouched
+    have_def && return 0                          # an earlier record exists and is kept untouched
     # Nothing is on record and this reading is not stock. At boot that is a failure to record the phone's
     # own limits (exit status 2 in cmd_boot, so service.sh does not apply the kernel profile); every other
     # caller keeps its old behaviour of carrying on without a record (and warning that there is none).
@@ -168,7 +171,18 @@ capture_defaults() {
     # readable values are still better than none, so they are kept.
     [ -z "$CAP_BAD" ] || log_msg "could not read:$CAP_BAD"
     [ -z "$CAP_PIN" ] || log_msg "minimum at or above maximum, not recorded as stock for:$CAP_PIN"
-    if [ -s "$DEF" ]; then rm -f "$DEF.tmp"; return 0; fi
+    if have_def; then rm -f "$DEF.tmp"; return 0; fi
+  fi
+  # An empty snapshot cannot be used to put the phone's own limits back, and it must never count as one.
+  if [ ! -s "$DEF.tmp" ]; then
+    rm -f "$DEF.tmp" 2>/dev/null
+    if have_def; then
+      log_msg "no usable frequency values were read; the earlier stock record is kept"
+      return 0
+    fi
+    [ ! -f "$DEF" ] || [ -s "$DEF" ] || rm -f "$DEF" 2>/dev/null     # drop a stale zero-byte file
+    log_msg "no usable frequency values were read; no stock record exists"
+    return 2
   fi
   mv "$DEF.tmp" "$DEF" 2>/dev/null || { cd_fail; return 2; }
   return 0
@@ -473,26 +487,26 @@ cmd_apply() {
   [ -z "$CFG_BAD" ] || { echo "$NOREAD"; return 1; }
   if [ "$ENABLED" = 1 ]; then
     capture_defaults; ca_cd=$?
-    if [ "$ca_cd" != 0 ] && [ ! -f "$DEF" ]; then
+    if [ "$ca_cd" != 0 ] && ! have_def; then
       echo "error: the phone's own limits could not be saved, so no limit was changed"; return 1
     fi
     [ "$ca_cd" = 0 ] || echo "warn: the phone's own limits could not be saved again; the earlier record is kept"
-    [ -f "$DEF" ] || echo "$NOSTOCK"
+    have_def || echo "$NOSTOCK"
     if ! apply_state "$(want_state)"; then report_apply_failure; ca_rc=1; fi
-    [ ! -f "$DEF" ] || warn_nodefault
+    ! have_def || warn_nodefault
     if ! start_daemon; then
       echo "error: your limits are applied for the current screen state, but the watcher that switches them when the screen turns on or off is not running"
       ca_rc=1
     fi
   else
     capture_defaults || echo "warn: the phone's own limits could not be saved"
-    [ -f "$DEF" ] || [ ! -s "$APPLIED" ] || echo "$NOSTOCK"
+    have_def || [ ! -s "$APPLIED" ] || echo "$NOSTOCK"
     if ! stop_daemon; then
       echo "error: the watcher is still running and may apply the limits again; your settings are kept, try again or reboot"
       ca_rc=1
     fi
     if ! apply_state none; then report_apply_failure; ca_rc=1; fi
-    [ ! -f "$DEF" ] || warn_nodefault
+    ! have_def || warn_nodefault
   fi
   return "$ca_rc"
 }
@@ -601,7 +615,7 @@ cmd_boot() {
   cb_nostock=""
   if [ "$cb_cd" != 0 ]; then
     echo "error: the phone's own limits could not be saved at boot; an earlier record is kept if there is one"; cb_rc=1
-    { [ -f "$DEF" ] && [ -s "$DEF" ]; } || cb_nostock=1
+    have_def || cb_nostock=1
   fi
   [ -z "$CAP_BAD" ] || echo "warn: could not read these frequency values at boot:$CAP_BAD (an earlier record is kept if there is one)"
   [ -z "$CAP_PIN" ] || echo "warn: the minimum frequency was at or above the maximum for:$CAP_PIN, so it was not recorded as stock (something is holding it up); an earlier record is kept if there is one"

@@ -270,6 +270,41 @@ mkfake; S boot >/dev/null; sh "$HERE/../module/kp.sh" mode 3 >/dev/null; echo 1 
 runsvc
 check "Battery active, earlier record: the saved kernel profile IS applied" 3 "$(v kp/kp_mode)"
 
+echo "--- boot: no usable frequency value can be read at all ---"
+blank() { for bf in $(find "$T/cpufreq" "$T/gpu" -type f 2>/dev/null); do : > "$bf"; done; }   # every node reads empty
+mkfake; blank
+S boot >/dev/null; rc=$?
+check "all reads empty, no record: tune.sh boot exits 2" 2 "$rc"
+check "all reads empty, no record: no snapshot file is left" no "$([ -e "$T/cfg/defaults" ] && echo yes || echo no)"
+check "all reads empty, no record: the log says so" 1 "$(grep -c 'no usable frequency values were read; no stock record exists' "$T/cfg/tune.log")"
+mkfake; rm -rf "$T/cpufreq" "$T/gpu"
+S boot >/dev/null; rc=$?
+check "all nodes missing, no record: tune.sh boot exits 2" 2 "$rc"
+check "all nodes missing, no record: no snapshot file is left" no "$([ -e "$T/cfg/defaults" ] && echo yes || echo no)"
+mkfake; S boot >/dev/null; cp "$T/cfg/defaults" "$T/defaults.keep"; blank
+S boot >/dev/null; rc=$?
+check "all reads empty, earlier record: boot exits 0 (the record is kept)" 0 "$rc"
+check "all reads empty, earlier record: the record is byte-for-byte unchanged" 0 "$(cmp -s "$T/defaults.keep" "$T/cfg/defaults"; echo $?)"
+mkfake; S boot >/dev/null; cp "$T/cfg/defaults" "$T/defaults.keep"; rm -rf "$T/cpufreq" "$T/gpu"
+S boot >/dev/null; rc=$?
+check "all nodes missing, earlier record: boot exits 0" 0 "$rc"
+check "all nodes missing, earlier record: the record is byte-for-byte unchanged" 0 "$(cmp -s "$T/defaults.keep" "$T/cfg/defaults"; echo $?)"
+check "all nodes missing, earlier record: the log says it was kept" 1 "$(grep -c 'the earlier stock record is kept' "$T/cfg/tune.log")"
+mkfake; mkdir -p "$T/cfg"; : > "$T/cfg/defaults"                    # a stale zero-byte file
+out=$(S status); has "empty defaults file: Status records a real snapshot" "def_big_max=2572800" "$out"
+check "empty defaults file: replaced by a real snapshot" 2572800 "$(sed -n 's/^big_max=//p' "$T/cfg/defaults")"
+mkfake; mkdir -p "$T/cfg"; : > "$T/cfg/defaults"; echo 1 > "$T/kp/kp_mode"; echo 1286400 > "$T/cpufreq/policy3/scaling_max_freq"
+out=$(S preset tilt); has "empty defaults file, Battery on: Apply says nothing is recorded" "not recorded yet" "$out"
+S boot >/dev/null; rc=$?; check "empty defaults file, Battery on: tune.sh boot exits 2" 2 "$rc"
+mkfake; mkdir -p "$T/cfg"; : > "$T/cfg/defaults"; blank
+out=$(S preset tilt); rc=$?
+check "empty defaults file, nothing readable: Apply refuses to change a limit" 1 "$rc"
+has "empty defaults file, nothing readable: Apply says why" "so no limit was changed" "$out"
+mkfake; kpsave 1; blank; runsvc
+check "service.sh, all reads empty: the kernel profile is NOT applied" 0 "$(v kp/kp_mode)"
+has "service.sh, all reads empty: boot.log has the status" "exit status 2" "$(cat "$T/cfg/boot.log")"
+check "service.sh, all reads empty: no snapshot file" no "$([ -e "$T/cfg/defaults" ] && echo yes || echo no)"
+
 echo "--- boot: the save fails but an earlier record exists ---"
 mkfake; S boot >/dev/null; cp "$T/cfg/defaults" "$T/defaults.keep"; kpsave 1; mkdir "$T/cfg/defaults.tmp"
 S boot >/dev/null; rc=$?

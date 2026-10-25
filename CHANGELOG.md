@@ -1,5 +1,24 @@
 # Changelog
 
+## v1.4.2
+An audit of v1.4.1 found that the stock snapshot could end up empty. Not seen on a phone.
+- Fix: **an empty stock snapshot is never saved or accepted.** When no CPU or GPU frequency value could be
+  used (every node unreadable, empty or missing), `capture_defaults` still moved an empty temporary file
+  over the snapshot and returned success. Reproduced: with every frequency node missing, boot **replaced a
+  good saved snapshot with a zero-byte file**, and with nothing saved it left a zero-byte file and exited
+  0, so `service.sh` applied the kernel profile. Now an earlier snapshot is kept untouched (and the log
+  says so), and with no earlier snapshot nothing is written, the stale empty file is removed, the capture
+  returns status 2, `tune.sh boot` exits 2 and `service.sh` does not apply the kernel profile.
+- Fix: **a zero-byte `defaults` file no longer counts as a record.** Apply, Stock, Status and boot all
+  treat only a regular, non-empty file as a usable stock record (a folder in its place is still refused).
+  A stale empty file is replaced by a real snapshot on the next capture, Apply warns that nothing is
+  recorded, and Apply refuses to change a limit when nothing can be recorded.
+- Tests: every reading empty and every node missing, each with and without an earlier snapshot (exit
+  status, file left behind, byte-for-byte comparison, log); a zero-byte `defaults` file with Status, with
+  Apply, with the Battery profile on, and with nothing readable; and the real `service.sh` against a
+  fake phone with nothing readable (kernel profile skipped, no snapshot file). Each of these fails on v1.4.1.
+- Version: v1.4.2, versionCode 19.
+
 ## v1.4.1
 An audit of v1.4.0 found one hole in the boot-safety rule introduced in v1.2.3. Not seen on a phone.
 - Fix: **boot no longer applies the kernel profile when the Battery profile is already active and nothing
