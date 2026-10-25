@@ -259,6 +259,17 @@ runsvc
 check "no record, temp file fails: the kernel profile is NOT applied" 0 "$(v kp/kp_mode)"
 check "no record, temp file fails: nothing was recorded" no "$([ -f "$T/cfg/defaults" ] && echo yes || echo no)"
 
+echo "--- boot: the kernel Battery profile is already active and nothing is on record ---"
+mkfake; sh "$HERE/../module/kp.sh" mode 3 >/dev/null; echo 1 > "$T/kp/kp_mode"; echo 1286400 > "$T/cpufreq/policy3/scaling_max_freq"   # saved choice 3, kernel at 1
+runsvc
+check "Battery active, no record: the saved kernel profile is NOT applied" 1 "$(v kp/kp_mode)"
+has "Battery active, no record: boot.log says the profile was skipped" "kernel profile was NOT applied" "$(cat "$T/cfg/boot.log")"
+has "Battery active, no record: boot.log has the status" "exit status 2" "$(cat "$T/cfg/boot.log")"
+check "Battery active, no record: big max was not recorded as stock" "" "$(sed -n 's/^big_max=//p' "$T/cfg/defaults" 2>/dev/null)"
+mkfake; S boot >/dev/null; sh "$HERE/../module/kp.sh" mode 3 >/dev/null; echo 1 > "$T/kp/kp_mode"
+runsvc
+check "Battery active, earlier record: the saved kernel profile IS applied" 3 "$(v kp/kp_mode)"
+
 echo "--- boot: the save fails but an earlier record exists ---"
 mkfake; S boot >/dev/null; cp "$T/cfg/defaults" "$T/defaults.keep"; kpsave 1; mkdir "$T/cfg/defaults.tmp"
 S boot >/dev/null; rc=$?
@@ -349,6 +360,19 @@ check "boot with Battery on: earlier record kept" 2572800 "$(sed -n 's/^big_max=
 mkfake; echo 1 > "$T/kp/kp_mode"; echo 1286400 > "$T/cpufreq/policy3/scaling_max_freq"
 S boot >/dev/null
 check "boot with Battery on and no record: nothing is saved" "" "$(sed -n 's/^big_max=//p' "$T/cfg/defaults" 2>/dev/null)"
+mkfake; echo 1 > "$T/kp/kp_mode"; echo 1286400 > "$T/cpufreq/policy3/scaling_max_freq"
+out=$(S boot); rc=$?
+check "boot with Battery on and no record: tune.sh boot exits 2" 2 "$rc"
+has "boot with Battery on and no record: the error is reported" "kernel profile must not be applied at this boot" "$out"
+check "boot with Battery on and no record: the log says why" 1 "$(grep -c 'Battery profile is active and no earlier record exists' "$T/cfg/tune.log")"
+check "boot with Battery on and no record: no snapshot file" no "$([ -s "$T/cfg/defaults" ] && echo yes || echo no)"
+mkfake; S boot >/dev/null; cp "$T/cfg/defaults" "$T/defaults.keep"; echo 1 > "$T/kp/kp_mode"; echo 1286400 > "$T/cpufreq/policy3/scaling_max_freq"
+S boot >/dev/null; rc=$?
+check "boot with Battery on and an earlier record: exits 0" 0 "$rc"
+check "boot with Battery on and an earlier record: the record is untouched" 0 "$(cmp -s "$T/defaults.keep" "$T/cfg/defaults"; echo $?)"
+mkfake; echo 1 > "$T/kp/kp_mode"; echo 1286400 > "$T/cpufreq/policy3/scaling_max_freq"
+S status >/dev/null; rc=$?; check "status with Battery on and no record still works" 0 "$rc"
+S preset tilt >/dev/null; rc=$?; check "Apply with Battery on and no record still works (it warns)" 0 "$rc"
 S preset tilt >/dev/null; out=$(S preset stock); has "no record: Stock says so" "not recorded yet" "$out"
 
 echo "--- Reset everything: profile first, and failures are reported ---"

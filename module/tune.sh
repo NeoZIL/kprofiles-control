@@ -125,7 +125,17 @@ capture_defaults() {
   fi
   # The kernel Battery profile lowers the values we read, so a reading taken now is not stock.
   # This holds for the forced boot-time capture too: keep whatever was recorded before, or nothing.
-  [ "$(rd "$KPNODE")" = 1 ] && return 0
+  if [ "$(rd "$KPNODE")" = 1 ]; then
+    [ -s "$DEF" ] && return 0                    # an earlier record exists and is kept untouched
+    # Nothing is on record and this reading is not stock. At boot that is a failure to record the phone's
+    # own limits (exit status 2 in cmd_boot, so service.sh does not apply the kernel profile); every other
+    # caller keeps its old behaviour of carrying on without a record (and warning that there is none).
+    if [ "$1" = force ]; then
+      log_msg "boot: the kernel Battery profile is active and no earlier record exists, so nothing was recorded as stock"
+      return 2
+    fi
+    return 0
+  fi
   # Returns 2 when the snapshot could not be SAVED (a saved one is then left exactly as it was).
   cd_fail() { rm -f "$DEF.tmp" 2>/dev/null; log_msg "could not save the phone's own values"; return 2; }
   mkdir -p "$CFG_DIR" 2>/dev/null || { log_msg "could not save the phone's own values"; return 2; }

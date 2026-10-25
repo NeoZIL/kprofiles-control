@@ -184,10 +184,10 @@ uses) and busybox ash, and checks that a pushed tag matches the `version` in
 ## Status
 
 v1.0, v1.1 and v1.1.4 are confirmed working by the author on a POCO F6 (`peridot`) with the
-Theettam 6.1.176 kernel and KernelSU-Next 3.4.2. v1.4.0 is covered by off-device tests (script
+Theettam 6.1.176 kernel and KernelSU-Next 3.4.2. v1.4.1 is covered by off-device tests (script
 logic against a fake copy of the phone's frequency tables, run in CI under dash, mksh and busybox
 ash, and the page in a simulated browser) and has not been tried on the phone yet; the same goes
-for v1.1.5 to v1.2.2. Android or Xiaomi services may override some
+for v1.1.5 to v1.4.0. Android or Xiaomi services may override some
 values. Every write is checked and the page shows a warning if the kernel did not accept
 it. Please open an issue with that message.
 

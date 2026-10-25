@@ -1,5 +1,19 @@
 # Changelog
 
+## v1.4.1
+An audit of v1.4.0 found one hole in the boot-safety rule introduced in v1.2.3. Not seen on a phone.
+- Fix: **boot no longer applies the kernel profile when the Battery profile is already active and nothing
+  was ever recorded as stock.** `capture_defaults` skips the reading while the kernel Battery profile is
+  on (the values are capped and are not stock), but it returned success even when no snapshot existed, so
+  `tune.sh boot` exited 0 and `service.sh` applied the kernel profile anyway. The forced boot-time capture
+  now returns status 2 in that case: `tune.sh boot` exits 2, `service.sh` does not apply the kernel profile
+  at that boot, and `boot.log` and `tune.log` say so. An earlier record is still kept untouched (exit 0),
+  and Apply, Stock and Status behave as before (they warn that nothing is recorded).
+- Tests: Battery active at boot with no record (exit status, error text, log, no snapshot file), with an
+  earlier record (exit 0, record untouched), Apply and Status still working, and the real `service.sh`
+  against a fake phone for both cases (profile skipped without a record, applied with one).
+- Version: v1.4.1, versionCode 18.
+
 ## v1.4.0
 Release of the v1.2.3 code under a new version number. No script or WebUI change from v1.2.3.
 - Change: version number only (v1.2.3 to v1.4.0, versionCode 16 to 17).
