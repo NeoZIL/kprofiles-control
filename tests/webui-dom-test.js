@@ -73,7 +73,7 @@ async function load(opts) {
   const win = { localStorage: {
     getItem: (k) => (store.has(k) ? store.get(k) : null), setItem: (k, v) => { store.set(k, String(v)); }, removeItem: (k) => { store.delete(k); } } };
   const def = (cmd) => {
-    if (/module\.prop/.test(cmd)) return ok("v3.0.0\n");
+    if (/module\.prop/.test(cmd)) return ok("v3.1.0\n");
     if (/tune\.sh lists/.test(cmd)) return ok(LISTS);
     if (/tune\.sh status/.test(cmd)) return ok(statusText());
     if (/kp\.sh status/.test(cmd)) return ok("mode=0 auto=N persist=1\n");
@@ -191,6 +191,162 @@ const deferred = () => { let res; const p = new Promise((r) => { res = r; }); re
     check("a clean Reset clears the lock", c.store.has("kprofiles-ui-frequency-recovery-v1") === false, "still stored");
     check("a clean Reset clears the stored message", c.store.has("kprofiles-ui-frequency-recovery-message-v1") === false, "still stored");
     check("a clean Reset clears the stored latest response", c.store.has("kprofiles-ui-frequency-recovery-latest-v1") === false, "still stored");
+  }
+  // 6. The new profile choices exist, and the kernel section starts collapsed when supported.
+  {
+    const c = await load();
+    for (const preset of ["performance", "custom", "dynamic"]) {
+      check("new profile button exists: " + preset, c.doc.all.some((e) => e.getAttribute("data-preset") === preset), "missing");
+    }
+    check("Reset everything uses the outlined danger-action style", c.el("resetAll").hasClass("danger-opt"), c.el("resetAll").className);
+    check("Reset button includes its own reset icon", !!c.el("resetIcon"), "missing reset SVG");
+    check("Reset button exposes a clear accessible label", c.el("resetAll").getAttribute("aria-label") === "Reset everything", c.el("resetAll").getAttribute("aria-label"));
+    check("kernel profiles section starts collapsed", c.el("kernelProfilesPanel").style.display === "none", c.el("kernelProfilesPanel").style.display);
+    check("supported kernel enables its profile button", c.el("kernelProfilesBtn").disabled === false, "disabled");
+    check("the three existing kernel profile choices remain available", c.doc.all.filter((e) => e.hasAttribute("data-kp")).length === 3, "wrong choice count");
+    c.el("kernelProfilesBtn").fire("click");
+    check("tap expands supported kernel profiles", c.el("kernelProfilesPanel").style.display === "block" && c.el("kernelProfilesBtn").getAttribute("aria-expanded") === "true", c.el("kernelProfilesPanel").style.display);
+  }
+  // 7. Unsupported kernel: keep only the disabled top-level button and an explicit message; hide the modes.
+  {
+    const c = await load({ handler: (cmd, def) => (/kp\.sh status/.test(cmd) ? ok("mode=? auto=? persist=1\n") : def(cmd)) });
+    check("unsupported kernel disables the kernel profiles button", c.el("kernelProfilesBtn").disabled === true, "button enabled");
+    check("unsupported kernel hides the three modes", c.el("kernelProfilesPanel").style.display === "none", c.el("kernelProfilesPanel").style.display);
+    check("unsupported kernel shows the support notice", c.el("kernelUnsupported").style.display === "block", c.el("kernelUnsupported").style.display);
+    check("unsupported kernel disables each kernel mode control", c.doc.all.filter((e) => e.hasAttribute("data-kp")).every((e) => e.disabled), "a kernel option remained enabled");
+    check("unsupported kernel disables kernel persistence", c.el("swKpPersist").disabled === true, "enabled");
+  }
+  // 8. The Stock/Reset bridge between Battery tilt and Battery saver holds through the other profiles too.
+  const clickPreset = (c, name) => { const b = c.doc.all.find((e) => e.getAttribute("data-preset") === name); (c.el("presets").listeners.click || []).forEach((f) => f({ target: b })); };
+  const clickKp = (c, mode) => { const b = c.doc.all.find((e) => e.getAttribute("data-kp") === String(mode)); (c.el("kpopts").listeners.click || []).forEach((f) => f({ target: b })); };
+  const BRIDGE_KEY = "kprofiles-ui-tilt-saver-bridge-v1";
+  // a phone whose preset really changes when a preset command is sent
+  const livePhone = (first, extra) => {
+    const s = { preset: first };
+    return { s, handler: (cmd, def) => {
+      const m = cmd.match(/tune\.sh preset (\w+)/);
+      if (m) { s.preset = m[1]; return ok("ok\n"); }
+      if (/tune\.sh resetall/.test(cmd)) { s.preset = "stock"; return ok("ok\n"); }
+      if (/tune\.sh status/.test(cmd)) return ok(statusText(Object.assign({ preset: s.preset, enabled: s.preset === "stock" ? 0 : 1 }, extra || {})));
+      return def(cmd);
+    } };
+  };
+  for (const [from, to, via] of [["tilt", "saver", "performance"], ["tilt", "saver", "custom"], ["tilt", "saver", "dynamic"], ["saver", "tilt", "performance"], ["saver", "tilt", "custom"], ["saver", "tilt", "dynamic"]]) {
+    const ph = livePhone(from);
+    const c = await load({ handler: ph.handler });
+    clickPreset(c, to); await c.flush();
+    check(from + " -> " + to + " directly is refused", c.sent(new RegExp("preset " + to)) === 0, c.calls.join(" | "));
+    clickPreset(c, via); await c.flush(); await c.advance(9000);
+    check(from + " -> " + via + " is allowed", ph.s.preset === via, "preset is " + ph.s.preset);
+    check(from + " -> " + via + ": the bridge origin is remembered", c.store.get(BRIDGE_KEY) === from, String(c.store.get(BRIDGE_KEY)));
+    clickPreset(c, to); await c.flush();
+    check(from + " -> " + via + " -> " + to + " does not get around Stock", c.sent(new RegExp("preset " + to)) === 0 && ph.s.preset === via, c.calls.join(" | "));
+    check(from + " -> " + via + " -> " + to + ": the page says why", /Direct switching/.test(c.msg()), c.msg());
+    clickPreset(c, from); await c.flush(); await c.advance(9000);
+    check(from + " -> " + via + " -> " + from + " (same side) is fine", ph.s.preset === from, "preset is " + ph.s.preset);
+    clickPreset(c, via); await c.flush(); await c.advance(9000);
+    clickPreset(c, "stock"); await c.flush(); await c.advance(9000);
+    check("Stock clears the bridge origin", !c.store.has(BRIDGE_KEY), String(c.store.get(BRIDGE_KEY)));
+    clickPreset(c, to); await c.flush();
+    check("after Stock, " + to + " is allowed", ph.s.preset === to, "preset is " + ph.s.preset);
+  }
+  {
+    // Reset everything clears the bridge as well
+    const ph = livePhone("tilt");
+    const c = await load({ handler: ph.handler });
+    clickPreset(c, "performance"); await c.flush(); await c.advance(9000);
+    c.el("resetAll").fire("click"); await c.flush(); await c.advance(9000);
+    check("Reset everything clears the bridge origin", !c.store.has(BRIDGE_KEY), String(c.store.get(BRIDGE_KEY)));
+    clickPreset(c, "saver"); await c.flush();
+    check("after Reset everything, saver is allowed", ph.s.preset === "saver", "preset is " + ph.s.preset);
+  }
+  {
+    // the origin survives a reload of the page
+    const ph = livePhone("performance");
+    const c = await load({ handler: ph.handler, storage: { [BRIDGE_KEY]: "tilt" } });
+    clickPreset(c, "saver"); await c.flush();
+    check("a stored bridge origin still blocks after a reload", c.sent(/preset saver/) === 0, c.calls.join(" | "));
+    const c2 = await load({ handler: livePhone("performance").handler, storage: { [BRIDGE_KEY]: "nonsense" } });
+    clickPreset(c2, "saver"); await c2.flush();
+    check("a corrupt stored origin is ignored", c2.sent(/preset saver/) === 1, c2.calls.join(" | "));
+    const c3 = await load({ handler: livePhone("stock").handler, storage: { [BRIDGE_KEY]: "tilt" } });
+    check("a stored origin is dropped when the phone is on Stock", !c3.store.has(BRIDGE_KEY), String(c3.store.get(BRIDGE_KEY)));
+  }
+  // 9. Status wording for the new profiles
+  {
+    const c = await load({ handler: (cmd, def) => (/tune\.sh status/.test(cmd) ? ok(statusText({ preset: "performance" })) : def(cmd)) });
+    check("Performance preset says there are no extra caps", c.el("sActive").textContent === "No extra caps", c.el("sActive").textContent);
+    check("Performance is the highlighted CPU/GPU preset", c.doc.all.find((e) => e.getAttribute("data-preset") === "performance").getAttribute("aria-checked") === "true", "not highlighted");
+    const d1 = await load({ handler: (cmd, def) => (/tune\.sh status/.test(cmd) ? ok(statusText({ preset: "dynamic", state: "on" })) : def(cmd)) });
+    check("Dynamic with the screen on says no extra caps", d1.el("sActive").textContent === "No extra caps (screen on)", d1.el("sActive").textContent);
+    const d2 = await load({ handler: (cmd, def) => (/tune\.sh status/.test(cmd) ? ok(statusText({ preset: "dynamic", state: "off", screen: "off" })) : def(cmd)) });
+    check("Dynamic with the screen off says the screen-off set is active", d2.el("sActive").textContent === "Screen-off set", d2.el("sActive").textContent);
+    const cu = await load({ handler: (cmd, def) => (/tune\.sh status/.test(cmd) ? ok(statusText({ preset: "custom" })) : def(cmd)) });
+    check("Custom is highlighted and its note is shown", cu.doc.all.find((e) => e.getAttribute("data-preset") === "custom").getAttribute("aria-checked") === "true" && cu.el("customNote").style.display === "block", "custom not shown");
+    const nt = await load({ handler: (cmd, def) => (/tune\.sh status/.test(cmd) ? ok(statusText({ enabled: 0, preset: "stock" })) : def(cmd)) });
+    check("Not active when the module is off", nt.el("sActive").textContent === "Not active", nt.el("sActive").textContent);
+  }
+  // 10. Kernel profile section: the other states, and what the three choices send
+  {
+    const c = await load({ handler: (cmd, def) => (/kp\.sh status/.test(cmd) ? { errno: 1, stdout: "", stderr: "kp.sh: not found" } : def(cmd)) });
+    check("kernel status unreadable: the button is locked", c.el("kernelProfilesBtn").disabled === true, "enabled");
+    check("kernel status unreadable: it is not called unsupported", c.el("kernelUnsupported").style.display === "none", c.el("kernelUnsupported").style.display);
+    check("kernel status unreadable: the retry hint is shown", c.el("kernelUnknown").style.display === "block", c.el("kernelUnknown").style.display);
+    check("kernel status unreadable: the modes stay hidden", c.el("kernelProfilesPanel").style.display === "none", c.el("kernelProfilesPanel").style.display);
+    const u = await load({ handler: (cmd, def) => (/kp\.sh status/.test(cmd) ? ok("mode=? auto=? persist=1\n") : def(cmd)) });
+    check("unsupported: the exact message is on the page and shown", /id="kernelUnsupported"[^>]*>Extra kernel features are not supported by your kernel\./.test(src) && u.el("kernelUnsupported").style.display === "block", u.el("kernelUnsupported").style.display);
+    check("unsupported: the unknown-state hint is not shown", u.el("kernelUnknown").style.display === "none", u.el("kernelUnknown").style.display);
+    u.el("kernelProfilesBtn").fire("click");
+    check("unsupported: tapping the locked button opens nothing", u.el("kernelProfilesPanel").style.display === "none", u.el("kernelProfilesPanel").style.display);
+    clickKp(u, 1); u.el("swKpPersist").fire("change"); await u.flush();
+    check("unsupported: a kernel choice or the persist switch sends nothing, even if a tap gets through", u.sent(/kp\.sh (mode|persist)/) === 0, u.calls.join(" | "));
+    check("unsupported: the page says nothing was changed", /not supported by your kernel, so nothing was changed/.test(u.msg()), u.msg());
+    const s = await load();
+    s.el("kernelProfilesBtn").fire("click"); await s.flush();
+    check("supported: the unsupported message is hidden", s.el("kernelUnsupported").style.display === "none", s.el("kernelUnsupported").style.display);
+    clickKp(s, 1); await s.flush();
+    check("supported: Battery sends mode 1", s.sent(/kp\.sh mode 1/) === 1, s.calls.join(" | "));
+    clickKp(s, 3); await s.flush(); await s.advance(9000);
+    check("supported: Performance sends mode 3", s.sent(/kp\.sh mode 3/) === 1, s.calls.join(" | "));
+    check("the section stays open after a kernel change", s.el("kernelProfilesPanel").style.display === "block", s.el("kernelProfilesPanel").style.display);
+    s.el("kernelProfilesBtn").fire("click");
+    check("tapping again collapses it", s.el("kernelProfilesPanel").style.display === "none", s.el("kernelProfilesPanel").style.display);
+    // support disappears on a later refresh (for example after a status retry): the section closes and locks
+    let gone = false;
+    const g = await load({ handler: (cmd, def) => (/kp\.sh status/.test(cmd) && gone ? ok("mode=? auto=? persist=1\n") : def(cmd)) });
+    g.el("kernelProfilesBtn").fire("click");
+    gone = true; clickPreset(g, "performance"); await g.flush();
+    check("support lost: the open section closes", g.el("kernelProfilesPanel").style.display === "none" && g.el("kernelProfilesBtn").disabled === true, g.el("kernelProfilesPanel").style.display);
+    // a stored recovery lock keeps the kernel section shut too
+    const r = await load({ storage: { "kprofiles-ui-frequency-recovery-v1": "1", "kprofiles-ui-frequency-recovery-message-v1": "x" } });
+    check("recovery lock: the kernel section button is locked", r.el("kernelProfilesBtn").disabled === true, "enabled");
+    check("recovery lock: kernel choices are locked", r.doc.all.filter((e) => e.hasAttribute("data-kp")).every((e) => e.disabled), "a choice is enabled");
+  }
+  // 11. the five-page UI navigates locally and does not issue shell commands
+  {
+    const c = await load();
+    const before = c.calls.length;
+    check("navigation starts on Home", c.el("pageHome").style.display === "block" && c.el("navHome").getAttribute("aria-current") === "page", "Home not active");
+    const routes = [
+      ["navCpu", "pageCpu", "cpu"],
+      ["navKernel", "pageKernel", "kernel"],
+      ["navMonitor", "pageMonitor", "monitor"],
+      ["navSettings", "pageSettings", "settings"],
+      ["navHome", "pageHome", "home"]
+    ];
+    routes.forEach(([navId, pageId, key]) => {
+      c.el(navId).fire("click");
+      check("navigation opens " + key, c.el(pageId).style.display === "block" && c.el(navId).getAttribute("aria-current") === "page", "page/nav not active");
+      const visible = ["pageHome", "pageCpu", "pageKernel", "pageMonitor", "pageSettings"].filter((id) => c.el(id).style.display === "block");
+      check("navigation leaves exactly one page visible after " + key, visible.length === 1 && visible[0] === pageId, visible.join(","));
+    });
+    c.el("homeProfiles").fire("click");
+    check("Home quick access opens CPU and GPU", c.el("pageCpu").style.display === "block", c.el("pageCpu").style.display);
+    c.el("topSettings").fire("click");
+    check("header gear opens Settings", c.el("pageSettings").style.display === "block", c.el("pageSettings").style.display);
+    c.el("homeOpenMonitor").fire("click");
+    check("Home details shortcut opens Monitor", c.el("pageMonitor").style.display === "block", c.el("pageMonitor").style.display);
+    check("page navigation issues no shell commands", c.calls.length === before, "before=" + before + " after=" + c.calls.length);
   }
   process.exit(fail);
 })().catch((e) => { console.log("FAIL the test itself crashed: " + (e && e.stack || e)); process.exit(1); });

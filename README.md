@@ -1,11 +1,23 @@
 # Kprofiles Control
 
-A KernelSU-Next module with a WebUI page for the Theettam kernel on the POCO F6 /
-Redmi Turbo 3 (`peridot`). From one screen you can:
+A KernelSU-Next module with a WebUI for the Theettam kernel on the POCO F6 /
+Redmi Turbo 3 (`peridot`). The v3.5.0 interface is organized into Home, CPU & GPU,
+Kernel, Monitor, and Settings pages. From the UI you can:
 
-- set **CPU and GPU speed limits** with presets or your own values
+- choose **Stock, Battery tilt, Battery saver, Performance, Custom, or Dynamic** CPU/GPU profiles
 - use **different limits when the screen is on and when it is off**
-- switch the kernel's built-in **Kprofiles** mode
+- use the kernel's built-in **Kprofiles** modes when the kernel supports them
+- inspect the current engine-reported CPU/GPU limits and screen-watcher state
+
+### WebUI layout and responsiveness
+
+The five screens share one lightweight, offline HTML page. Bottom navigation switches
+which page is visible locally; it does not reload the document or issue shell commands.
+The UI uses no remote fonts, scripts, or UI frameworks and adds no periodic frequency
+polling. Status values refresh when the page loads and after an action. The Monitor page
+shows CPU/GPU limit readbacks reported by the engine, not continuously sampled live clock
+speeds. The interface follows the device's light/dark theme and respects reduced-motion
+preferences.
 
 ## Frequency limits
 
@@ -28,12 +40,20 @@ The pickers only list frequencies the phone itself reports as available. Pick
 | **Stock** | the phone's own CPU/GPU limits | the phone's own CPU/GPU limits |
 | **Battery tilt** | big max 2188.8 MHz, prime max 2457.6 MHz, GPU max 736 MHz | little max 1017.6, big max 787.2, prime max 633.6, GPU max 353 MHz |
 | **Battery saver** | little and big max 1593.6, prime max 1766.4, GPU max 633 MHz | little max 787.2, big max 633.6, prime max 633.6, GPU max 255 MHz |
+| **Performance** | phone's own limits; no additional caps from this module | phone's own limits; screen-off capping is disabled |
+| **Custom** | preserves your saved screen-on choices | preserves your saved screen-off choices |
+| **Dynamic** | phone's own limits; no extra caps while the screen is on | battery-tilt caps while the screen is off |
 
-Stock removes the limits this module set. It does not touch the kernel profile; the
-**Reset everything** button does both (Stock limits and kernel profile None).
+Stock restores the saved limits and disables this module's tuning. **Performance** keeps the module's
+settings active but applies no extra frequency caps; it does **not** overclock or bypass thermal controls. The separate kernel **Performance** mode is a different feature.
+Dynamic leaves screen-on behavior to the phone and applies lower maxima only when the screen is off.
+Custom preserves the current saved limits and opens the existing pickers for editing. The outlined **Reset everything** button uses a red icon and label (not a solid red fill); it restores Stock and sets the separate kernel profile to None.
 
-A preset only fills in the values. Edit any picker afterwards and the preset becomes
-"custom". The Action button in the manager cycles Stock, Battery tilt, Battery saver.
+A preset only fills in the values. Edit any picker afterwards and the preset becomes "custom".
+
+The Action button in the manager continues to cycle Stock, Battery tilt and Battery saver (from any other profile it goes to Stock). The WebUI
+also requires Stock or Reset everything as a bridge between Battery tilt and Battery saver, even if
+you select another profile in between.
 
 ### How the screen-off set works
 
@@ -91,7 +111,12 @@ flips back and forth, please open an issue with the output. Finish with **Reset 
 To check the disable handling, turn the module off in the manager with a preset active and
 read `scaling_max_freq` again a few seconds later: it should be back at the phone's own value.
 
-## Kernel profile (advanced)
+## Kernel profiles (advanced)
+
+The WebUI checks `kp.sh status` before exposing kernel profiles. If the kernel reports that the
+Kprofiles node is missing, it disables the Kernel profiles button and explains that extra kernel
+features are unsupported. When supported, tap the collapsed **Kernel profiles** button to reveal the
+existing None, Battery and Performance choices. The kernel **Performance** mode (Kernel page) is distinct from the CPU/GPU **Performance** profile (CPU & GPU page); the CPU/GPU one adds no caps and is not an overclock.
 
 The Theettam kernel contains the Kprofiles driver. It only stores a number; other
 kernel code reacts to it. Reading the kernel source, this is what each mode does:
@@ -179,7 +204,7 @@ sh build.sh             # writes dist/Kprofiles-Control-<version>.zip, update.js
 
 GitHub Actions runs ShellCheck, then all four tests under dash, **mksh** (the shell Android
 uses) and busybox ash, and checks that a pushed tag matches the `version` in
-`module.prop`. Push a tag such as `v3.0.0` to publish a release.
+`module.prop`. Push a tag such as `v3.5.0` to publish a release.
 
 ## Status
 
@@ -189,7 +214,10 @@ Stock restoration, screen transitions, and preset switching; intermittent histor
 refusals were observed and their cause remains unconfirmed. v1.4.4 added WebUI-only switching,
 8-second cooldown, and recovery-lock guardrails. v2.0.0 improved frequency-failure recognition and
 recovery unlock rules. v3.0.0 keeps profile controls disabled until the first successful status read and
-persists the latest failed-reset detail across WebUI reloads; it has not yet been tested on the phone.
+persists the latest failed-reset detail across WebUI reloads. v3.1.0 added the CPU/GPU **Performance** profile (first called No Extra Caps; stored internally as `performance`), Custom and
+Dynamic preset entries, a supported-kernel-only Kernel profiles accordion, and a red Reset everything
+control. v3.2.0 reorganizes the WebUI into five locally navigated screens without changing the tuning
+engine. v3.2.1 and v3.5.0 polish the icons; v3.5.0 also changes how the phone's own limits are recorded (see CHANGELOG.md). The v3.x UI has not yet been tested on the phone.
 The page shows the engine's warning/error text and leaves only Reset everything available after a
 reported frequency restore/apply mismatch. This is a UI safeguard, not an engine fix, and it cannot detect a
 silent mismatch the engine does not report. Android or Xiaomi services may override some values.

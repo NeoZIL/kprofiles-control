@@ -50,6 +50,7 @@ mksys() { # the kernel's own files, exactly as a freshly booted phone has them (
   echo 120 > "$T/bl/brightness"; echo 0 > "$T/kp/kp_mode"; echo N > "$T/kp/auto_kp"
 }
 mkfake() { reap; rm -rf "$T/cpufreq" "$T/gpu" "$T/cfg" "$T/kp"; mksys; }
+export TUNE_CAP_SAMPLES=1 TUNE_CAP_GAP=0 TUNE_CAP_BOOT_SAMPLES=1 TUNE_CAP_BOOT_GAP=0
 export CPUFREQ_DIR="$T/cpufreq" GPU_DIR="$T/gpu" BL_PATH="$T/bl/brightness" CFG_DIR="$T/cfg" TUNE_NO_DAEMON=1 KP_PATH="$T/kp/kp_mode" AUTO_PATH="$T/kp/auto_kp"
 v() { cat "$T/$1"; }
 waitfor() { # name expected file seconds   (poll instead of a fixed sleep, so slow runners do not flake)
@@ -60,7 +61,7 @@ waitfor() { # name expected file seconds   (poll instead of a fixed sleep, so sl
   done
   echo "FAIL $1: expected '$2' got '$(cat "$T/$3")'"; fail=1
 }
-S() { sh "$TUNE" "$@"; }
+S() { export TUNE_START_TRIES TUNE_LOCK_TRIES TUNE_BOOT_RETRIES TUNE_BOOT_WAIT; sh "$TUNE" "$@"; }
 # Failure injection that works in EVERY shell. A stand-in grep or mv placed first in PATH is NOT enough:
 # busybox ash runs its own built-in applets and never looks at PATH for them, so such a test silently
 # injected nothing there. A shell FUNCTION with the command's name beats both the built-in applet and the
@@ -125,6 +126,38 @@ check "stock: big max"    2572800 "$(v cpufreq/policy3/scaling_max_freq)"
 check "stock: prime max"  2668800 "$(v cpufreq/policy7/scaling_max_freq)"
 check "stock: prime min"  633600  "$(v cpufreq/policy7/scaling_min_freq)"
 check "stock: gpu max"    900000000 "$(v gpu/max_freq)"
+
+echo "--- performance profile leaves the phone's own frequency limits in control ---"
+mkfake; S preset tilt >/dev/null
+out=$(S preset performance); rc=$?; check "performance preset applies cleanly" 0 "$rc"
+out=$(S status); has "performance preset is named" "preset=performance" "$out"; has "performance leaves limits enabled but does not screen-off-cap" "screenoff=0" "$out"
+check "performance restores little max" 2016000 "$(v cpufreq/policy0/scaling_max_freq)"
+check "performance restores big max" 2572800 "$(v cpufreq/policy3/scaling_max_freq)"
+check "performance restores prime max" 2668800 "$(v cpufreq/policy7/scaling_max_freq)"
+check "performance restores GPU max" 900000000 "$(v gpu/max_freq)"
+
+echo "--- dynamic profile leaves screen-on unrestricted and caps screen-off ---"
+mkfake; S preset dynamic >/dev/null
+out=$(S status); has "dynamic preset is named" "preset=dynamic" "$out"; has "dynamic uses screen-off sets" "screenoff=1" "$out"
+check "dynamic screen-on big max remains stock" 2572800 "$(v cpufreq/policy3/scaling_max_freq)"
+check "dynamic screen-on GPU max remains stock" 900000000 "$(v gpu/max_freq)"
+echo 0 > "$T/bl/brightness"; S apply >/dev/null
+check "dynamic screen-off little cap" 1017600 "$(v cpufreq/policy0/scaling_max_freq)"
+check "dynamic screen-off big cap" 787200 "$(v cpufreq/policy3/scaling_max_freq)"
+check "dynamic screen-off prime cap" 633600 "$(v cpufreq/policy7/scaling_max_freq)"
+check "dynamic screen-off GPU cap" 353000000 "$(v gpu/max_freq)"
+echo 120 > "$T/bl/brightness"; S apply >/dev/null
+check "dynamic screen-on returns big max to stock" 2572800 "$(v cpufreq/policy3/scaling_max_freq)"
+check "dynamic screen-on returns GPU max to stock" 900000000 "$(v gpu/max_freq)"
+
+echo "--- custom profile preserves existing values and opens the editor ---"
+mkfake; S preset tilt >/dev/null
+out=$(S preset custom); rc=$?; check "custom profile command succeeds" 0 "$rc"
+out=$(S status); has "custom preset is named" "preset=custom" "$out"; has "custom preset remains enabled" "enabled=1" "$out"
+check "custom keeps existing on-state value" 2188800 "$(sed -n 's/^ON_BIG_MAX=//p' "$T/cfg/tune.conf")"
+check "custom keeps existing off-state value" 787200 "$(sed -n 's/^OFF_BIG_MAX=//p' "$T/cfg/tune.conf")"
+S cfg ON_BIG_MAX 1593600 >/dev/null
+check "custom editor can change a value after selecting Custom" 1593600 "$(v cpufreq/policy3/scaling_max_freq)"
 
 echo "--- nodes the user never set are never written ---"
 mkfake; S status >/dev/null
@@ -346,8 +379,11 @@ check "empty list: nothing written" 2572800 "$(v cpufreq/policy3/scaling_max_fre
 
 echo "--- Stock says so when it has no recorded values to restore from ---"
 mkfake; echo 1 > "$T/kp/kp_mode"; echo 1286400 > "$T/cpufreq/policy3/scaling_max_freq"   # kernel Battery on before anything was recorded
-out=$(S preset tilt); has "no stock recorded: Apply warns" "warn: the phone's own limits are not recorded yet" "$out"
-out=$(S preset stock); has "no stock recorded: Stock warns" "warn: the phone's own limits are not recorded yet" "$out"
+out=$(S preset tilt); rc=$?; check "no stock recorded: Apply is refused" 1 "$rc"
+has "no stock recorded: Apply says what is not on record" "not on record for" "$out"
+check "no stock recorded: nothing was written" 1286400 "$(v cpufreq/policy3/scaling_max_freq)"
+check "no stock recorded: nothing was marked as changed" no "$([ -s "$T/cfg/applied" ] && echo yes || echo no)"
+out=$(S preset stock); rc=$?; check "no stock recorded: Stock has nothing to restore and says ok" 0 "$rc"
 mksys; S boot >/dev/null                                                # a reboot records the real values
 out=$(S preset tilt); case "$out" in *"not recorded yet"*) echo "FAIL warning persists after boot"; fail=1 ;; *) echo "ok   no warning once stock is recorded" ;; esac
 S preset stock >/dev/null
@@ -410,8 +446,8 @@ check "boot with Battery on and an earlier record: exits 0" 0 "$rc"
 check "boot with Battery on and an earlier record: the record is untouched" 0 "$(cmp -s "$T/defaults.keep" "$T/cfg/defaults"; echo $?)"
 mkfake; echo 1 > "$T/kp/kp_mode"; echo 1286400 > "$T/cpufreq/policy3/scaling_max_freq"
 S status >/dev/null; rc=$?; check "status with Battery on and no record still works" 0 "$rc"
-S preset tilt >/dev/null; rc=$?; check "Apply with Battery on and no record still works (it warns)" 0 "$rc"
-S preset tilt >/dev/null; out=$(S preset stock); has "no record: Stock says so" "not recorded yet" "$out"
+S preset tilt >/dev/null; rc=$?; check "Apply with Battery on and no record is refused" 1 "$rc"
+check "no record: nothing was marked as changed" no "$([ -s "$T/cfg/applied" ] && echo yes || echo no)"
 
 echo "--- Reset everything: profile first, and failures are reported ---"
 mkfake; S preset saver >/dev/null; sh "$HERE/../module/kp.sh" mode 1 >/dev/null
@@ -569,11 +605,12 @@ check "clean restore: nothing stays marked" 0 "$(grep -c . "$T/cfg/applied" 2>/d
 
 echo "--- a partial snapshot is reported by Stock, and nothing is made up ---"
 mkfake; : > "$T/cpufreq/policy3/scaling_max_freq"; S boot >/dev/null     # first boot, one reading missing
-out=$(S preset tilt); has "partial snapshot: Apply names the missing value" "not recorded for: big_max" "$out"
-out=$(S preset stock); has "partial snapshot: Stock names it too" "not recorded for: big_max" "$out"
+out=$(S preset tilt); rc=$?; check "partial snapshot: Apply is refused" 1 "$rc"
+has "partial snapshot: Apply names the missing value" "not on record for: big_max" "$out"
+out=$(S preset stock); rc=$?; check "partial snapshot: nothing was applied, so Stock is ok" 0 "$rc"
 check "partial snapshot: no value was invented for big max" "" "$(sed -n 's/^big_max=//p' "$T/cfg/defaults")"
-check "partial snapshot: big max is left as it is" 2188800 "$(v cpufreq/policy3/scaling_max_freq)"
-check "partial snapshot: the recorded ones were restored" 2668800 "$(v cpufreq/policy7/scaling_max_freq)"
+check "partial snapshot: big max is left as it is" "" "$(v cpufreq/policy3/scaling_max_freq)"
+check "partial snapshot: the other limits are untouched" 2668800 "$(v cpufreq/policy7/scaling_max_freq)"
 mkfake; S boot >/dev/null; out=$(S preset tilt); case "$out" in *"not recorded for"*) echo "FAIL complete snapshot warns"; fail=1 ;; *) echo "ok   complete snapshot: no warning" ;; esac
 out=$(S preset stock); case "$out" in *"not recorded for"*) echo "FAIL complete snapshot: Stock warns"; fail=1 ;; *) echo "ok   complete snapshot: Stock does not warn" ;; esac
 
@@ -788,7 +825,9 @@ check "snapshot back: uninstall exits 0" 0 "$rc"
 check "snapshot back: the phone's own value is restored" 2572800 "$(v cpufreq/policy3/scaling_max_freq)"
 mkfake; echo 1 > "$T/kp/kp_mode"; S boot >/dev/null                  # Battery profile on at boot: nothing was recorded
 check "Battery profile at boot: no snapshot was taken" no "$([ -f "$T/cfg/defaults" ] && echo yes || echo no)"
-S preset tilt >/dev/null; rununinst; rc=$?
+S preset tilt >/dev/null           # refused: nothing is on record. A limit changed by an older version is simulated:
+echo 2188800 > "$T/cpufreq/policy3/scaling_max_freq"; printf 'big_max\n' > "$T/cfg/applied"
+rununinst; rc=$?
 check "Battery profile at boot, limits changed: uninstall exits 1" 1 "$rc"
 check "Battery profile at boot, limits changed: recovery data kept" yes "$([ -d "$T/cfg" ] && echo yes || echo no)"
 S stop >/dev/null 2>&1; check "stop with no snapshot: exits 1" 1 "$(S stop >/dev/null 2>&1; echo $?)"
@@ -1069,12 +1108,13 @@ echo "--- a recorded minimum at its maximum is never written back ---"
 mkfake; mkdir -p "$T/cfg"
 printf 'little_min=2016000\nlittle_max=2016000\nbig_min=2572800\nbig_max=2572800\nprime_min=2668800\nprime_max=2668800\ngpu_min=255000000\ngpu_max=900000000\n' > "$T/cfg/defaults"
 out=$(S status | grep '^def_big_min='); check "status does not show a pinned recorded minimum" "def_big_min=" "$out"
-S cfg ENABLED 1 >/dev/null; S cfg ON_BIG_MIN 787200 >/dev/null
-check "custom min applied" 787200 "$(v cpufreq/policy3/scaling_min_freq)"
+S cfg ENABLED 1 >/dev/null; out=$(S cfg ON_BIG_MIN 787200); rc=$?
+check "custom min is refused: the recorded minimum is a pinned reading" 1 "$rc"
+has "custom min refusal names big_min" "big_min" "$out"
+check "custom min refused: nothing written" 633600 "$(v cpufreq/policy3/scaling_min_freq)"
 out=$(S preset stock); rc=$?
-check "Stock does not pin the minimum at the maximum" 787200 "$(v cpufreq/policy3/scaling_min_freq)"
-has "Stock says the minimum has no recorded value" "not recorded" "$out"
-check "Stock reports it as not finished" 1 "$rc"
+check "Stock does not pin the minimum at the maximum" 633600 "$(v cpufreq/policy3/scaling_min_freq)"
+check "Stock has nothing to restore and says ok" 0 "$rc"
 
 echo "--- a minimum clamped to a lower maximum stays marked and comes back ---"
 mkfake; S boot >/dev/null
@@ -1130,7 +1170,8 @@ echo "--- restoring when the frequency list disappears after a minimum was chang
 mkfake; mkdir -p "$T/cfg"
 printf 'little_min=595200\nlittle_max=2016000\nbig_min=2572800\nbig_max=2572800\nprime_min=633600\nprime_max=2668800\ngpu_min=255000000\ngpu_max=900000000\n' > "$T/cfg/defaults"
 cp "$T/cfg/defaults" "$T/defaults.keep"
-S cfg ENABLED 1 >/dev/null; S cfg ON_BIG_MIN 787200 >/dev/null
+# the state an older version could leave behind (Apply now refuses to create it): minimum changed and marked
+echo 787200 > "$T/cpufreq/policy3/scaling_min_freq"; printf 'big_min\n' > "$T/cfg/applied"
 check "pinned record: custom minimum applied and marked" 1 "$(grep -c '^big_min$' "$T/cfg/applied")"
 rm -f "$T/cpufreq/policy3/scaling_available_frequencies"
 out=$(S preset stock); rc=$?
@@ -1266,5 +1307,108 @@ waitfor "invalid saved frequency watcher: watcher exits" "" cfg/daemon.pid 15
 has "invalid saved frequency watcher: refusal is logged" "a saved frequency is not available on this phone" "$(cat "$T/cfg/tune.log" 2>/dev/null)"
 check "invalid saved frequency watcher: marker cleared after restore" 0 "$(grep -cx big_max "$T/cfg/applied" 2>/dev/null)"
 export TUNE_NO_DAEMON=1 TUNE_POLL_ON=3 TUNE_POLL_OFF=1 TUNE_REASSERT=10
+
+echo "--- the new profiles: failure paths and edge cases ---"
+export TUNE_NO_DAEMON=1
+out=$(S preset bogus); rc=$?
+check "unknown preset: exit 1" 1 "$rc"
+has "unknown preset: the message lists the new presets" "performance, dynamic or custom" "$out"
+# Custom from Stock keeps everything empty and turns the editor on
+mkfake; S preset stock >/dev/null
+out=$(S preset custom); rc=$?; check "custom from stock: exit 0" 0 "$rc"
+out=$(S status); has "custom from stock: named" "preset=custom" "$out"; has "custom from stock: enabled" "enabled=1" "$out"
+check "custom from stock: big max untouched" 2572800 "$(v cpufreq/policy3/scaling_max_freq)"
+check "custom from stock: no value invented" "" "$(sed -n 's/^ON_BIG_MAX=//p' "$T/cfg/tune.conf")"
+# Custom never replaces a settings file it cannot read
+mkfake; S preset tilt >/dev/null; printf 'ENABLED=7\nPRESET=tilt\n' > "$T/cfg/tune.conf"; cp "$T/cfg/tune.conf" "$T/conf.bad"
+out=$(S preset custom); rc=$?
+check "custom with unreadable settings: exit 1" 1 "$rc"
+check "custom with unreadable settings: the file is byte for byte as it was" "$(cat "$T/conf.bad")" "$(cat "$T/cfg/tune.conf")"
+if printf '%s\n' "$out" | grep -qx ok; then echo "FAIL custom with unreadable settings printed ok"; fail=1; else echo "ok   custom with unreadable settings: no ok line"; fi
+# Custom with a settings file that cannot be saved
+mkfake; S preset tilt >/dev/null; cp "$T/cfg/tune.conf" "$T/conf.good"
+inj 'mv() { for ij_a; do case "$ij_a" in *tune.conf.tmp) return 1 ;; esac; done; command mv "$@"; }'
+out=$(SI preset custom); rc=$?
+check "custom, save fails: exit 1" 1 "$rc"
+check "custom, save fails: the old settings are untouched" "$(cat "$T/conf.good")" "$(cat "$T/cfg/tune.conf")"
+check "custom, save fails: the limits stay as they were" 2188800 "$(v cpufreq/policy3/scaling_max_freq)"
+# Dynamic skips a cap this phone does not list, and says so (the same check every preset goes through)
+mkfake; sed -i 's/ 787200//' "$T/cpufreq/policy3/scaling_available_frequencies"
+out=$(S preset dynamic); has "dynamic: an unavailable cap is skipped with a warning" "warn: preset value 787200 is not available for big" "$out"
+check "dynamic: the skipped cap is not saved" "" "$(sed -n 's/^OFF_BIG_MAX=//p' "$T/cfg/tune.conf")"
+check "dynamic: the other screen-off caps are saved" 633600 "$(sed -n 's/^OFF_PRIME_MAX=//p' "$T/cfg/tune.conf")"
+# Dynamic: the screen-off caps come off again when the module is turned off, and Reset everything restores them
+mkfake; S preset dynamic >/dev/null; echo 0 > "$T/bl/brightness"; S apply >/dev/null
+check "dynamic, screen off: capped" 787200 "$(v cpufreq/policy3/scaling_max_freq)"
+S resetall >/dev/null; check "Reset everything from dynamic (screen off): big max back" 2572800 "$(v cpufreq/policy3/scaling_max_freq)"
+check "Reset everything from dynamic: GPU max back" 900000000 "$(v gpu/max_freq)"
+check "Reset everything from dynamic: no marker left" 0 "$(wc -l < "$T/cfg/applied" 2>/dev/null | tr -d ' ' | grep -v '^$' || echo 0)"
+echo 120 > "$T/bl/brightness"
+# Performance and Dynamic survive a reboot (boot re-applies the saved preset)
+mkfake; S preset dynamic >/dev/null; mksys
+out=$(S boot); has "boot with dynamic: done" "boot done: enabled=1 preset=dynamic" "$out"
+mkfake; S preset performance >/dev/null; mksys
+out=$(S boot); has "boot with performance: done" "boot done: enabled=1 preset=performance" "$out"
+check "boot with performance: no limit changed" 2572800 "$(v cpufreq/policy3/scaling_max_freq)"
+# A tilt -> performance -> tilt round trip leaves nothing behind
+mkfake; S preset tilt >/dev/null; S preset performance >/dev/null; S preset tilt >/dev/null; S preset stock >/dev/null
+check "round trip: big max back to the phone's own" 2572800 "$(v cpufreq/policy3/scaling_max_freq)"
+check "round trip: no marker left" 0 "$(grep -c . "$T/cfg/applied" 2>/dev/null || true)"
+# The Action button's cycle leaves the new presets for Stock
+rm -rf "$T/modact"; cp -r "$HERE/../module" "$T/modact"
+for np in performance dynamic custom; do
+  mkfake; S preset "$np" >/dev/null
+  out=$(sh "$T/modact/action.sh" 2>&1); has "Action from $np goes to Stock" "Frequency preset: stock" "$out"
+done
+mkfake
+
+echo "--- v1.4.4: stock is the lowest minimum and highest maximum over a window, not one reading ---"
+# A boost raises the minimums (and a cap lowers the maximums) for a few seconds. The reading at the start of
+# the window lands inside it; the window must still record the phone's own values.
+mkfake; rm -f "$T/cfg/defaults"
+echo 1843200 > "$T/cpufreq/policy0/scaling_min_freq"; echo 1286400 > "$T/cpufreq/policy3/scaling_min_freq"; echo 1651200 > "$T/cpufreq/policy7/scaling_min_freq"
+echo 2188800 > "$T/cpufreq/policy3/scaling_max_freq"; echo 2304000 > "$T/cpufreq/policy7/scaling_max_freq"
+( sleep 3; echo 595200 > "$T/cpufreq/policy0/scaling_min_freq"; echo 633600 > "$T/cpufreq/policy3/scaling_min_freq"; echo 633600 > "$T/cpufreq/policy7/scaling_min_freq"
+  echo 2572800 > "$T/cpufreq/policy3/scaling_max_freq"; echo 2668800 > "$T/cpufreq/policy7/scaling_max_freq" ) &
+boostend=$!
+TUNE_CAP_BOOT_SAMPLES=3 TUNE_CAP_BOOT_GAP=2 S boot >/dev/null 2>&1; wait "$boostend"
+d=$(cat "$T/cfg/defaults" 2>/dev/null)
+has "boost window: little min recorded at its real value" "little_min=595200" "$d"
+has "boost window: big min recorded at its real value" "big_min=633600" "$d"
+has "boost window: prime min recorded at its real value" "prime_min=633600" "$d"
+has "boost window: big max recorded at its real value" "big_max=2572800" "$d"
+has "boost window: prime max recorded at its real value" "prime_max=2668800" "$d"
+
+echo "--- v1.4.4: a limit is refused when a bound it could move has no recorded original value ---"
+# Minimums pinned at their maximums for the whole window are not recorded (they are not the phone's own values).
+# Battery Tilt would then lower them to fit under the new maximums and Stock could not put them back.
+mkfake; rm -f "$T/cfg/defaults" "$T/cfg/applied"
+echo 2572800 > "$T/cpufreq/policy3/scaling_min_freq"; echo 2668800 > "$T/cpufreq/policy7/scaling_min_freq"
+out=$(S preset tilt); rc=$?
+check "unrecorded minimum: Battery Tilt is refused" 1 "$rc"
+has "unrecorded minimum: the refusal names big_min" "big_min" "$out"
+has "unrecorded minimum: the refusal names prime_min" "prime_min" "$out"
+check "unrecorded minimum: big max unchanged" 2572800 "$(v cpufreq/policy3/scaling_max_freq)"
+check "unrecorded minimum: big min unchanged" 2572800 "$(v cpufreq/policy3/scaling_min_freq)"
+check "unrecorded minimum: prime max unchanged" 2668800 "$(v cpufreq/policy7/scaling_max_freq)"
+check "unrecorded minimum: prime min unchanged" 2668800 "$(v cpufreq/policy7/scaling_min_freq)"
+check "unrecorded minimum: gpu max unchanged" 900000000 "$(v gpu/max_freq)"
+check "unrecorded minimum: no change markers" 0 "$(grep -c . "$T/cfg/applied" 2>/dev/null || echo 0)"
+
+echo "--- v3.5.0: a refused preset does not stay saved as the chosen profile ---"
+mkfake; rm -f "$T/cfg/defaults" "$T/cfg/applied"
+echo 2572800 > "$T/cpufreq/policy3/scaling_min_freq"; echo 2668800 > "$T/cpufreq/policy7/scaling_min_freq"
+S preset stock >/dev/null                      # an earlier choice is on file (and nothing is on record for the minimums)
+out=$(S preset tilt); rc=$?
+check "refused preset: exit status 1" 1 "$rc"
+has "refused preset: says the earlier settings were kept" "previous settings were kept" "$out"
+out=$(S status)
+has "refused preset: status still shows the earlier profile" "preset=stock" "$out"
+has "refused preset: status still shows nothing enabled" "enabled=0" "$out"
+check "refused preset: no leftover backup file" no "$([ -e "$T/cfg/tune.conf.prev" ] && echo yes || echo no)"
+mkfake; rm -f "$T/cfg/defaults" "$T/cfg/applied" "$T/cfg/tune.conf"
+echo 2572800 > "$T/cpufreq/policy3/scaling_min_freq"; echo 2668800 > "$T/cpufreq/policy7/scaling_min_freq"
+S preset tilt >/dev/null
+check "refused preset with no earlier file: none is left behind" no "$([ -e "$T/cfg/tune.conf" ] && echo yes || echo no)"
 
 [ "$fail" = 0 ] && echo "all tune tests passed" || { echo "SOME TESTS FAILED"; exit 1; }

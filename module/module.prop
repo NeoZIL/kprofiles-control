@@ -1,7 +1,7 @@
 id=kprofiles_ui
 name=Kprofiles Control
-version=v3.0.0
-versionCode=23
+version=v3.5.0
+versionCode=27
 author=NeoZIL
-description=WebUI for CPU and GPU frequency limits (presets and custom values, separate screen-on and screen-off sets) plus the kernel Kprofiles mode.
+description=Multi-page WebUI for CPU/GPU frequency profiles and optional kernel Kprofiles modes.
 updateJson=https://github.com/NeoZIL/kprofiles-control/releases/latest/download/update.json

@@ -1,5 +1,80 @@
 # Changelog
 
+## v3.5.0
+First release after v3.0.0. It rolls up the unreleased v3.1.0, v3.2.0 and v3.2.1 work (see those sections below) and adds the
+fixes found when the earlier builds were tested on a phone. v3.1.0 to v3.2.1 were never published, so versionCode goes from 23 (v3.0.0) to 27.
+- Change (UI): **the CPU/GPU profile "No Extra Caps" is now called "Performance".** Only the name changed: the internal ID is still
+  `performance`, so saved settings, the Tilt/Saver bridge and the engine are untouched. The kernel **Performance** mode is a separate control on the Kernel page.
+- Fix (UI): **the Settings (gear) icon was off centre.** The top-bar button, the Home quick link, the bottom navigation and the
+  Settings icon each used a different hand-drawn gear with a made-up `translate`/`scale`, which left the glyph 2 to 3 px off
+  centre. All use one symmetric gear now. The page was rendered and every icon's drawing was measured against its box: all within 0.4 px.
+- Fix (UI): **Reset everything and Dynamic used the same lopsided four-arc glyph.** Reset is now a single counter-clockwise arrow;
+  Dynamic is the two-arrow cycle. Both are symmetric about the centre of their box.
+- Fix (UI): **profile and kernel-mode icons no longer depend on the phone's font.** They were placed with `vertical-align: -4px`, which
+  matched one font only. The title is now a flex row, so the icon sits on the first line whatever the font and when a name wraps.
+- Fix (engine): **a boost could be saved as the phone's own "stock" value.** The ROM raises the minimum frequencies for a few seconds when the
+  screen turns on or an app opens (seen on a POCO F6: 595200/633600/633600 became 1843200/1286400/1651200 for about 2 to 8 s, several
+  times a minute). A single reading taken inside one was recorded, and Stock would have restored it. The phone's own limits are now
+  read several times (15 over about 30 s at boot, 6 over about 5 s when Apply records them) and the lowest minimum and highest maximum seen are recorded.
+- Fix (engine): **no limit is written unless every value it could move can be put back.** A maximum set below the current minimum also lowers
+  that minimum (and the reverse), in either screen state. Apply now refuses, with "not on record for: ...", when the phone's own minimum or maximum is not recorded for a
+  cluster that has any limit set. It changes no frequency and creates no changed-marker; a reboot records the values again. It used to apply and only warn.
+- Fix (engine): **a refused preset no longer stays saved.** When Apply refuses a preset because an original value is not on record, the previous
+  settings are put back, so the page keeps showing the profile that is really in place (it used to highlight the refused profile and lock the other
+  Battery profile although nothing was applied). Found by driving the page against the real scripts.
+- Tests: `boost window`, `unrecorded minimum` and `refused preset` in `tests/tune-test.sh` (both fail without the engine fixes). Older checks that expected a limit
+  to be applied without a record now expect the refusal; restore-path checks that needed such a state now simulate what an older version could leave behind.
+- Version: v3.5.0, versionCode 27. Not tested on a phone yet.
+
+## v3.2.1
+Polish the five-page WebUI without changing tuning behavior.
+- Reset: replace the solid red recovery block with a neutral outlined button matching the other controls; only its reset icon and label are red, while the chevron and explanatory note remain neutral.
+- Icons: add small, semantic color accents to the Home status indicators and quick links, the six CPU/GPU profile names, and the three kernel modes. Icons use inline SVG only; no remote assets or libraries are added.
+- Compatibility: leave all profile IDs, shell commands, reset/recovery behavior, kernel support detection, and safety rules unchanged.
+- Tests: verify the Reset styling and icon structure, plus the presence of inline icons and their semantic color styles.
+- Version: v3.2.1, versionCode 26.
+
+## v3.2.0
+Redesigned the WebUI as a clean, lightweight five-page interface without changing the tuning engine.
+- Navigation: add Home, CPU & GPU, Kernel, Monitor, and Settings screens with a fixed bottom navigation bar and local in-page switching. Navigation does not reload the document or issue shell commands.
+- Home: provide a current-profile summary, CPU/GPU limit overview, screen and watcher state, quick links, and a visibly red Reset everything recovery control.
+- CPU & GPU: display the six existing profiles in a compact responsive grid and keep the screen-on/off frequency pickers together on the tuning page.
+- Kernel: give kernel modes their own screen while retaining supported / unsupported / unknown detection, disabled controls on unsupported kernels, and the kernel command guard.
+- Monitor: show engine-reported CPU/GPU limit ranges and kernel status; explain that these are applied limits, not continuous measurements of live clock speed.
+- Settings: group the existing tuning switches, safety-rule explanations, and installed-version information. No new tuning settings or kernel actions were invented.
+- Responsiveness: keep the interface dependency-free and offline, avoid polling and shell commands during navigation, use compact local CSS transitions, support the device's light/dark theme, and honor reduced-motion preferences.
+- Compatibility: preserve the existing command engine, profile IDs, validation, cooldown, Tilt/Saver bridge, recovery lock, reset flow, and kernel-support guard.
+- Tests: extend DOM behavior tests to verify page visibility, navigation state, quick links, and that page switching sends no shell commands; extend build checks for the new page shell and offline assets.
+- Version: v3.2.0, versionCode 25. CPU/GPU and kernel engine scripts are unchanged from v3.1.0.
+
+## v3.1.0
+Expanded the user-facing profile set and made kernel-profile support explicit in the WebUI.
+- Profiles: add **No Extra Caps** (stored under the internal preset ID `performance`), which removes this module's extra CPU/GPU caps and leaves the phone's own governors and thermal policy in control; this label is deliberately distinct from the separate kernel **Performance** mode; the status panel says “No extra caps” instead of implying that limits are actively set; **Dynamic**, which leaves screen-on limits alone and applies battery-tilt caps only with the screen off; and an explicit **Custom** entry that preserves existing custom values and opens the existing editor.
+- Custom: selecting Custom preserves the saved screen-on/off values, marks the configuration as custom, and enables the editor instead of replacing the user's choices.
+- Switching safety: preserve the Stock/Reset bridge between Battery tilt and Battery saver even if the user passes through Custom, No Extra Caps, or Dynamic.
+- Kernel profiles: move the section to the bottom and collapse the three existing kernel choices under a **Kernel profiles** button. Support is determined from `kp.sh status`; when the kernel reports `mode=?`, the three choices are hidden, the button is disabled, and the page says extra kernel features are not supported by the kernel. If the status cannot be read, the page reports that support could not be confirmed instead of claiming the kernel is unsupported.
+- Reset: highlight **Reset everything** in red so its recovery function is visually distinct.
+- Engine: add the No Extra Caps (internal ID `performance`), Dynamic and explicit Custom preset entry points to `tune.sh`, retaining the existing validated, atomic configuration write and apply/restore path. The separate kernel `kp.sh` modes and their semantics are unchanged.
+- Tests: add fake-sysfs coverage for the `performance`/No Extra Caps preset, Dynamic, and Custom preservation, plus WebUI checks for profile presence, the distinct CPU/GPU and kernel Performance labels, kernel support/unsupported display, collapsed kernel options, and the red Reset control.
+- Test portability (audit): explicitly export temporary watcher/boot retry overrides from the tuning-test helper so BusyBox ash receives the same values as dash.
+- Status panel: No Extra Caps and Dynamic-on-screen states no longer look like a CPU/GPU cap set is actively applied when no caps are configured.
+- Fix (audit): **a kernel-profile command is never sent unless support was confirmed.** The page relied only on the
+  buttons being disabled; a tap that still reached the handler sent `kp.sh mode` or `kp.sh persist` on a kernel
+  without Kprofiles. `act()` now refuses it, with a message, when support is unsupported or not yet confirmed.
+- Tests (audit): the Tilt <-> Saver bridge is now tested by behaviour, not by reading the source: from Tilt and from
+  Saver through No Extra Caps, Custom and Dynamic (blocked, remembered, kept after a reload, cleared by Stock and by
+  Reset everything, a corrupt stored value ignored); the status wording for each new profile; the kernel section when
+  support is unknown, unsupported, lost after a refresh, and under a recovery lock; and that the three kernel
+  choices send `mode 0/1/3`. Engine tests add: an unknown preset, Custom from Stock, Custom with unreadable or
+  unsavable settings (the file stays byte for byte), a Dynamic cap the phone does not list, Reset everything from
+  Dynamic with the screen off, boot with the `performance`/No Extra Caps preset and Dynamic, a Tilt -> No Extra Caps -> Tilt -> Stock round trip,
+  and the Action button leaving each new profile for Stock.
+- Downgrading: v3.0.0 does not know the names `performance` and `dynamic`. If one of them is selected and you install
+  v3.0.0, it reports the settings as unreadable and shows the module as not active until you choose Stock or Reset
+  everything. Choose Stock before downgrading.
+- Version: v3.1.0, versionCode 24. This release extends the preset model; the settings file keeps its v3.0.0 layout
+  (only the preset name can now be `performance` or `dynamic`), and the recovery-storage format is unchanged.
+
 ## v3.0.0
 WebUI startup and recovery-diagnostic hardening. The tuning engine, kernel-profile scripts, watcher,
 frequency application, locking and restore rules are unchanged from v2.0.0. The WebUI is the only

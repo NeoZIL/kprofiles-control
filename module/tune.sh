@@ -12,6 +12,9 @@ CFG="$CFG_DIR/tune.conf"
 DEF="$CFG_DIR/defaults"
 APPLIED="$CFG_DIR/applied"
 PIDF="$CFG_DIR/daemon.pid"
+# How many times the phone's own limits are read when they are recorded (see capture_defaults).
+CAP_SAMPLES="${TUNE_CAP_SAMPLES:-6}"; CAP_GAP="${TUNE_CAP_GAP:-1}"
+CAP_BOOT_SAMPLES="${TUNE_CAP_BOOT_SAMPLES:-15}"; CAP_BOOT_GAP="${TUNE_CAP_BOOT_GAP:-2}"   # a longer window at boot: about 30 s
 CPUFREQ="${CPUFREQ_DIR:-/sys/devices/system/cpu/cpufreq}"
 GPUDIR="${GPU_DIR:-/sys/class/kgsl/kgsl-3d0/devfreq}"
 BL="${BL_PATH:-/sys/class/backlight/panel0-backlight/brightness}"
@@ -52,7 +55,7 @@ cfg_reset() {
 cfg_values_valid() {
   case "$ENABLED" in 0|1) ;; *) return 1 ;; esac
   case "$SCREENOFF" in 0|1) ;; *) return 1 ;; esac
-  case "$PRESET" in stock|tilt|saver|custom) ;; *) return 1 ;; esac
+  case "$PRESET" in stock|tilt|saver|performance|dynamic|custom) ;; *) return 1 ;; esac
   for cv_s in ON OFF; do for cv_cu in LITTLE BIG PRIME GPU; do
     cv_c=$(lower "$cv_cu")
     eval "cv_min=\${${cv_s}_${cv_cu}_MIN:-}"; eval "cv_max=\${${cv_s}_${cv_cu}_MAX:-}"
@@ -183,15 +186,34 @@ capture_defaults() {
   mkdir -p "$CFG_DIR" 2>/dev/null || { log_msg "could not save the phone's own values"; return 2; }
   [ ! -d "$DEF" ] || { log_msg "could not save the phone's own values"; return 2; }
   { printf "" > "$DEF.tmp"; } 2>/dev/null || { log_msg "could not save the phone's own values"; return 2; }
+  # The phone's own limits are read several times, not once. Boosts (screen on, app launch, boot) only ever
+  # RAISE a minimum for a few seconds and a thermal or boost cap only ever LOWERS a maximum, so the lowest
+  # minimum and the highest maximum seen over the window are the phone's own values. A single reading can
+  # land inside a boost and would then be saved as "stock".
+  if [ "$1" = force ]; then cs_n="$CAP_BOOT_SAMPLES"; cs_g="$CAP_BOOT_GAP"; else cs_n="$CAP_SAMPLES"; cs_g="$CAP_GAP"; fi
+  for c in $CLUSTERS; do for k in min max; do eval "cs_${c}_${k}="; done; done
+  cs_i=0
+  while [ "$cs_i" -lt "$cs_n" ]; do
+    [ "$cs_i" -eq 0 ] || sleep "$cs_g"
+    cs_i=$((cs_i + 1))
+    for c in $CLUSTERS; do for k in min max; do
+      v=$(rd "$(node $c $k)")
+      case "$v" in ""|*[!0-9]*) continue ;; esac
+      case "$v" in *[!0]*) ;; *) continue ;; esac                # all zeros: not a frequency
+      eval "cs_cur=\${cs_${c}_${k}}"
+      if [ -z "$cs_cur" ]; then eval "cs_${c}_${k}=\$v"
+      elif [ "$k" = min ] && [ "$v" -lt "$cs_cur" ]; then eval "cs_${c}_${k}=\$v"
+      elif [ "$k" = max ] && [ "$v" -gt "$cs_cur" ]; then eval "cs_${c}_${k}=\$v"
+      fi
+    done; done
+  done
   for c in $CLUSTERS; do for k in min max; do
-    cn=$(node $c $k)
-    v=$(rd "$cn")
-    case "$v" in
-      "") [ -e "$cn" ] && CAP_BAD="$CAP_BAD ${c}_${k}" ;;      # the node exists but gave no reading
-      *[!0-9]*) CAP_BAD="$CAP_BAD ${c}_${k}" ;;                # not a plain number
-      *[!0]*) { echo "${c}_${k}=$v" >> "$DEF.tmp"; } 2>/dev/null || { cd_fail; return 2; } ;;   # a positive number
-      *) CAP_BAD="$CAP_BAD ${c}_${k}" ;;                       # all zeros: not a frequency
-    esac
+    eval "v=\${cs_${c}_${k}}"
+    if [ -n "$v" ]; then
+      { echo "${c}_${k}=$v" >> "$DEF.tmp"; } 2>/dev/null || { cd_fail; return 2; }
+    elif [ -e "$(node $c $k)" ]; then
+      CAP_BAD="$CAP_BAD ${c}_${k}"                                 # the node exists but never gave a usable reading
+    fi
   done; done
   # A minimum at or above its maximum is not the phone's own setting: something is holding that cluster
   # up (a boot boost, another module or app). It is never recorded as stock. Only a cluster that the
@@ -543,6 +565,25 @@ report_apply_failure() {
   fi
   if [ -z "$AS_NOREST$AS_REJ" ]; then echo "error: not every limit could be applied (see the messages above)"; fi
 }
+# Everything apply_domain could change must be restorable BEFORE anything is written. That includes the other
+# bound of a cluster: a minimum is lowered to fit under a lower requested maximum (and a maximum raised to
+# fit over a higher minimum), and either screen state can do it later. So for every cluster with any limit
+# set, the phone's own minimum AND maximum must be on record. If one is not, nothing is changed.
+apply_preflight() {
+  pf_miss=""
+  for c in $CLUSTERS; do
+    cu=$(upper "$c"); pf_any=""
+    for pf_s in ON OFF; do for pf_k in MIN MAX; do
+      eval "pf_v=\${${pf_s}_${cu}_${pf_k}:-}"; [ -z "$pf_v" ] || pf_any=1
+    done; done
+    [ -n "$pf_any" ] || continue
+    for k in min max; do
+      [ -e "$(node "$c" "$k")" ] || continue
+      [ -n "$(def_of "${c}_${k}")" ] || pf_miss="$pf_miss ${c}_${k}"
+    done
+  done
+  [ -z "$pf_miss" ]
+}
 NOSTOCK="warn: the phone's own limits are not recorded yet (for example because the kernel Battery profile was on), so Stock cannot put them back until the next reboot"
 cmd_apply() {
   ca_rc=0
@@ -566,6 +607,12 @@ cmd_apply() {
     fi
     [ "$ca_cd" = 0 ] || echo "warn: the phone's own limits could not be saved again; the earlier record is kept"
     have_def || echo "$NOSTOCK"
+    if ! apply_preflight; then
+      PF_REFUSED=1
+      log_msg "apply refused: the phone's own value is not on record for:$pf_miss"
+      echo "error: the phone's own value is not on record for:$pf_miss, so Stock could not put it back. Nothing was changed (a reboot records it again)"
+      return 1
+    fi
     if ! apply_state "$(want_state)"; then report_apply_failure; ca_rc=1; fi
     ! have_def || warn_nodefault
     if ! start_daemon; then
@@ -625,11 +672,40 @@ preset_vals() {
     saver) # noticeably slower in use, much cooler and longer lasting
       P_ON_LITTLE_MAX=1593600; P_ON_BIG_MAX=1593600; P_ON_PRIME_MAX=1766400; P_ON_GPU_MAX=633000000
       P_OFF_LITTLE_MAX=787200; P_OFF_BIG_MAX=633600; P_OFF_PRIME_MAX=633600; P_OFF_GPU_MAX=255000000 ;;
+    performance) # no additional CPU/GPU caps; the phone's own governors and thermal policy remain in control
+      P_ENABLED=1; P_SCREENOFF=0 ;;
+    dynamic) # unrestricted while the screen is on; tilt-style battery caps only while the screen is off
+      P_ENABLED=1; P_SCREENOFF=1
+      P_OFF_LITTLE_MAX=1017600; P_OFF_BIG_MAX=787200; P_OFF_PRIME_MAX=633600; P_OFF_GPU_MAX=353000000 ;;
     *) return 1 ;;
   esac
 }
+# A preset whose limits Apply refuses (an original value is not on record) must not stay saved as the chosen
+# profile: nothing was applied, so the page would show a profile that is not in place. The previous settings come back.
+cfg_keep() { PF_REFUSED=""; rm -f "$CFG.prev" 2>/dev/null; if [ -f "$CFG" ]; then cp "$CFG" "$CFG.prev" 2>/dev/null; fi; return 0; }
+cfg_rollback_if_refused() {
+  if [ -n "$PF_REFUSED" ]; then
+    if [ -f "$CFG.prev" ]; then mv "$CFG.prev" "$CFG" 2>/dev/null; else rm -f "$CFG" 2>/dev/null; fi
+    echo "note: your previous settings were kept"
+  else
+    rm -f "$CFG.prev" 2>/dev/null
+  fi
+  return 0
+}
 cmd_preset() {
-  preset_vals "$1" || { echo "error: unknown preset (use stock, tilt or saver)"; return 1; }
+  if [ "$1" = custom ]; then
+    # Custom is an explicit entry point to the existing editor: keep all current values, mark the preset
+    # custom, and enable the editor without replacing the user's saved screen-on/off choices.
+    load_cfg
+    [ -z "$CFG_BAD" ] || { echo "$NOREAD"; return 1; }
+    cfg_values_available || { echo "$NOREAD"; return 1; }
+    cfg_keep
+    cfg_put PRESET custom ENABLED 1 || { echo "$NOSAVE"; return 1; }
+    cmd_apply; cp_rc=$?
+    cfg_rollback_if_refused
+    return "$cp_rc"
+  fi
+  preset_vals "$1" || { echo "error: unknown preset (use stock, tilt, saver, performance, dynamic or custom)"; return 1; }
   # the new settings are built in memory and written once, so a failed save leaves the old file alone
   pbody="ENABLED=$P_ENABLED
 SCREENOFF=$P_SCREENOFF
@@ -654,9 +730,12 @@ PRESET=$1
   done; done; done
   mkdir -p "$CFG_DIR" 2>/dev/null || { echo "$NOSAVE"; return 1; }
   [ ! -d "$CFG" ] || { echo "$NOSAVE"; return 1; }
+  cfg_keep
   { printf '%s' "$pbody" > "$CFG.tmp"; } 2>/dev/null || { rm -f "$CFG.tmp" 2>/dev/null; echo "$NOSAVE"; return 1; }
   mv "$CFG.tmp" "$CFG" 2>/dev/null || { rm -f "$CFG.tmp" 2>/dev/null; echo "$NOSAVE"; return 1; }
-  cmd_apply
+  cmd_apply; cp_rc=$?
+  cfg_rollback_if_refused
+  return "$cp_rc"
 }
 
 cmd_resetall() { # kernel profile back to None first (so nothing holds the limits down), then stock limits
@@ -747,5 +826,5 @@ case "$1" in
              stop_daemon || { st_rc=1; st_msg="the watcher did not stop"; }
              apply_state none || { st_rc=1; st_msg="${st_msg:+$st_msg; }the phone's own values could not all be put back"; }
              if [ "$st_rc" = 0 ]; then echo ok; else echo "error: $st_msg"; exit 1; fi ;;
-  *) echo "usage: tune.sh status | lists | cfg KEY VALUE | preset stock|tilt|saver | resetall | apply | boot | stop"; exit 1 ;;
+  *) echo "usage: tune.sh status | lists | cfg KEY VALUE | preset stock|tilt|saver|performance|dynamic|custom | resetall | apply | boot | stop"; exit 1 ;;
 esac
