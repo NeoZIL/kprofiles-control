@@ -8,6 +8,8 @@
 #  * the phone's own values are saved at boot and restored by "Stock" / disable
 case "$0" in */*) MODDIR="${0%/*}" ;; *) MODDIR="." ;; esac
 CFG_DIR="${CFG_DIR:-/data/adb/kprofiles_ui}"
+if [ ! -r "$MODDIR/control-lib.sh" ] && [ -n "${INJ_TARGET:-}" ]; then MODDIR=${INJ_TARGET%/*}; fi
+. "$MODDIR/control-lib.sh"
 CFG="$CFG_DIR/tune.conf"
 DEF="$CFG_DIR/defaults"
 APPLIED="$CFG_DIR/applied"
@@ -18,7 +20,7 @@ CAP_BOOT_SAMPLES="${TUNE_CAP_BOOT_SAMPLES:-15}"; CAP_BOOT_GAP="${TUNE_CAP_BOOT_G
 CPUFREQ="${CPUFREQ_DIR:-/sys/devices/system/cpu/cpufreq}"
 GPUDIR="${GPU_DIR:-/sys/class/kgsl/kgsl-3d0/devfreq}"
 BL="${BL_PATH:-/sys/class/backlight/panel0-backlight/brightness}"
-KPNODE="${KP_PATH:-/sys/kernel/kprofiles/kp_mode}"   # read only here; kp.sh is the only writer
+KPNODE="${KP_PATH:-$(kp_find mode)}"   # read only here; kp.sh is the only writer (same discovery as kp.sh)
 POLL_ON="${TUNE_POLL_ON:-3}"       # seconds between checks while the screen is on
 POLL_OFF="${TUNE_POLL_OFF:-1}"     # seconds between checks while the screen is off
 REASSERT_EVERY="${TUNE_REASSERT:-10}"
@@ -43,6 +45,22 @@ node() { d=$(dom_dir "$1"); if [ "$1" = gpu ]; then echo "$d/${2}_freq"; else ec
 avail_node() { d=$(dom_dir "$1"); if [ "$1" = gpu ]; then echo "$d/available_frequencies"; else echo "$d/scaling_available_frequencies"; fi; }
 rd() { cat "$1" 2>/dev/null; }
 wr() { { echo "$2" > "$1"; } 2>/dev/null; }
+require_module_controller() {
+  control_internal && return 0
+  rc_source=$(control_source)
+  if [ "$rc_source" = legacy ]; then
+    # A missing controller file is not permission to bypass exclusivity. Migrate first so a direct
+    # shell call sees the same conflict/owner decision as the WebUI and boot service.
+    sh "$MODDIR/control.sh" init >/dev/null 2>&1 || { echo "error: controller initialization failed; refusing to change frequency limits"; return 1; }
+    rc_source=$(control_source)
+  fi
+  case "$rc_source" in
+    module) return 0 ;;
+    kernel) echo "error: Kernel profile is the active controller; module presets and frequency edits are inactive"; return 1 ;;
+    conflict) echo "error: controller source is unresolved; choose Module presets or Kernel profile before tuning"; return 1 ;;
+    *) echo "error: controller state cannot be read or initialized; refusing to change frequency limits"; return 1 ;;
+  esac
+}
 
 # ---------- config ----------
 # A settings file that exists but cannot be read, parsed, or validated is NOT the same as "no settings":
@@ -586,6 +604,7 @@ apply_preflight() {
 }
 NOSTOCK="warn: the phone's own limits are not recorded yet (for example because the kernel Battery profile was on), so Stock cannot put them back until the next reboot"
 cmd_apply() {
+  require_module_controller || return 1
   ca_rc=0
   load_cfg
   [ -z "$CFG_BAD" ] || { echo "$NOREAD"; return 1; }
@@ -634,6 +653,7 @@ cmd_apply() {
 }
 
 cmd_cfg() { # KEY VALUE
+  require_module_controller || return 1
   key="$1"; val="$2"
   case "$val" in default|-) val="" ;; esac
   case "$key" in
@@ -693,6 +713,7 @@ cfg_rollback_if_refused() {
   return 0
 }
 cmd_preset() {
+  require_module_controller || return 1
   if [ "$1" = custom ]; then
     # Custom is an explicit entry point to the existing editor: keep all current values, mark the preset
     # custom, and enable the editor without replacing the user's saved screen-on/off choices.
@@ -738,21 +759,41 @@ PRESET=$1
   return "$cp_rc"
 }
 
-cmd_resetall() { # kernel profile back to None first (so nothing holds the limits down), then stock limits
+cmd_resetall() { # recovery operation: release the kernel profile, restore stock, then choose module control if safe
   ra_rc=0
-  if [ -e "$KPNODE" ]; then
-    if ! ra_out=$(sh "$MODDIR/kp.sh" mode 0 2>&1); then
-      ra_msg=$(printf '%s\n' "$ra_out" | head -n 1); ra_msg=${ra_msg#error: }
-      echo "error: the kernel profile could not be set to None: ${ra_msg:-no answer from kp.sh}"; ra_rc=1
-    fi
-  fi
-  cmd_preset stock || ra_rc=1
+  ra_kp=$(sh "$MODDIR/kp.sh" status 2>/dev/null)
+  ra_sup=$(printf '%s\n' "$ra_kp" | sed -n 's/.* support=\([a-z]*\).*/\1/p' | head -n 1)
+  case "$ra_sup" in
+    supported)
+      sh "$MODDIR/kp.sh" control-mode 0 >/dev/null 2>&1 || { echo "error: the kernel profile could not be set to None"; ra_rc=1; }
+      sh "$MODDIR/kp.sh" control-auto N >/dev/null 2>&1 || {
+        ra_auto=$(printf '%s\n' "$ra_kp" | sed -n 's/.* auto_support=\([a-z]*\).*/\1/p' | head -n 1)
+        [ "$ra_auto" = unsupported ] || { echo "error: auto_kp could not be confirmed off"; ra_rc=1; }
+      }
+      if [ "$ra_rc" = 0 ]; then
+        control_set KP_MODE_PREF 0 KP_AUTO_PREF N SOURCE module || { echo "error: controller state could not be reset"; ra_rc=1; }
+      else
+        control_set SOURCE conflict >/dev/null 2>&1
+      fi
+      ;;
+    unsupported)
+      control_set SOURCE module >/dev/null 2>&1 || ra_rc=1
+      ;;
+    *)
+      echo "warn: the kernel profile cannot be read or has a value this module does not know, so it was left as it is; frequency limits will still be restored where possible"
+      control_set SOURCE conflict >/dev/null 2>&1
+      ;;
+  esac
+  KPC_CONTROL_INTERNAL=1 cmd_preset stock || ra_rc=1
   return "$ra_rc"
 }
 
 BOOT_RETRIES="${TUNE_BOOT_RETRIES:-8}"   # how often boot looks again when a cluster's minimum is held at its maximum
 BOOT_WAIT="${TUNE_BOOT_WAIT:-10}"        # seconds between those looks
 cmd_boot() {
+  cb_mode=${1:-apply}
+  case "$cb_mode" in apply|capture-only) ;; *) echo "error: boot mode must be apply or capture-only"; return 1 ;; esac
+  if [ "$cb_mode" != capture-only ]; then require_module_controller || return 1; fi
   rm -f "$APPLIED" "$PIDF" 2>/dev/null
   mkdir -p "$CFG_DIR" 2>/dev/null
   cb_rc=0; cb_try=0
@@ -776,12 +817,16 @@ cmd_boot() {
   [ "$cb_cd" != 0 ] || [ ! -s "$DEF" ] || log_msg "boot: stock recorded: $(tr '\n' ' ' < "$DEF" 2>/dev/null)"
   load_cfg
   [ -z "$CFG_BAD" ] || { echo "$NOREAD"; cb_rc=1; }
-  if [ "$ENABLED" = 1 ] && [ -z "$CFG_BAD" ]; then cmd_apply || cb_rc=1; fi
-  if [ "$cb_rc" = 0 ]; then
-    echo "boot done: enabled=$ENABLED preset=$PRESET"
+  if [ "$cb_mode" = capture-only ]; then
+    echo "boot capture-only done: module frequency preset was not applied"
   else
-    echo "boot finished with errors: enabled=$ENABLED preset=$PRESET (see the messages above)"
-    log_msg "boot finished with errors"
+    if [ "$ENABLED" = 1 ] && [ -z "$CFG_BAD" ]; then cmd_apply || cb_rc=1; fi
+    if [ "$cb_rc" = 0 ]; then
+      echo "boot done: enabled=$ENABLED preset=$PRESET"
+    else
+      echo "boot finished with errors: enabled=$ENABLED preset=$PRESET (see the messages above)"
+      log_msg "boot finished with errors"
+    fi
   fi
   if [ -n "$cb_nostock" ]; then
     echo "error: the phone's own limits are not on record, so the kernel profile must not be applied at this boot (exit status 2)"
@@ -793,8 +838,25 @@ cmd_boot() {
 
 cmd_lists() { for c in $CLUSTERS; do echo "$c=$(rd "$(avail_node $c)")"; done; }
 
+# Verify that every present limit node which this engine can restore has a usable Stock value.
+# This is used before handing control to a kernel profile, so that later restoration is not guesswork.
+cmd_stock_recorded() {
+  have_def || { echo "error: the phone's original CPU/GPU limits are not recorded"; return 1; }
+  csr_missing=""
+  for csr_c in $CLUSTERS; do for csr_k in min max; do
+    csr_path=$(node "$csr_c" "$csr_k")
+    [ -e "$csr_path" ] || continue
+    csr_value=$(def_of "${csr_c}_${csr_k}")
+    [ -n "$csr_value" ] || csr_missing="$csr_missing ${csr_c}_${csr_k}"
+  done; done
+  [ -z "$csr_missing" ] || { echo "error: the Stock record is incomplete for:$csr_missing"; return 1; }
+  echo "stock_recorded=1"
+  return 0
+}
+
 cmd_status() {
-  capture_defaults
+  cs_source=$(control_source)
+  case "$cs_source" in module|legacy) capture_defaults ;; *) : ;; esac
   load_cfg
   if [ -z "$CFG_BAD" ] && ! cfg_values_available; then CFG_BAD=1; cfg_reset; fi
   # A settings file that exists but cannot be read or validated shows up as safe defaults below (disabled,
@@ -815,16 +877,17 @@ cmd_status() {
 case "$1" in
   status|"") cmd_status ;;
   lists)     cmd_lists ;;
+  stock-recorded) cmd_stock_recorded ;;
   cfg)       cmd_cfg "$2" "$3" && echo ok ;;
   preset)    cmd_preset "$2" && echo ok ;;
   resetall)  cmd_resetall && echo ok ;;
   apply)     cmd_apply && echo ok ;;
-  boot)      cmd_boot ;;
+  boot)      cmd_boot "$2" ;;
   daemon)    run_daemon "$2" ;;
   stop)      # stops the watcher AND hands the limits back; ok only if both worked (uninstall relies on this)
              st_rc=0; st_msg=""
              stop_daemon || { st_rc=1; st_msg="the watcher did not stop"; }
              apply_state none || { st_rc=1; st_msg="${st_msg:+$st_msg; }the phone's own values could not all be put back"; }
              if [ "$st_rc" = 0 ]; then echo ok; else echo "error: $st_msg"; exit 1; fi ;;
-  *) echo "usage: tune.sh status | lists | cfg KEY VALUE | preset stock|tilt|saver|performance|dynamic|custom | resetall | apply | boot | stop"; exit 1 ;;
+  *) echo "usage: tune.sh status | lists | stock-recorded | cfg KEY VALUE | preset stock|tilt|saver|performance|dynamic|custom | resetall | apply | boot [capture-only] | stop"; exit 1 ;;
 esac

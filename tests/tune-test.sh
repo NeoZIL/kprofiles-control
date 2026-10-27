@@ -30,7 +30,7 @@ reap() {
 }
 # Also stops the background "sleep" stand-ins this test starts (a run that is interrupted or aborted must not
 # leave one behind: it would keep the caller's output pipe open for minutes and look like a stalled test).
-cleanup() { for bg in ${bystander:-} ${other:-} ${holder:-}; do kill "$bg" 2>/dev/null; done; reap; rm -rf "$T"; }
+cleanup() { chattr -i "$T/kp/kp_mode" 2>/dev/null; for bg in ${bystander:-} ${other:-} ${holder:-}; do kill "$bg" 2>/dev/null; done; reap; rm -rf "$T"; }
 trap cleanup EXIT
 fail=0
 check() { if [ "$2" = "$3" ]; then echo "ok   $1"; else echo "FAIL $1: expected '$2' got '$3'"; fail=1; fi; }
@@ -49,10 +49,21 @@ mksys() { # the kernel's own files, exactly as a freshly booted phone has them (
   echo 255000000 > "$T/gpu/min_freq"; echo 900000000 > "$T/gpu/max_freq"
   echo 120 > "$T/bl/brightness"; echo 0 > "$T/kp/kp_mode"; echo N > "$T/kp/auto_kp"
 }
-mkfake() { reap; rm -rf "$T/cpufreq" "$T/gpu" "$T/cfg" "$T/kp"; mksys; }
+mkfake() {
+  reap; chattr -i "$T/kp/kp_mode" 2>/dev/null
+  rm -rf "$T/cpufreq" "$T/gpu" "$T/cfg" "$T/kp"
+  mksys
+  # Make fixture ownership explicit; a missing state file is now tested separately as legacy migration.
+  mkdir -p "$T/cfg"
+  printf 'SOURCE=module\nKP_MODE_PREF=0\nKP_AUTO_PREF=N\n' > "$T/cfg/control.conf"
+}
 export TUNE_CAP_SAMPLES=1 TUNE_CAP_GAP=0 TUNE_CAP_BOOT_SAMPLES=1 TUNE_CAP_BOOT_GAP=0
 export CPUFREQ_DIR="$T/cpufreq" GPU_DIR="$T/gpu" BL_PATH="$T/bl/brightness" CFG_DIR="$T/cfg" TUNE_NO_DAEMON=1 KP_PATH="$T/kp/kp_mode" AUTO_PATH="$T/kp/auto_kp"
 v() { cat "$T/$1"; }
+# A node that reads a valid mode but refuses writes. As a normal user a read-only file does it; as root file
+# modes are ignored, so the immutable flag is used. If neither blocks writes here, the check is skipped.
+refuse_writes() { chmod 444 "$1"; if ( : >> "$1" ) 2>/dev/null; then chattr +i "$1" 2>/dev/null; fi; ! ( : >> "$1" ) 2>/dev/null; }
+allow_writes() { chattr -i "$1" 2>/dev/null; chmod 644 "$1" 2>/dev/null; }
 waitfor() { # name expected file seconds   (poll instead of a fixed sleep, so slow runners do not flake)
   i=0
   while [ "$i" -lt "$4" ]; do
@@ -210,7 +221,7 @@ out=$(S status); has "own limits in place: not recorded as stock" "def_big_max="
 check "still no defaults file" "no" "$([ -f "$T/cfg/defaults" ] && echo yes || echo no)"
 
 echo "--- Reset everything: stock limits AND kernel profile ---"
-mkfake; S preset saver >/dev/null; sh "$HERE/../module/kp.sh" mode 1 >/dev/null
+mkfake; S preset saver >/dev/null; KPC_CONTROL_INTERNAL=1 sh "$HERE/../module/kp.sh" mode 1 >/dev/null
 check "kernel profile Battery set" 1 "$(v kp/kp_mode)"
 S resetall >/dev/null
 check "resetall: big max stock" 2572800 "$(v cpufreq/policy3/scaling_max_freq)"
@@ -219,7 +230,7 @@ check "resetall: kernel profile None" 0 "$(v kp/kp_mode)"
 out=$(S status); has "resetall: limits disabled" "enabled=0" "$out"
 
 echo "--- uninstall restores limits, resets the kernel profile, removes saved settings ---"
-mkfake; S preset tilt >/dev/null; sh "$HERE/../module/kp.sh" mode 3 >/dev/null
+mkfake; S preset tilt >/dev/null; KPC_CONTROL_INTERNAL=1 sh "$HERE/../module/kp.sh" mode 3 >/dev/null
 check "performance profile set" 3 "$(v kp/kp_mode)"
 # the shipped script deletes a fixed path, so run a copy whose target is the fixture folder
 rm -rf "$T/modu"; cp -r "$HERE/../module" "$T/modu"
@@ -230,6 +241,17 @@ check "uninstall: prime max restored" 2668800 "$(v cpufreq/policy7/scaling_max_f
 check "uninstall: gpu max restored" 900000000 "$(v gpu/max_freq)"
 check "uninstall: kernel profile None" 0 "$(v kp/kp_mode)"
 check "uninstall: saved settings removed" "no" "$([ -d "$T/cfg" ] && echo yes || echo no)"
+
+echo "--- uninstall on a kernel whose kernel-profile node is not standard ---"
+for kind in "unknown value 4" "unreadable (a folder)"; do
+  mkfake; S boot >/dev/null; S preset tilt >/dev/null; rm -f "$T/kp/kp_mode"
+  if [ "$kind" = "unknown value 4" ]; then echo 4 > "$T/kp/kp_mode"; else mkdir "$T/kp/kp_mode"; fi
+  sh "$T/modu/uninstall.sh" >/dev/null 2>&1; rc=$?
+  check "uninstall, profile $kind: exits 0" 0 "$rc"
+  check "uninstall, profile $kind: the limits were restored" 2572800 "$(v cpufreq/policy3/scaling_max_freq)"
+  check "uninstall, profile $kind: saved settings removed" "no" "$([ -d "$T/cfg" ] && echo yes || echo no)"
+  rm -rf "$T/kp/kp_mode"; echo 0 > "$T/kp/kp_mode"
+done
 
 echo "--- tune.sh never writes the kernel profile directly (kp.sh is its only writer) ---"
 check "no direct write to the kernel profile node" 0 "$(grep -c 'wr "\$KPNODE"\|> *"\$KPNODE"' "$TUNE")"
@@ -265,10 +287,34 @@ echo "--- boot order: the real service.sh records stock BEFORE it applies the ke
 mksvc() {
   rm -rf "$T/svc"; mkdir -p "$T/svc/bin"; cp "$HERE/../module/"*.sh "$T/svc/"
   sed -e "s|^D=/data/adb/kprofiles_ui\$|D=$T/cfg|" -e 's|^sleep 25$|sleep 0|' "$HERE/../module/service.sh" > "$T/svc/service.sh"
+  # Fake sysfs does not emulate the Kprofiles driver's mode-1 -> mode-0 release side effect.
+  # Simulate its known Battery big-cluster cap release; deliberately empty node files remain empty.
+  python3 - "$T/svc/kp.sh" <<'PYKP'
+from pathlib import Path
+import sys
+p = Path(sys.argv[1])
+s = p.read_text()
+needle = '  { echo "$1" > "$KP"; } 2>/dev/null\n  now=$(read_mode)\n'
+replacement = '''  mode_before=$(read_mode)
+  { echo "$1" > "$KP"; } 2>/dev/null
+  if [ "$1" = 0 ] && [ "$mode_before" = 1 ] && [ "$(cat "$CPUFREQ_DIR/policy3/scaling_max_freq" 2>/dev/null)" = 1286400 ]; then
+    echo 2572800 > "$CPUFREQ_DIR/policy3/scaling_max_freq"
+  fi
+  now=$(read_mode)
+'''
+if needle not in s:
+    raise SystemExit('fake kp mode write not found')
+p.write_text(s.replace(needle, replacement, 1))
+PYKP
   printf '#!/bin/sh\necho 1\n' > "$T/svc/bin/getprop"; chmod +x "$T/svc/bin/getprop"
 }
 runsvc() { PATH="$T/svc/bin:$PATH" TUNE_BOOT_WAIT=0 TUNE_BOOT_RETRIES=2 sh "$T/svc/service.sh"; }
-kpsave() { sh "$HERE/../module/kp.sh" mode "$1" >/dev/null; echo 0 > "$T/kp/kp_mode"; }   # saved choice; the kernel is back at 0 (a reboot)
+kpsave() {
+  # This fixture represents a user who chose Kernel profile, saved the requested mode, then rebooted.
+  printf 'SOURCE=kernel\nKP_MODE_PREF=0\nKP_AUTO_PREF=N\n' > "$T/cfg/control.conf"
+  sh "$HERE/../module/kp.sh" mode "$1" >/dev/null
+  echo 0 > "$T/kp/kp_mode"
+}
 mksvc
 check "service copy: data folder replaced" 1 "$(grep -c "^D=$T/cfg\$" "$T/svc/service.sh")"
 check "service copy: settle wait replaced" 1 "$(grep -c '^sleep 0$' "$T/svc/service.sh")"
@@ -276,11 +322,11 @@ mkfake; kpsave 1; runsvc
 check "boot: stock was recorded first (big max)" 2572800 "$(sed -n 's/^big_max=//p' "$T/cfg/defaults")"
 check "boot: stock was recorded first (big min)" 633600 "$(sed -n 's/^big_min=//p' "$T/cfg/defaults")"
 check "boot: the kernel profile was applied afterwards" 1 "$(v kp/kp_mode)"
-has "boot.log: reports a clean boot" "boot done" "$(cat "$T/cfg/boot.log")"
+has "boot.log: reports stock capture before kernel apply" "boot capture-only done" "$(cat "$T/cfg/boot.log")"
 
 echo "--- boot: the phone's own limits cannot be saved and none are on record ---"
 mkfake; kpsave 1; mkdir -p "$T/cfg/defaults"          # the snapshot file cannot be written (it is a folder)
-S boot >/dev/null; rc=$?
+S boot capture-only >/dev/null; rc=$?
 check "no record, save fails: tune.sh boot exits 2" 2 "$rc"
 check "no record, save fails: the log says so" 1 "$(grep -c 'not on record; the kernel profile is not applied' "$T/cfg/tune.log")"
 runsvc
@@ -292,14 +338,14 @@ runsvc
 check "no record, temp file fails: the kernel profile is NOT applied" 0 "$(v kp/kp_mode)"
 check "no record, temp file fails: nothing was recorded" no "$([ -f "$T/cfg/defaults" ] && echo yes || echo no)"
 
-echo "--- boot: the kernel Battery profile is already active and nothing is on record ---"
-mkfake; sh "$HERE/../module/kp.sh" mode 3 >/dev/null; echo 1 > "$T/kp/kp_mode"; echo 1286400 > "$T/cpufreq/policy3/scaling_max_freq"   # saved choice 3, kernel at 1
+echo "--- boot: a legacy active kernel cap is released before stock capture ---"
+mkfake; printf 'SOURCE=kernel\nKP_MODE_PREF=0\nKP_AUTO_PREF=N\n' > "$T/cfg/control.conf"; sh "$HERE/../module/kp.sh" mode 3 >/dev/null; rm -f "$T/cfg/control.conf"; echo 1 > "$T/kp/kp_mode"; echo 1286400 > "$T/cpufreq/policy3/scaling_max_freq"   # saved choice 3, legacy boot at Battery
 runsvc
-check "Battery active, no record: the saved kernel profile is NOT applied" 1 "$(v kp/kp_mode)"
-has "Battery active, no record: boot.log says the profile was skipped" "kernel profile was NOT applied" "$(cat "$T/cfg/boot.log")"
-has "Battery active, no record: boot.log has the status" "exit status 2" "$(cat "$T/cfg/boot.log")"
-check "Battery active, no record: big max was not recorded as stock" "" "$(sed -n 's/^big_max=//p' "$T/cfg/defaults" 2>/dev/null)"
-mkfake; S boot >/dev/null; sh "$HERE/../module/kp.sh" mode 3 >/dev/null; echo 1 > "$T/kp/kp_mode"
+check "Battery active, no record: saved kernel profile is re-applied after stock capture" 3 "$(v kp/kp_mode)"
+has "Battery active, no record: boot.log records stock capture" "boot capture-only done" "$(cat "$T/cfg/boot.log")"
+has "Battery active, no record: saved preference is reported" "mode=3" "$(cat "$T/cfg/boot.log")"
+check "Battery active, no record: released stock big max is recorded" 2572800 "$(sed -n 's/^big_max=//p' "$T/cfg/defaults" 2>/dev/null)"
+mkfake; S boot >/dev/null; kpsave 3; echo 1 > "$T/kp/kp_mode"
 runsvc
 check "Battery active, earlier record: the saved kernel profile IS applied" 3 "$(v kp/kp_mode)"
 
@@ -338,7 +384,7 @@ check "empty defaults file, nothing readable: Apply refuses to change a limit" 1
 has "empty defaults file, nothing readable: Apply says why" "so no limit was changed" "$out"
 mkfake; kpsave 1; blank; runsvc
 check "service.sh, all reads empty: the kernel profile is NOT applied" 0 "$(v kp/kp_mode)"
-has "service.sh, all reads empty: boot.log has the status" "exit status 2" "$(cat "$T/cfg/boot.log")"
+has "service.sh, all reads empty: boot.log has the no-record status" "no usable stock record exists" "$(cat "$T/cfg/boot.log")"
 check "service.sh, all reads empty: no snapshot file" no "$([ -e "$T/cfg/defaults" ] && echo yes || echo no)"
 
 echo "--- boot: the save fails but an earlier record exists ---"
@@ -348,7 +394,7 @@ check "earlier record, save fails: tune.sh boot exits 1" 1 "$rc"
 runsvc
 check "earlier record, save fails: the record is untouched" 0 "$(cmp -s "$T/defaults.keep" "$T/cfg/defaults"; echo $?)"
 check "earlier record, save fails: the kernel profile IS applied" 1 "$(v kp/kp_mode)"
-has "earlier record, save fails: boot.log reports the error" "exit status 1" "$(cat "$T/cfg/boot.log")"
+has "earlier record, save fails: boot.log reports the refresh problem" "status 1" "$(cat "$T/cfg/boot.log")"
 
 echo "--- boot: another error (unreadable settings) still applies the kernel profile ---"
 mkfake; kpsave 1; mkdir -p "$T/cfg/tune.conf"
@@ -393,7 +439,7 @@ echo "--- the watcher hands the limits back when the module is disabled or remov
 unset TUNE_NO_DAEMON; export TUNE_POLL_ON=1 TUNE_POLL_OFF=1 TUNE_REASSERT=3 TUNE_DAEMON_LOG="$T/daemon.log"
 for marker in disable remove; do
   : > "$T/daemon.log"
-  mkfake; rm -rf "$T/mod"; mkdir -p "$T/mod"; cp "$HERE/../module/tune.sh" "$HERE/../module/kp.sh" "$T/mod/"   # tune.sh looks for the marker in its own folder
+  mkfake; rm -rf "$T/mod"; mkdir -p "$T/mod"; cp "$HERE/../module/tune.sh" "$HERE/../module/kp.sh" "$HERE/../module/control-lib.sh" "$T/mod/"   # tune.sh looks for the marker and controller library in its own folder
   S2() { sh "$T/mod/tune.sh" "$@"; }
   S2 preset tilt >/dev/null
   i=0; while [ "$i" -lt 10 ]; do out=$(S2 status); case "$out" in *daemon=1*) break ;; esac; sleep 1; i=$((i + 1)); done
@@ -450,16 +496,41 @@ S preset tilt >/dev/null; rc=$?; check "Apply with Battery on and no record is r
 check "no record: nothing was marked as changed" no "$([ -s "$T/cfg/applied" ] && echo yes || echo no)"
 
 echo "--- Reset everything: profile first, and failures are reported ---"
-mkfake; S preset saver >/dev/null; sh "$HERE/../module/kp.sh" mode 1 >/dev/null
+mkfake; S preset saver >/dev/null; KPC_CONTROL_INTERNAL=1 sh "$HERE/../module/kp.sh" mode 1 >/dev/null
 out=$(S resetall); has "resetall ok: says ok" "ok" "$out"
 check "resetall ok: profile None" 0 "$(v kp/kp_mode)"
 check "resetall ok: big max stock" 2572800 "$(v cpufreq/policy3/scaling_max_freq)"
-mkfake; S preset saver >/dev/null; rm -f "$T/kp/kp_mode"; mkdir "$T/kp/kp_mode"      # a kernel profile node that cannot be written
+mkfake; S preset saver >/dev/null; echo 1 > "$T/kp/kp_mode"
+if refuse_writes "$T/kp/kp_mode"; then
+  S resetall >"$T/ra.out" 2>&1; rc=$?
+  check "resetall: a profile that refuses the write gives a non-zero exit" 1 "$rc"
+  has "resetall: a refused profile write is reported as an error" "error: the kernel profile could not be set to None" "$(cat "$T/ra.out")"
+  check "resetall: limits still restored when the profile write is refused" 2572800 "$(v cpufreq/policy3/scaling_max_freq)"
+  check "resetall: the refused profile was left as it was" 1 "$(v kp/kp_mode)"
+else
+  echo "skip resetall with a profile that refuses writes (this environment cannot block writes to a file)"
+fi
+allow_writes "$T/kp/kp_mode"
+# a node that exists but cannot be read, or holds a value this module does not know (another kernel's fork):
+# not a failure of the restore. The limits decide the result.
+for kind in "unreadable (a folder)" "unknown value 4" "unknown text"; do
+  mkfake; S preset saver >/dev/null; rm -f "$T/kp/kp_mode"
+  case "$kind" in "unreadable (a folder)") mkdir "$T/kp/kp_mode" ;; "unknown value 4") echo 4 > "$T/kp/kp_mode" ;; *) echo auto > "$T/kp/kp_mode" ;; esac
+  S resetall >"$T/ra.out" 2>&1; rc=$?
+  check "resetall, profile $kind: succeeds" 0 "$rc"
+  has "resetall, profile $kind: says it left the profile alone" "so it was left as it is" "$(cat "$T/ra.out")"
+  check "resetall, profile $kind: limits restored" 2572800 "$(v cpufreq/policy3/scaling_max_freq)"
+  if grep -q 'could not be set to None' "$T/ra.out"; then echo "FAIL resetall, profile $kind: reported as an error"; fail=1; else echo "ok   resetall, profile $kind: not reported as an error"; fi
+  if [ "$kind" = "unknown value 4" ]; then check "resetall, profile $kind: the node was not written" 4 "$(v kp/kp_mode)"; fi
+  rm -rf "$T/kp/kp_mode"; echo 0 > "$T/kp/kp_mode"
+done
+# ...but if that profile really holds a limit down, the limit restore itself still fails and says so
+mkfake; S preset tilt >/dev/null; echo 4 > "$T/kp/kp_mode"
+rm -f "$T/cpufreq/policy3/scaling_max_freq"; mkdir "$T/cpufreq/policy3/scaling_max_freq"
 S resetall >"$T/ra.out" 2>&1; rc=$?
-check "resetall: failing profile gives a non-zero exit" 1 "$rc"
-has "resetall: failing profile is reported" "error: the kernel profile could not be set to None" "$(cat "$T/ra.out")"
-check "resetall: limits still restored when the profile fails" 2572800 "$(v cpufreq/policy3/scaling_max_freq)"
-rmdir "$T/kp/kp_mode"; echo 0 > "$T/kp/kp_mode"
+check "resetall, unknown profile and a refused limit: still fails" 1 "$rc"
+has "resetall, unknown profile and a refused limit: the limit is named" "big_max" "$(cat "$T/ra.out")"
+rm -rf "$T/cpufreq/policy3/scaling_max_freq"; echo 2572800 > "$T/cpufreq/policy3/scaling_max_freq"; echo 0 > "$T/kp/kp_mode"
 mkfake; S preset saver >/dev/null; rm -rf "$T/kp"                                     # no Kprofiles in this kernel at all
 S resetall >/dev/null 2>&1; check "resetall without Kprofiles still works" 2572800 "$(v cpufreq/policy3/scaling_max_freq)"
 mkfake
@@ -500,7 +571,7 @@ export TUNE_NO_DAEMON=1
 echo "--- watcher started by name from inside the module folder still gets the real module folder ---"
 unset TUNE_NO_DAEMON; export TUNE_POLL_ON=1 TUNE_POLL_OFF=1 TUNE_REASSERT=3
 for marker in disable remove; do
-  mkfake; rm -rf "$T/mod" "$T/elsewhere"; mkdir -p "$T/mod" "$T/elsewhere"; cp "$HERE/../module/tune.sh" "$HERE/../module/kp.sh" "$T/mod/"
+  mkfake; rm -rf "$T/mod" "$T/elsewhere"; mkdir -p "$T/mod" "$T/elsewhere"; cp "$HERE/../module/tune.sh" "$HERE/../module/kp.sh" "$HERE/../module/control-lib.sh" "$T/mod/"
   ( cd "$T/mod" && sh tune.sh preset tilt >/dev/null )        # $0 is just "tune.sh": no folder in it
   i=0; while [ "$i" -lt 10 ] && [ ! -s "$T/cfg/daemon.pid" ]; do sleep 1; i=$((i + 1)); done
   wp=$(cat "$T/cfg/daemon.pid" 2>/dev/null)
@@ -561,7 +632,7 @@ check "pid-less lock: lock still there" "yes" "$([ -d "$T/cfg/daemon.lock" ] && 
 rm -rf "$T/cfg/daemon.lock"
 
 echo "--- a restore the kernel refuses is logged by the watcher and kept for a retry ---"
-mkfake; rm -rf "$T/mod"; mkdir -p "$T/mod"; cp "$HERE/../module/tune.sh" "$HERE/../module/kp.sh" "$T/mod/"
+mkfake; rm -rf "$T/mod"; mkdir -p "$T/mod"; cp "$HERE/../module/tune.sh" "$HERE/../module/kp.sh" "$HERE/../module/control-lib.sh" "$T/mod/"
 export TUNE_POLL_ON=1 TUNE_POLL_OFF=1 TUNE_REASSERT=3
 sh "$T/mod/tune.sh" boot >/dev/null; sh "$T/mod/tune.sh" preset tilt >/dev/null
 i=0; while [ "$i" -lt 10 ] && [ ! -s "$T/cfg/daemon.pid" ]; do sleep 1; i=$((i + 1)); done
@@ -639,7 +710,7 @@ case "$out" in *"could not read"*) echo "FAIL absent gpu is not a read failure";
 echo "--- a watcher that no longer owns the pid file cannot undo a restore ---"
 unset TUNE_NO_DAEMON; export TUNE_POLL_ON=1 TUNE_POLL_OFF=1 TUNE_REASSERT=2
 mkfake; rm -rf "$T/mod0" "$T/mod"; mkdir -p "$T/mod0" "$T/mod"
-cp "$HERE/../module/tune.sh" "$HERE/../module/kp.sh" "$T/mod0/"; cp "$HERE/../module/tune.sh" "$HERE/../module/kp.sh" "$T/mod/"
+cp "$HERE/../module/tune.sh" "$HERE/../module/kp.sh" "$HERE/../module/control-lib.sh" "$T/mod0/"; cp "$HERE/../module/tune.sh" "$HERE/../module/kp.sh" "$HERE/../module/control-lib.sh" "$T/mod/"
 sh "$T/mod0/tune.sh" preset tilt >/dev/null            # watcher A: looks for markers in mod0
 i=0; while [ "$i" -lt 10 ]; do out=$(sh "$T/mod0/tune.sh" status); case "$out" in *daemon=1*) break ;; esac; sleep 1; i=$((i + 1)); done
 has "ownership: watcher A running" "daemon=1" "$out"
@@ -737,17 +808,20 @@ check "refused restore while enabled: the command exits non-zero" 1 "$rc"
 has "refused restore while enabled: reports an error" "error: some of the phone's own values could not be put back" "$out"
 check "refused restore while enabled: the marker is kept" 1 "$(grep -cx big_max "$T/cfg/applied" 2>/dev/null)"
 
-echo "--- uninstall keeps the recovery data when the kernel profile cannot be reset ---"
-mkfake; S boot >/dev/null; S preset tilt >/dev/null; sh "$HERE/../module/kp.sh" mode 3 >/dev/null
-rm -f "$T/kp/kp_mode"; mkdir "$T/kp/kp_mode"                            # the kernel profile node cannot be written
+echo "--- uninstall keeps the recovery data when the kernel profile refuses to be reset ---"
+mkfake; S boot >/dev/null; S preset tilt >/dev/null; KPC_CONTROL_INTERNAL=1 sh "$HERE/../module/kp.sh" mode 3 >/dev/null
 rm -rf "$T/modu"; cp -r "$HERE/../module" "$T/modu"
 sed "s#/data/adb/kprofiles_ui#$T/cfg#" "$HERE/../module/uninstall.sh" > "$T/modu/uninstall.sh"
-sh "$T/modu/uninstall.sh" >/dev/null 2>&1; rc=$?
-check "kernel profile reset fails: uninstall exits non-zero" 1 "$rc"
-check "kernel profile reset fails: recorded stock values kept" yes "$([ -s "$T/cfg/defaults" ] && echo yes || echo no)"
-check "kernel profile reset fails: settings kept" yes "$([ -s "$T/cfg/tune.conf" ] && echo yes || echo no)"
-check "kernel profile reset fails: the limits themselves were restored" 2572800 "$(v cpufreq/policy3/scaling_max_freq)"
-rmdir "$T/kp/kp_mode"; echo 3 > "$T/kp/kp_mode"
+if refuse_writes "$T/kp/kp_mode"; then                                      # reads a valid mode but refuses the write
+  sh "$T/modu/uninstall.sh" >/dev/null 2>&1; rc=$?
+  check "kernel profile reset refused: uninstall exits non-zero" 1 "$rc"
+  check "kernel profile reset refused: recorded stock values kept" yes "$([ -s "$T/cfg/defaults" ] && echo yes || echo no)"
+  check "kernel profile reset refused: settings kept" yes "$([ -s "$T/cfg/tune.conf" ] && echo yes || echo no)"
+  check "kernel profile reset refused: the limits themselves were restored" 2572800 "$(v cpufreq/policy3/scaling_max_freq)"
+else
+  echo "skip uninstall with a profile that refuses writes (this environment cannot block writes to a file)"
+fi
+allow_writes "$T/kp/kp_mode"; echo 3 > "$T/kp/kp_mode"
 sh "$T/modu/uninstall.sh" >/dev/null 2>&1; rc=$?
 check "kernel profile resets: uninstall exits 0" 0 "$rc"
 check "kernel profile resets: profile is None" 0 "$(v kp/kp_mode)"
@@ -955,7 +1029,7 @@ echo "--- uninstall resets the kernel profile BEFORE it restores the limits ---"
 # Stand-in for a kernel where the Battery profile holds the limit down: the big max can only be written
 # once kp.sh has set the profile to None. (The node is a folder, so writes fail, until then.)
 setup_locked() {
-  mkfake; S boot >/dev/null; S preset tilt >/dev/null; sh "$HERE/../module/kp.sh" mode 1 >/dev/null
+  mkfake; S boot >/dev/null; S preset tilt >/dev/null; KPC_CONTROL_INTERNAL=1 sh "$HERE/../module/kp.sh" mode 1 >/dev/null
   rm -f "$T/cpufreq/policy3/scaling_max_freq"; mkdir "$T/cpufreq/policy3/scaling_max_freq"
   rm -rf "$T/modu"; cp -r "$HERE/../module" "$T/modu"
   sed "s#/data/adb/kprofiles_ui#$T/cfg#" "$HERE/../module/uninstall.sh" > "$T/modu/uninstall.sh"
@@ -964,7 +1038,7 @@ setup_locked() {
 #!/bin/sh
 D=$(dirname "$0")
 sh "$D/kp-real.sh" "$@"; rc=$?
-if [ "$1" = mode ] && [ "$2" = 0 ] && [ "$rc" = 0 ] && [ -d "$BIGNODE" ]; then rmdir "$BIGNODE"; echo 2188800 > "$BIGNODE"; fi
+if { [ "$1" = mode ] || [ "$1" = control-mode ]; } && [ "$2" = 0 ] && [ "$rc" = 0 ] && [ -d "$BIGNODE" ]; then rmdir "$BIGNODE"; echo 2188800 > "$BIGNODE"; fi
 exit $rc
 WRAP
 }
@@ -988,7 +1062,7 @@ check "after the profile can be reset: uninstall succeeds" 0 "$rc"
 check "after the profile can be reset: limit restored" 2572800 "$(v cpufreq/policy3/scaling_max_freq)"
 check "after the profile can be reset: saved settings removed" no "$([ -e "$T/cfg" ] && echo yes || echo no)"
 # the profile resets but the restore is still refused: kept, and the profile is already None
-mkfake; S boot >/dev/null; S preset tilt >/dev/null; sh "$HERE/../module/kp.sh" mode 1 >/dev/null
+mkfake; S boot >/dev/null; S preset tilt >/dev/null; KPC_CONTROL_INTERNAL=1 sh "$HERE/../module/kp.sh" mode 1 >/dev/null
 rm -f "$T/cpufreq/policy3/scaling_max_freq"; mkdir "$T/cpufreq/policy3/scaling_max_freq"
 rm -rf "$T/modu"; cp -r "$HERE/../module" "$T/modu"; sed "s#/data/adb/kprofiles_ui#$T/cfg#" "$HERE/../module/uninstall.sh" > "$T/modu/uninstall.sh"
 sh "$T/modu/uninstall.sh" >/dev/null 2>&1; rc=$?
@@ -1410,5 +1484,16 @@ mkfake; rm -f "$T/cfg/defaults" "$T/cfg/applied" "$T/cfg/tune.conf"
 echo 2572800 > "$T/cpufreq/policy3/scaling_min_freq"; echo 2668800 > "$T/cpufreq/policy7/scaling_min_freq"
 S preset tilt >/dev/null
 check "refused preset with no earlier file: none is left behind" no "$([ -e "$T/cfg/tune.conf" ] && echo yes || echo no)"
+
+
+echo "--- the tuning engine finds Kprofiles at the upstream module-parameter path too ---"
+KLR="$T/kl"; rm -rf "$KLR"; mkdir -p "$KLR/sys/module/kprofiles/parameters"
+mkfake; echo 1 > "$KLR/sys/module/kprofiles/parameters/kp_mode"          # kernel Battery profile active, nothing recorded yet
+out=$( ( unset KP_PATH AUTO_PATH; export KP_SYSROOT="$KLR"; S status ) )
+check "upstream path, Battery active: nothing is recorded as stock" "" "$(printf '%s\n' "$out" | sed -n 's/^def_big_max=//p')"
+check "upstream path, Battery active: no defaults file is written" "no" "$([ -f "$T/cfg/defaults" ] && echo yes || echo no)"
+echo 0 > "$KLR/sys/module/kprofiles/parameters/kp_mode"
+out=$( ( unset KP_PATH AUTO_PATH; export KP_SYSROOT="$KLR"; S status ) )
+check "upstream path, profile None: stock is recorded" 2572800 "$(printf '%s\n' "$out" | sed -n 's/^def_big_max=//p')"
 
 [ "$fail" = 0 ] && echo "all tune tests passed" || { echo "SOME TESTS FAILED"; exit 1; }

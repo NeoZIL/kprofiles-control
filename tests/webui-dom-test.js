@@ -69,6 +69,9 @@ const ok = (stdout) => ({ errno: 0, stdout: stdout || "", stderr: "" });
 async function load(opts) {
   opts = opts || {};
   const doc = makeDom(); const store = new Map(Object.entries(opts.storage || {}));
+  /* the page listens for visibilitychange: let a test hide and show it */
+  doc.visibilityState = "visible"; const visListeners = [];
+  doc.addEventListener = (t, f) => { if (t === "visibilitychange") visListeners.push(f); };
   const calls = []; let clock = 1000000; const intervals = []; const timeouts = [];
   const win = { localStorage: {
     getItem: (k) => (store.has(k) ? store.get(k) : null), setItem: (k, v) => { store.set(k, String(v)); }, removeItem: (k) => { store.delete(k); } } };
@@ -76,7 +79,11 @@ async function load(opts) {
     if (/module\.prop/.test(cmd)) return ok("v3.1.0\n");
     if (/tune\.sh lists/.test(cmd)) return ok(LISTS);
     if (/tune\.sh status/.test(cmd)) return ok(statusText());
-    if (/kp\.sh status/.test(cmd)) return ok("mode=0 auto=N persist=1\n");
+    if (/kp\.sh status/.test(cmd)) return ok("mode=0 auto=N persist=1 support=supported auto_support=supported\n");
+    if (/control\.sh status/.test(cmd)) return ok("source=" + (opts.controllerSource || "module") + "\nsource_message=mock controller state\nkernel_support=supported\n");
+    if (/control\.sh switch /.test(cmd)) return ok("source=" + cmd.match(/control\.sh switch (module|kernel)/)[1] + "\n");
+    if (/monitor\.sh snapshot/.test(cmd)) return ok("schema=1\ndevice=peridot\ncpu_online_list=0-7\ncpu_policy_0_cpus=0 1 2\ncpu_policy_0_affected_cpus=0 1 2\ncpu_policy_0_cur_khz=1017600\ncpu_policy_0_min_khz=595200\ncpu_policy_0_max_khz=1017600\ncpu_policy_3_cpus=3 4 5 6\ncpu_policy_3_affected_cpus=3 4 5 6\ncpu_policy_3_cur_khz=787200\ncpu_policy_3_min_khz=633600\ncpu_policy_3_max_khz=787200\ncpu_policy_7_cpus=7\ncpu_policy_7_affected_cpus=7\ncpu_policy_7_cur_khz=633600\ncpu_policy_7_min_khz=633600\ncpu_policy_7_max_khz=633600\nstat_cpu0=1 2 3 4 5 6 7 8 0 0\nstat_cpu1=1 2 3 4 5 6 7 8 0 0\nstat_cpu2=1 2 3 4 5 6 7 8 0 0\nstat_cpu3=1 2 3 4 5 6 7 8 0 0\nstat_cpu4=1 2 3 4 5 6 7 8 0 0\nstat_cpu5=1 2 3 4 5 6 7 8 0 0\nstat_cpu6=1 2 3 4 5 6 7 8 0 0\nstat_cpu7=1 2 3 4 5 6 7 8 0 0\nthermal_1_type=cpu-0-0-0\nthermal_1_raw=37000\nthermal_2_type=cpu-1-0-0\nthermal_2_raw=44000\nthermal_3_type=cpu-2-0-0\nthermal_3_raw=45000\nthermal_4_type=gpuss-0\nthermal_4_raw=33000\ngpu_cur_hz=684000000\ngpu_min_hz=255000000\ngpu_max_hz=736000000\ngpu_busy_pct=27 %\nbattery_status=Discharging\nbattery_capacity=68\nbattery_current_now=-400000\nbattery_voltage_now=4084000\nbattery_power_now=2000000\nbattery_temp=306\nbattery_charge_counter=2891000\nbattery_charge_full=4425000\n");
+    if (/monitor\.sh screen/.test(cmd)) return ok("screen_state=off\nbattery_status=Discharging\nbattery_capacity=68\nbattery_charge_counter=2891000\nbattery_charge_full=4425000\n");
     return ok("ok\n");
   };
   const ctx = vm.createContext({
@@ -95,6 +102,7 @@ async function load(opts) {
     msg: () => doc.getElementById("msg").textContent,
     advance: async (ms) => { clock += ms; intervals.forEach((f) => f && f()); timeouts.filter((t) => t.f && t.at <= clock).forEach((t) => { const f = t.f; t.f = null; f(); }); await flush(); },
     sent: (re) => calls.filter((x) => re.test(x)).length,
+    setVisible: async (v) => { doc.visibilityState = v ? "visible" : "hidden"; visListeners.forEach((f) => f()); await flush(); },
   };
   await flush();
   return c;
@@ -194,7 +202,7 @@ const deferred = () => { let res; const p = new Promise((r) => { res = r; }); re
   }
   // 6. The new profile choices exist, and the kernel section starts collapsed when supported.
   {
-    const c = await load();
+    const c = await load({ controllerSource: "kernel" });
     for (const preset of ["performance", "custom", "dynamic"]) {
       check("new profile button exists: " + preset, c.doc.all.some((e) => e.getAttribute("data-preset") === preset), "missing");
     }
@@ -203,7 +211,7 @@ const deferred = () => { let res; const p = new Promise((r) => { res = r; }); re
     check("Reset button exposes a clear accessible label", c.el("resetAll").getAttribute("aria-label") === "Reset everything", c.el("resetAll").getAttribute("aria-label"));
     check("kernel profiles section starts collapsed", c.el("kernelProfilesPanel").style.display === "none", c.el("kernelProfilesPanel").style.display);
     check("supported kernel enables its profile button", c.el("kernelProfilesBtn").disabled === false, "disabled");
-    check("the three existing kernel profile choices remain available", c.doc.all.filter((e) => e.hasAttribute("data-kp")).length === 3, "wrong choice count");
+    check("all four standard Kprofiles mode choices remain available", c.doc.all.filter((e) => e.hasAttribute("data-kp")).length === 4 && !!c.doc.all.find((e) => e.getAttribute("data-kp") === "2"), "wrong choice count or missing Balanced mode");
     c.el("kernelProfilesBtn").fire("click");
     check("tap expands supported kernel profiles", c.el("kernelProfilesPanel").style.display === "block" && c.el("kernelProfilesBtn").getAttribute("aria-expanded") === "true", c.el("kernelProfilesPanel").style.display);
   }
@@ -293,7 +301,8 @@ const deferred = () => { let res; const p = new Promise((r) => { res = r; }); re
     check("kernel status unreadable: it is not called unsupported", c.el("kernelUnsupported").style.display === "none", c.el("kernelUnsupported").style.display);
     check("kernel status unreadable: the retry hint is shown", c.el("kernelUnknown").style.display === "block", c.el("kernelUnknown").style.display);
     check("kernel status unreadable: the modes stay hidden", c.el("kernelProfilesPanel").style.display === "none", c.el("kernelProfilesPanel").style.display);
-    const u = await load({ handler: (cmd, def) => (/kp\.sh status/.test(cmd) ? ok("mode=? auto=? persist=1\n") : def(cmd)) });
+    const u = await load({ handler: (cmd, def) => (/kp\.sh status/.test(cmd) ? ok("mode=? auto=? persist=1 support=unsupported auto_support=unsupported\n") : def(cmd)) });
+    check("unsupported: the explicit support field is honored", u.el("kernelUnsupported").style.display === "block", u.el("kernelUnsupported").style.display);
     check("unsupported: the exact message is on the page and shown", /id="kernelUnsupported"[^>]*>Extra kernel features are not supported by your kernel\./.test(src) && u.el("kernelUnsupported").style.display === "block", u.el("kernelUnsupported").style.display);
     check("unsupported: the unknown-state hint is not shown", u.el("kernelUnknown").style.display === "none", u.el("kernelUnknown").style.display);
     u.el("kernelProfilesBtn").fire("click");
@@ -301,12 +310,29 @@ const deferred = () => { let res; const p = new Promise((r) => { res = r; }); re
     clickKp(u, 1); u.el("swKpPersist").fire("change"); await u.flush();
     check("unsupported: a kernel choice or the persist switch sends nothing, even if a tap gets through", u.sent(/kp\.sh (mode|persist)/) === 0, u.calls.join(" | "));
     check("unsupported: the page says nothing was changed", /not supported by your kernel, so nothing was changed/.test(u.msg()), u.msg());
-    const s = await load();
+    const unknownSupport = await load({ handler: (cmd, def) => (/kp\.sh status/.test(cmd) ? ok("mode=? auto=? persist=1 support=unknown auto_support=unknown\n") : def(cmd)) });
+    check("present but unreadable Kprofiles interface remains unconfirmed", unknownSupport.el("kernelUnknown").style.display === "block" && unknownSupport.el("kernelUnsupported").style.display === "none", unknownSupport.el("kernelUnknown").style.display + "/" + unknownSupport.el("kernelUnsupported").style.display);
+    clickKp(unknownSupport, 1); await unknownSupport.flush();
+    check("unconfirmed Kprofiles interface sends no command", unknownSupport.sent(/kp\.sh mode/) === 0, unknownSupport.calls.join(" | "));
+    let simulatedKernelMode = "0";
+    const s = await load({ controllerSource: "kernel", handler: (cmd, def) => {
+      const modeCall = cmd.match(/kp\.sh mode ([0-3])/);
+      if (modeCall) {
+        simulatedKernelMode = modeCall[1];
+        return ok("mode=" + simulatedKernelMode + " auto=N persist=1 support=supported auto_support=supported\n");
+      }
+      if (/kp\.sh status/.test(cmd)) return ok("mode=" + simulatedKernelMode + " auto=N persist=1 support=supported auto_support=supported\n");
+      return def(cmd);
+    } });
     s.el("kernelProfilesBtn").fire("click"); await s.flush();
     check("supported: the unsupported message is hidden", s.el("kernelUnsupported").style.display === "none", s.el("kernelUnsupported").style.display);
     clickKp(s, 1); await s.flush();
     check("supported: Battery sends mode 1", s.sent(/kp\.sh mode 1/) === 1, s.calls.join(" | "));
-    clickKp(s, 3); await s.flush(); await s.advance(9000);
+    await s.advance(9000); clickKp(s, 2); await s.flush();
+    check("supported: Balanced sends mode 2", s.sent(/kp\.sh mode 2/) === 1, s.calls.join(" | "));
+    await s.advance(9000);
+    check("mode 2 is highlighted as Balanced, not None", s.doc.all.find((e) => e.getAttribute("data-kp") === "2").getAttribute("aria-checked") === "true", "Balanced is not active");
+    clickKp(s, 3); await s.flush();
     check("supported: Performance sends mode 3", s.sent(/kp\.sh mode 3/) === 1, s.calls.join(" | "));
     check("the section stays open after a kernel change", s.el("kernelProfilesPanel").style.display === "block", s.el("kernelProfilesPanel").style.display);
     s.el("kernelProfilesBtn").fire("click");
@@ -322,7 +348,43 @@ const deferred = () => { let res; const p = new Promise((r) => { res = r; }); re
     check("recovery lock: the kernel section button is locked", r.el("kernelProfilesBtn").disabled === true, "enabled");
     check("recovery lock: kernel choices are locked", r.doc.all.filter((e) => e.hasAttribute("data-kp")).every((e) => e.disabled), "a choice is enabled");
   }
-  // 11. the five-page UI navigates locally and does not issue shell commands
+  // 11. Controller source is explicit, engine-backed and independent of saved preset choices.
+  {
+    const c = await load({ controllerSource: "module" });
+    check("Module source keeps the module preset as the current profile", c.el("homeProfileEyebrow").textContent === "Current profile" && c.el("homePreset").textContent === "Stock", c.el("homeProfileEyebrow").textContent + " / " + c.el("homePreset").textContent);
+    check("Module source reports the module as active", c.el("homeActiveBadge").textContent === "Module on", c.el("homeActiveBadge").textContent);
+    check("control source card is visible when Kprofiles is supported", c.el("controlSourceCard").style.display === "block", c.el("controlSourceCard").style.display);
+    check("Module presets is selected in Module mode", c.el("sourceModuleBtn").getAttribute("aria-pressed") === "true", c.el("sourceModuleBtn").getAttribute("aria-pressed"));
+    check("kernel controls are locked while Module presets owns tuning", c.doc.all.filter((e) => e.hasAttribute("data-kp")).every((e) => e.disabled), "a kernel option is enabled");
+    check("preset controls remain available while Module presets owns tuning", c.doc.all.filter((e) => e.hasAttribute("data-preset")).every((e) => !e.disabled), "a preset is disabled");
+  }
+  {
+    const c = await load({ controllerSource: "kernel", handler: (cmd, def) => {
+      if (/tune\.sh status/.test(cmd)) return ok(statusText({ preset: "tilt", enabled: 1 }));
+      if (/kp\.sh status/.test(cmd)) return ok("mode=2 auto=N persist=1 support=supported auto_support=supported\n");
+      return def(cmd);
+    } });
+    check("Kernel source changes the hero label to Kernel profile", c.el("homeProfileEyebrow").textContent === "Kernel profile", c.el("homeProfileEyebrow").textContent);
+    check("Kernel source shows the actual current kernel mode, not the saved Battery tilt preset", c.el("homePreset").textContent === "Balanced", c.el("homePreset").textContent);
+    check("Kernel source badge does not claim Module on", c.el("homeActiveBadge").textContent === "Kernel active", c.el("homeActiveBadge").textContent);
+    check("saved module preset is identified as inactive", /Saved module preset: Battery tilt \(not controlling CPU\/GPU limits\)/.test(c.el("homePresetHint").textContent), c.el("homePresetHint").textContent);
+  }
+  {
+    let source = "conflict";
+    const c = await load({ controllerSource: "conflict", handler: (cmd, def) => {
+      if (/control\.sh status/.test(cmd)) return ok("source=" + source + "\nsource_message=Choose one controller\nkernel_support=supported\n");
+      const m = cmd.match(/control\.sh switch (module|kernel)/);
+      if (m) { source = m[1]; return ok("source=" + source + "\n"); }
+      return def(cmd);
+    } });
+    check("legacy overlap is shown as a controller conflict", c.el("controlSourceConflict").style.display === "block", c.el("controlSourceConflict").style.display);
+    check("conflict locks both tuning controllers until a choice", c.doc.all.filter((e) => e.hasAttribute("data-preset") || e.hasAttribute("data-kp")).every((e) => e.disabled), "a tuning control is enabled");
+    c.el("sourceModuleBtn").fire("click"); await c.flush(); await c.advance(9000);
+    check("choosing Module presets issues an explicit handoff command", c.sent(/control\.sh switch module/) === 1, c.calls.join(" | "));
+    check("successful conflict resolution selects Module presets", c.el("sourceModuleBtn").getAttribute("aria-pressed") === "true", c.el("sourceModuleBtn").getAttribute("aria-pressed"));
+    check("successful conflict resolution unlocks module presets", c.doc.all.filter((e) => e.hasAttribute("data-preset")).every((e) => !e.disabled), "a preset remains disabled");
+  }
+  // 12. navigation is local; opening Monitor starts the read-only sampler
   {
     const c = await load();
     const before = c.calls.length;
@@ -334,19 +396,126 @@ const deferred = () => { let res; const p = new Promise((r) => { res = r; }); re
       ["navSettings", "pageSettings", "settings"],
       ["navHome", "pageHome", "home"]
     ];
-    routes.forEach(([navId, pageId, key]) => {
+    for (const [navId, pageId, key] of routes) {
       c.el(navId).fire("click");
       check("navigation opens " + key, c.el(pageId).style.display === "block" && c.el(navId).getAttribute("aria-current") === "page", "page/nav not active");
       const visible = ["pageHome", "pageCpu", "pageKernel", "pageMonitor", "pageSettings"].filter((id) => c.el(id).style.display === "block");
       check("navigation leaves exactly one page visible after " + key, visible.length === 1 && visible[0] === pageId, visible.join(","));
-    });
+      await c.flush();
+    }
+    check("only entering Monitor starts one read-only hardware sample", c.calls.length === before + 1 && c.sent(/monitor\.sh snapshot/) === 1, "before=" + before + " after=" + c.calls.length + " calls=" + c.calls.join(" | "));
+    check("live monitor shows all three POCO F6 CPU policies", c.el("hwCpuCards").children.length === 3, "cards=" + c.el("hwCpuCards").children.length);
+    check("live monitor includes GPU and battery cards", !!c.el("hwGpuCard") && !!c.el("hwBatteryCard"), "missing card");
+    const monitorPageSource = src.slice(src.indexOf('<section class="page" id="pageMonitor"'), src.indexOf('<section class="page" id="pageSettings"'));
+    check("percentage calculation guide is at the end of Monitor", /How to read this/.test(monitorPageSource) && monitorPageSource.trim().endsWith('</section>') && /change in total CPU counters/.test(monitorPageSource), "missing detailed guide at bottom of Monitor");
+    check("CPU current frequency and utilization share the agreed format", c.el("hwCpuFrequency_0").textContent === "1018 MHz (—%)", c.el("hwCpuFrequency_0").textContent);
+    check("CPU active min/max limits, not hardware maxima, are displayed", c.el("hwCpuMin_0").textContent === "595.2 MHz" && c.el("hwCpuMax_0").textContent === "1017.6 MHz", c.el("hwCpuMin_0").textContent + " / " + c.el("hwCpuMax_0").textContent);
+    check("temperature badge uses blue Normal below 38C", c.el("hwCpuStatus_0").textContent === "Normal" && c.el("hwCpuStatus_0").className.indexOf("hw-temp-normal") >= 0, c.el("hwCpuStatus_0").className);
+    check("temperature badge uses yellow Warm from 38C to below 45C", c.el("hwCpuStatus_1").textContent === "Warm" && c.el("hwCpuStatus_1").className.indexOf("hw-temp-warm") >= 0, c.el("hwCpuStatus_1").className);
+    check("temperature badge uses red Hot at 45C", c.el("hwCpuStatus_2").textContent === "Hot" && c.el("hwCpuStatus_2").className.indexOf("hw-temp-hot") >= 0, c.el("hwCpuStatus_2").className);
+    check("GPU frequency, activity and allowed range are displayed", c.el("hwGpuFrequency").textContent === "684 MHz (27%)" && c.el("hwGpuMin").textContent === "255 MHz" && c.el("hwGpuMax").textContent === "736 MHz", c.el("hwGpuFrequency").textContent);
+    check("battery charge uses its own state and color class", c.el("hwBatteryStatus").textContent === "Normal" && c.el("hwBatteryStatus").className.indexOf("hw-charge-normal") >= 0, c.el("hwBatteryStatus").className);
+    check("battery temperature has its own temperature badge", c.el("hwBatteryTempStatus").textContent === "Normal" && c.el("hwBatteryTemperature").textContent === "30.6°C", c.el("hwBatteryTempStatus").textContent + " / " + c.el("hwBatteryTemperature").textContent);
+    check("battery power prefers the kernel-reported power_now value", c.el("hwBatteryPower").textContent === "2 W", c.el("hwBatteryPower").textContent);
     c.el("homeProfiles").fire("click");
     check("Home quick access opens CPU and GPU", c.el("pageCpu").style.display === "block", c.el("pageCpu").style.display);
     c.el("topSettings").fire("click");
     check("header gear opens Settings", c.el("pageSettings").style.display === "block", c.el("pageSettings").style.display);
-    c.el("homeOpenMonitor").fire("click");
-    check("Home details shortcut opens Monitor", c.el("pageMonitor").style.display === "block", c.el("pageMonitor").style.display);
-    check("page navigation issues no shell commands", c.calls.length === before, "before=" + before + " after=" + c.calls.length);
+    c.el("homeMonitor").fire("click"); await c.flush();
+    check("Home Live Monitoring card opens Monitor", c.el("pageMonitor").style.display === "block", c.el("pageMonitor").style.display);
+    check("Home Live Monitoring card starts the same sampler", c.sent(/monitor\.sh snapshot/) === 2, "samples=" + c.sent(/monitor\.sh snapshot/));
+    c.el("navHome").fire("click");
+    c.el("homeOpenMonitor").fire("click"); await c.flush();
+    check("Home Details shortcut still opens Monitor", c.el("pageMonitor").style.display === "block", c.el("pageMonitor").style.display);
+    check("Monitor sampling stops when navigating away", c.sent(/monitor\.sh snapshot/) === 3, "samples=" + c.sent(/monitor\.sh snapshot/));
+  }
+  // 12. vendor-independent GPU counter fallback and battery charge thresholds
+  {
+    let snapshotCount = 0;
+    const g = await load({ handler: (cmd, def) => {
+      const result = def(cmd);
+      if (/monitor\.sh snapshot/.test(cmd)) {
+        snapshotCount++;
+        const counters = snapshotCount === 1 ? "100 200" : "150 300";
+        return ok(result.stdout.replace("gpu_busy_pct=27 %\n", "gpu_busy_counters=" + counters + "\n"));
+      }
+      return result;
+    }});
+    g.el("navMonitor").fire("click"); await g.flush();
+    check("GPU busy counter fallback waits for a second sample", g.el("hwGpuFrequency").textContent === "684 MHz (—%)", g.el("hwGpuFrequency").textContent);
+    await g.advance(2500);
+    check("GPU busy counter fallback calculates utilization from delta", g.el("hwGpuFrequency").textContent === "684 MHz (50%)", g.el("hwGpuFrequency").textContent);
+    g.el("navHome").fire("click");
+
+    const powerFallback = await load({ handler: (cmd, def) => {
+      const result = def(cmd);
+      if (/monitor\.sh snapshot/.test(cmd)) return ok(result.stdout.replace("battery_power_now=2000000\n", ""));
+      return result;
+    }});
+    powerFallback.el("navMonitor").fire("click"); await powerFallback.flush();
+    check("battery power falls back to current × voltage when power_now is missing", powerFallback.el("hwBatteryPower").textContent === "1.63 W", powerFallback.el("hwBatteryPower").textContent);
+    powerFallback.el("navHome").fire("click");
+
+    const powerMismatch = await load({ handler: (cmd, def) => {
+      const result = def(cmd);
+      if (/monitor\.sh snapshot/.test(cmd)) return ok(result.stdout
+        .replace("battery_current_now=-400000", "battery_current_now=-165000")
+        .replace("battery_voltage_now=4084000", "battery_voltage_now=4084000")
+        .replace("battery_power_now=2000000", "battery_power_now=10000000"));
+      return result;
+    }});
+    powerMismatch.el("navMonitor").fire("click"); await powerMismatch.flush();
+    check("battery power sanity check rejects a >4x power_now mismatch", powerMismatch.el("hwBatteryPower").textContent === "0.67 W", powerMismatch.el("hwBatteryPower").textContent);
+    powerMismatch.el("navHome").fire("click");
+
+    for (const [capacity, label, cls] of [[19, "Low battery", "hw-charge-low"], [20, "Normal", "hw-charge-normal"], [80, "Nearly full", "hw-charge-full"]]) {
+      const b = await load({ handler: (cmd, def) => {
+        const result = def(cmd);
+        if (/monitor\.sh snapshot/.test(cmd)) return ok(result.stdout.replace("battery_capacity=68", "battery_capacity=" + capacity));
+        return result;
+      }});
+      b.el("navMonitor").fire("click"); await b.flush();
+      check("battery charge threshold at " + capacity + "%", b.el("hwBatteryStatus").textContent === label && b.el("hwBatteryStatus").className.indexOf(cls) >= 0, b.el("hwBatteryStatus").textContent + " / " + b.el("hwBatteryStatus").className);
+      b.el("navHome").fire("click");
+    }
+  }
+  // 13. Audit fixes: drain across a screen-off gap, and an unreadable controller status
+  {
+    let n = 0;
+    const d = await load({ handler: (cmd, def) => {
+      const r = def(cmd);
+      if (/monitor\.sh snapshot/.test(cmd)) { n++; return ok(r.stdout.replace("battery_charge_counter=2891000", "battery_charge_counter=" + (2891000 - n * 20000))); }
+      return r;
+    }});
+    d.el("navMonitor").fire("click"); await d.flush();
+    await d.advance(130000);
+    check("active drain shows a rate once two screen-on samples are 2+ minutes apart", /%\/h$/.test(d.el("hwBatteryActiveDrain").textContent), d.el("hwBatteryActiveDrain").textContent);
+    await d.setVisible(false);          // screen off / page hidden for 20 minutes
+    await d.advance(1200000);
+    await d.setVisible(true);
+    check("after a hidden gap the active drain starts over instead of averaging the gap in", d.el("hwBatteryActiveDrain").textContent === "Collecting data", d.el("hwBatteryActiveDrain").textContent);
+    await d.advance(130000);
+    check("active drain shows a rate again once new screen-on samples exist", /%\/h$/.test(d.el("hwBatteryActiveDrain").textContent), d.el("hwBatteryActiveDrain").textContent);
+  }
+  {
+    const c = await load({ handler: (cmd, def) => (/control\.sh status/.test(cmd) ? { errno: 1, stdout: "", stderr: "sh: control.sh: not found" } : def(cmd)) });
+    check("controller status unreadable: shown as Unknown, not as Module presets", c.el("controlSourcePill").textContent === "Unknown", c.el("controlSourcePill").textContent);
+    check("controller status unreadable: the CPU/GPU profile buttons stay locked", c.usable().filter((e) => e.hasAttribute("data-preset")).length === 0, "a profile button is usable");
+    check("controller status unreadable: Reset everything stays available", c.el("resetAll").disabled === false, "Reset is disabled");
+    const empty = await load({ handler: (cmd, def) => (/control\.sh status/.test(cmd) ? ok("") : def(cmd)) });
+    check("empty controller response is Unknown, not assumed Module presets", empty.el("controlSourcePill").textContent === "Unknown", empty.el("controlSourcePill").textContent);
+    check("empty controller response keeps tuning profiles locked", empty.doc.all.filter((e) => e.hasAttribute("data-preset") || e.hasAttribute("data-kp")).every((e) => e.disabled), "a tuning control was enabled");
+    const legacy = await load({ handler: (cmd, def) => (/control\.sh status/.test(cmd) ? ok("source=legacy\nsource_message=not initialized\n") : def(cmd)) });
+    check("legacy controller state is a choice conflict, not Module presets", legacy.el("controlSourcePill").textContent === "Choose one" && legacy.el("controlSourceConflict").style.display === "block", legacy.el("controlSourcePill").textContent);
+    check("legacy conflict leaves controller choices available for explicit resolution", !legacy.el("sourceModuleBtn").disabled && !legacy.el("sourceKernelBtn").disabled, "controller choice buttons are disabled");
+  }
+  // Screen-off baseline capture must work even if the user is on Home, not only while Monitor is open.
+  {
+    const c = await load();
+    c.el("navHome").fire("click");
+    await c.setVisible(false);
+    check("screen-off battery sample is attempted from Home too", c.sent(/monitor\.sh screen/) === 1, c.calls.join(" | "));
+    check("confirmed screen-off battery baseline is saved from Home", c.store.has("kprofiles-ui-monitor-idle-baseline-v1"), Array.from(c.store.keys()).join(","));
   }
   process.exit(fail);
 })().catch((e) => { console.log("FAIL the test itself crashed: " + (e && e.stack || e)); process.exit(1); });

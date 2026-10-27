@@ -32,14 +32,25 @@ jobs:
       - name: ShellCheck
         run: shellcheck -s sh -S warning -e SC1090,SC2154,SC2034 module/*.sh tests/*.sh build.sh release.sh
 
+      - name: WebUI unit tests
+        run: node tests/webui-test.js module/webroot/index.html
+      - name: WebUI DOM regression tests
+        run: node tests/webui-dom-test.js module/webroot/index.html
+
       # Each suite is its own step with its own time limit, so a hang is reported at the suite that hung
       # (and ends there) instead of holding the whole job until the job limit.
       - name: dash - kp tests
         timeout-minutes: 5
         run: sh tests/kp-test.sh
+      - name: dash - controller source tests
+        timeout-minutes: 5
+        run: sh tests/control-test.sh
       - name: dash - tune tests
         timeout-minutes: 20
         run: sh tests/tune-test.sh
+      - name: dash - monitor tests
+        timeout-minutes: 5
+        run: sh tests/monitor-test.sh
       - name: dash - build tests
         timeout-minutes: 5
         run: sh tests/build-test.sh
@@ -53,9 +64,15 @@ jobs:
       - name: mksh - kp tests
         timeout-minutes: 5
         run: PATH="$RUNNER_TEMP/shim-mksh:$PATH" mksh tests/kp-test.sh
+      - name: mksh - controller source tests
+        timeout-minutes: 5
+        run: PATH="$RUNNER_TEMP/shim-mksh:$PATH" mksh tests/control-test.sh
       - name: mksh - tune tests
         timeout-minutes: 20
         run: PATH="$RUNNER_TEMP/shim-mksh:$PATH" mksh tests/tune-test.sh
+      - name: mksh - monitor tests
+        timeout-minutes: 5
+        run: PATH="$RUNNER_TEMP/shim-mksh:$PATH" mksh tests/monitor-test.sh
       - name: mksh - build tests
         timeout-minutes: 5
         run: PATH="$RUNNER_TEMP/shim-mksh:$PATH" mksh tests/build-test.sh
@@ -69,9 +86,15 @@ jobs:
       - name: busybox ash - kp tests
         timeout-minutes: 5
         run: PATH="$RUNNER_TEMP/shim-bb:$PATH" busybox sh tests/kp-test.sh
+      - name: busybox ash - controller source tests
+        timeout-minutes: 5
+        run: PATH="$RUNNER_TEMP/shim-bb:$PATH" busybox sh tests/control-test.sh
       - name: busybox ash - tune tests
         timeout-minutes: 20
         run: PATH="$RUNNER_TEMP/shim-bb:$PATH" busybox sh tests/tune-test.sh
+      - name: busybox ash - monitor tests
+        timeout-minutes: 5
+        run: PATH="$RUNNER_TEMP/shim-bb:$PATH" busybox sh tests/monitor-test.sh
       - name: busybox ash - build tests
         timeout-minutes: 5
         run: PATH="$RUNNER_TEMP/shim-bb:$PATH" busybox sh tests/build-test.sh

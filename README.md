@@ -1,23 +1,32 @@
 # Kprofiles Control
 
-A KernelSU-Next module with a WebUI for the Theettam kernel on the POCO F6 /
-Redmi Turbo 3 (`peridot`). The v3.5.0 interface is organized into Home, CPU & GPU,
+A KernelSU-Next module with a POCO F6 / Redmi Turbo 3 (`peridot`) CPU/GPU tuning engine,
+plus optional Kprofiles mode control for kernels that implement the documented Kprofiles sysfs ABI.
+The CPU/GPU frequency paths and preset values remain specific to the F6 / Theettam configuration;
+Kprofiles support is detected independently. The v4.0.0 interface is organized into Home, CPU & GPU,
 Kernel, Monitor, and Settings pages. From the UI you can:
 
 - choose **Stock, Battery tilt, Battery saver, Performance, Custom, or Dynamic** CPU/GPU profiles
 - use **different limits when the screen is on and when it is off**
-- use the kernel's built-in **Kprofiles** modes when the kernel supports them
-- inspect the current engine-reported CPU/GPU limits and screen-watcher state
+- use the kernel's built-in **Kprofiles** modes when the documented mode interface is present and readable
+- inspect engine-reported CPU/GPU limits and screen-watcher state
+- view live CPU cluster, GPU and battery telemetry without changing tuning settings
 
 ### WebUI layout and responsiveness
 
 The five screens share one lightweight, offline HTML page. Bottom navigation switches
-which page is visible locally; it does not reload the document or issue shell commands.
-The UI uses no remote fonts, scripts, or UI frameworks and adds no periodic frequency
-polling. Status values refresh when the page loads and after an action. The Monitor page
-shows CPU/GPU limit readbacks reported by the engine, not continuously sampled live clock
-speeds. The interface follows the device's light/dark theme and respects reduced-motion
-preferences.
+which page is visible locally without reloading the document. The UI uses no remote fonts,
+scripts, or UI frameworks. A single read-only `monitor.sh snapshot` call samples CPUFreq policies,
+`/proc/stat`, matching thermal zones/hwmon sensors, GPU devfreq/KGSL counters and battery power-supply
+attributes every 2.5 seconds while Monitor is visible. Polling stops when another page is selected
+or the WebView becomes hidden; when the WebView is hidden, a one-shot screen/battery probe may capture
+an idle-drain baseline regardless of which in-app page was open. The Home Live Monitoring card is a
+navigation shortcut and does not start a separate sampler. DOM values are only rewritten when they change. Current CPU/GPU frequencies include the `MHz` unit and are shown
+beside utilization; the percentage in brackets is activity/utilization, not frequency as a percentage of maximum.
+CPU utilization is computed from successive `/proc/stat` counter samples as `(delta total - delta idle - delta I/O wait) / delta total × 100`; for a cluster, the counter deltas are aggregated across CPUs in that policy. The first sample establishes a baseline, so the percentage is unavailable until a second sample exists. GPU utilization uses the driver's busy-percentage value where available, otherwise deltas of GPU busy/total counters or busy-time/total-time counters.
+Active/idle battery drain is shown only after a measurable sample window. The charge counter relative to full-charge capacity is used where reliable, with battery-percentage change as a fallback; only discharging intervals are counted. The screen-off estimate is best-effort and may remain unavailable if Android does not confirm an idle interval. Battery power prefers the standard `power_now` property, but sanity-checks it against current × voltage where both measurements exist. Missing or unidentifiable sensors display Unavailable rather than invented values. Malformed or missing controller status is treated as Unknown/conflict, not inferred to mean Module presets.
+The existing Monitor status, kernel status and explanatory cards remain below the live panel. The
+interface follows the device's light/dark theme and respects reduced-motion preferences.
 
 ## Frequency limits
 
@@ -82,20 +91,42 @@ module always uses the screen-on set.
   kernel profile is separate, use **Reset everything** for that); or from a recovery create
   an empty file `/data/adb/kprofiles_ui/skip` (nothing is applied at boot while it exists).
 
-### How the limits and the kernel profile combine
+### Exclusive control source: Module presets or Kernel profile
 
-They never overwrite each other. Writing a value to `scaling_max_freq` only updates this
-module's own request to the kernel; the kernel profile's caps are separate requests. The
-kernel enforces the **lowest** maximum of all requests, so with the kernel Battery profile on,
-a limit you set above its cap is accepted but has no effect until the profile is None. The
-page then shows a warning that the kernel did not take the value, which is expected.
+Only one controller may own CPU/GPU performance settings at a time. The Home page exposes an
+explicit **Control source** choice:
 
-Who controls what: `kp.sh` is the only script that writes the kernel profile. `tune.sh` only
-reads it, and writes nothing but the min and max nodes of the three CPU clusters and the GPU.
+- **Module presets**: the module's preset engine and screen watcher own CPU/GPU frequency limits.
+  The kernel profile is verified at **None** and `auto_kp` is turned off when that optional
+  parameter is present and safely writable. The previously selected kernel mode and auto preference
+  are saved separately so they can be restored when switching back.
+- **Kernel profile**: the module watcher is stopped and its applied CPU/GPU limits are restored to
+  the recorded stock values before the saved Kprofiles mode and optional `auto_kp` preference are
+  applied. The module's preset and custom selections remain saved but are not applied while this
+  source is active.
+
+The handoff is performed by `control.sh`, not just by disabling WebUI buttons. `tune.sh` refuses
+preset changes while Kernel profile owns tuning, and `kp.sh` refuses non-None modes or `auto_kp=Y`
+while Module presets owns tuning. Boot initialization reads the saved source and only starts that
+controller. Kernel profile is not activated at boot unless a complete stock CPU/GPU record is
+available. A handoff isn't reported as successful until the outgoing controller is released and
+the incoming controller is verified; an incomplete handoff enters the existing recovery lock.
+
+On first upgrade, an existing combination of a non-Stock module preset and an active kernel mode
+(or enabled `auto_kp`) is treated as a **conflict**. Neither side is silently chosen or applied; open
+the WebUI and select a controller explicitly. If the Kprofiles interface is genuinely absent,
+Module presets can run without the kernel controller and the selector is hidden. If the interface
+exists but is unreadable or reports an unknown mode, exclusive control cannot be confirmed and the
+module fails closed until the state is resolved. The optional `auto_kp` setting is stored as `Y`/`N`
+even on kernels where its live sysfs node uses numeric `0`/`1` values.
+
+The currently allowed min/max values are separate from the hardware's `cpuinfo_min_freq` and
+`cpuinfo_max_freq` capabilities. The Monitor panel displays the limits currently enforced/requested
+by the active CPUFreq policy; it does not claim the silicon capability maximum is the active cap.
 
 ### Checking this on your phone
 
-The statements above come from reading the kernel source, so confirm them once on the device
+CPU/GPU frequency behavior described above is specific to the POCO F6 / Theettam configuration. Kprofiles support is detected at the two node locations listed in the Kernel profiles section; a kernel that uses other paths requires a separately reviewed adapter. The statements above come from reading the kernel source, so confirm them once on the device
 (as root, for example through `adb shell su`). For each kernel profile `N` in 0, 1, 2 and 3:
 
 ```
@@ -113,27 +144,36 @@ read `scaling_max_freq` again a few seconds later: it should be back at the phon
 
 ## Kernel profiles (advanced)
 
-The WebUI checks `kp.sh status` before exposing kernel profiles. If the kernel reports that the
-Kprofiles node is missing, it disables the Kernel profiles button and explains that extra kernel
-features are unsupported. When supported, tap the collapsed **Kernel profiles** button to reveal the
-existing None, Battery and Performance choices. The kernel **Performance** mode (Kernel page) is distinct from the CPU/GPU **Performance** profile (CPU & GPU page); the CPU/GPU one adds no caps and is not an overclock.
+The WebUI checks `kp.sh status` before exposing kernel profiles. The Kprofiles mode node uses values
+0–3 and is looked for at `/sys/kernel/kprofiles/kp_mode` and then at the upstream module parameter
+`/sys/module/kprofiles/parameters/kp_mode`; `auto_kp` is looked for at
+`/sys/module/kprofiles/parameters/auto_kp` and then at `/sys/kernel/kprofiles/auto_kp`. A missing mode node is
+reported as **unsupported**; a node that exists but cannot be read or reports an unrecognized value
+is **not confirmed**. In either case, the controls stay disabled and no mode write is attempted.
+**Reset everything** and uninstall also leave an unconfirmed node alone (with a warning, not an error) and judge success by the CPU/GPU limits themselves, which are still verified; a node that reads a valid mode but refuses the write is still reported as an error.
+When supported, tap the collapsed **Kernel profiles** button to reveal None, Battery, Balanced and
+Performance. The kernel **Performance** mode (Kernel page) is distinct from the CPU/GPU **Performance**
+profile (CPU & GPU page); the CPU/GPU one adds no caps and is not an overclock.
 
-The Theettam kernel contains the Kprofiles driver. It only stores a number; other
-kernel code reacts to it. Reading the kernel source, this is what each mode does:
+The main Kprofiles mode interface is separate from the optional `auto_kp` module parameter. Some
+kernels do not expose that parameter or do not use it. If it is absent, the module can still apply a
+saved kernel mode; it reports the optional auto setting as skipped rather than failing the mode apply.
+A present but unreadable or malformed parameter is treated as an error. Kprofiles mode numbers are
+standardized, but what each mode actually changes is defined by the code in the particular kernel.
 
-| Mode | Effect |
+The standard mode numbers and names are:
+
+| Mode | Standard name |
 |:--|:--|
-| None (0 or 2) | no kernel caps |
-| Battery (1) | little cores capped at about 1.59 GHz, big cores about 1.29 GHz, prime core held at its lowest speed, always on |
-| Performance (3) | no CPU caps; the GPU can no longer be slowed by the thermal controller |
+| 0 | Disabled / None |
+| 1 | Battery |
+| 2 | Balanced |
+| 3 | Performance |
 
-The Battery mode lowers the value `scaling_max_freq` reports, so at boot the module saves
-the phone's own limits **before** it applies the kernel profile, and it never records stock
-values while the kernel Battery profile is on or while its own limits are in place. If you ever see a stock
-value that looks capped, set the kernel profile to None, reboot, and let it save again.
+The name is standardized, but the actual effect of each mode depends on the kernel implementation.
+On the Theettam kernel used for development, mode 1 lowered `scaling_max_freq` for CPU clusters; modes 0 and 2 did not impose those observed caps, and mode 3 affected GPU thermal behavior. Do not assume those effects on another kernel. If using a different kernel, check its source or maintainer documentation before relying on a mode's thermal or power behavior.
 
-The driver also has an `auto_kp` switch, but this kernel never reads it, so it does
-nothing. The module no longer shows it.
+At boot, the module saves the phone's own CPU/GPU limits before it applies the selected kernel profile and avoids recording stock values while its own limits are in place. On the Theettam Battery mode, `scaling_max_freq` is reduced, so the original values are especially important to preserve.
 
 ## Install
 
@@ -183,8 +223,9 @@ release notes. Tap it, let it install, then reboot. Your settings are kept.
 | File | Purpose |
 |:--|:--|
 | `module/tune.sh` | Frequency limits, presets, screen watcher, restore logic |
-| `module/kp.sh` | Reads and writes the kernel Kprofiles mode |
-| `module/webroot/index.html` | The WebUI page |
+| `module/kp.sh` | Detects the documented Kprofiles mode interface and reads/writes supported modes |
+| `module/webroot/index.html` | The WebUI page and live-monitor renderer |
+| `module/monitor.sh` | Read-only hardware telemetry discovery/snapshot helper |
 | `module/module.prop` | Version, and the `updateJson` link the manager uses to offer updates |
 | `build.sh` | Builds the zip, `update.json` and the release notes into `dist/` |
 | `release.sh` | Publishes `dist/` as a GitHub release (draft first, versionCode check, post-release check) |
@@ -202,9 +243,9 @@ sh tests/release-test.sh  # release.sh rules against a fake gh (no network)
 sh build.sh             # writes dist/Kprofiles-Control-<version>.zip, update.json, changelog.md
 ```
 
-GitHub Actions runs ShellCheck, then all four tests under dash, **mksh** (the shell Android
+GitHub Actions runs ShellCheck, then all six test suites under dash, **mksh** (the shell Android
 uses) and busybox ash, and checks that a pushed tag matches the `version` in
-`module.prop`. Push a tag such as `v3.5.0` to publish a release.
+`module.prop`. The controller-source suite validates legacy migration, exclusive writes, verified handoffs and recovery behavior. Push a tag such as `v4.0.0` to publish a release.
 
 ## Status
 
@@ -216,8 +257,10 @@ refusals were observed and their cause remains unconfirmed. v1.4.4 added WebUI-o
 recovery unlock rules. v3.0.0 keeps profile controls disabled until the first successful status read and
 persists the latest failed-reset detail across WebUI reloads. v3.1.0 added the CPU/GPU **Performance** profile (first called No Extra Caps; stored internally as `performance`), Custom and
 Dynamic preset entries, a supported-kernel-only Kernel profiles accordion, and a red Reset everything
-control. v3.2.0 reorganizes the WebUI into five locally navigated screens without changing the tuning
-engine. v3.2.1 and v3.5.0 polish the icons; v3.5.0 also changes how the phone's own limits are recorded (see CHANGELOG.md). The v3.x UI has not yet been tested on the phone.
+control. v3.2.0 reorganized the WebUI into five locally navigated screens without changing the tuning
+engine. v3.2.1 and v3.5.0 polish the icons; v3.5.0 also changes how the phone's own limits are recorded
+(see CHANGELOG.md). v4.0.0 adds universal-interface, read-only live telemetry and mutually exclusive Module presets / Kernel profile control; it still needs on-device
+validation through the installed WebUI to confirm handoffs, performance and drain-rate behavior.
 The page shows the engine's warning/error text and leaves only Reset everything available after a
 reported frequency restore/apply mismatch. This is a UI safeguard, not an engine fix, and it cannot detect a
 silent mismatch the engine does not report. Android or Xiaomi services may override some values.

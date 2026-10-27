@@ -1,5 +1,76 @@
 # Changelog
 
+## v4.0.0
+This release was prepared as v3.6.0 and v3.6.1, neither of which was ever committed or published; it is numbered v4.0.0.
+Add a universal-interface, read-only live hardware monitor and mutually exclusive tuning-controller selection.
+- Exclusive control source: choose **Module presets** or **Kernel profile** explicitly. The source is stored separately from the saved preset and kernel-profile preferences.
+- Handoff order: verify the outgoing controller is released first, stop/restore the module tuning engine when leaving Module presets, verify a complete stock CPU/GPU record before enabling Kernel profile, then apply and verify the incoming controller. Failed or incomplete handoffs use the existing recovery lock rather than claiming success.
+- Engine enforcement: direct shell calls cannot apply non-Stock module presets in Kernel profile mode or enable a non-None kernel profile / `auto_kp=Y` in Module presets mode. At boot, only the saved owner is applied; an unresolved conflict leaves both tuning sides unapplied until the user chooses.
+- First-run migration: a legacy setup with both an active non-Stock preset and an active kernel profile (including enabled `auto_kp`) becomes an explicit conflict; neither setting is silently discarded. If Kprofiles is absent, Module presets remain available. If the Kprofiles state is present but unknown, the module fails closed.
+- Saved kernel preferences are kept separately from the temporary None/off runtime state used by Module presets. `kp.sh persist 1` normalizes numeric `auto_kp` nodes to the saved `AUTO=Y`/`AUTO=N` form.
+- Live monitor: show every discovered CPUFreq policy (Little/Big/Prime labels only when the known peridot CPU map matches), current frequency with utilization in brackets, temperature status badge, online-core count, and current allowed minimum/maximum frequencies. GPU telemetry uses discovered devfreq/KGSL interfaces; battery shows charge state, current, power, voltage, temperature, and best-effort active/idle drain.
+- Temperature colors: Normal below 38°C (blue), Warm from 38°C to below 45°C (yellow), Hot at 45°C or above (red). Battery charge colors: below 20% red, 20% to below 80% green, 80–100% blue.
+- Home: add a same-size Quick Access card, Live Monitoring, which opens Monitor instead of starting a second sampler. Full telemetry appears at the top of Monitor, with existing Monitor information preserved below it.
+- Performance: a single read-only `monitor.sh` batches sensor discovery; refresh runs every 2.5 seconds only while Monitor is visible. Polling stops when another page is selected or the WebView becomes hidden. DOM values update only when changed; missing or ambiguous readings are unavailable, not guessed. Active/idle drain is shown only after a usable sample window.
+- Version: v4.0.0, versionCode 30. Diagnostic interfaces were verified on a POCO F6 (`peridot`) running Theettam 6.1.176; full on-device WebUI, controller handoff and drain-rate behavior still require installation testing.
+- Tests: add controller migration / handoff / failure coverage, numeric `auto_kp` persistence coverage, and live-monitor fake-sysfs/procfs and WebUI regression tests.
+- Fix (audit): **the live monitor no longer reports a GPU bus/bandwidth monitor as the GPU.** The GPU lookup
+  took the first devfreq node whose name contained "gpu", so a node such as `gpubw` that sorts before the real
+  GPU supplied the frequency, range and governor. KGSL's own node is now preferred, bus/bandwidth/LLCC/DDR nodes
+  are skipped, and another vendor's GPU-named node is still found.
+- Fix (audit): **active battery drain no longer averages in a screen-off gap.** The samples were kept when the
+  page was hidden, so after the screen slept the first new sample was paired with one from before it and the
+  idle period was averaged into the "active" rate. Collection now restarts whenever the page is hidden.
+- Fix (audit): **controller ownership fails closed on malformed status.** A failed command, empty output, invalid
+  source, or uninitialized legacy source is no longer assumed to mean Module presets. The page shows Unknown or an
+  explicit choice conflict and keeps tuning controls locked until ownership can be verified (Reset remains available).
+- Fix (audit): **screen-off battery baseline can be collected from any WebUI page.** Leaving Monitor for Home before
+  locking the phone no longer suppresses the one-shot screen-state/battery sample.
+- Fix (audit): **GPU selection excludes interconnect nodes before preferring KGSL.** This also skips misleading names
+  such as `kgsl-busmon`, mixed-case bandwidth/LLCC/DDR nodes, and still falls back to a genuine GPU-named devfreq node.
+- Fix (audit): **per-CPU CPUFreq fallback preserves `related_cpus` / `affected_cpus`.** Kernels that expose shared policies
+  through per-CPU links no longer lose the policy's CPU membership, so the WebUI can deduplicate the shared policy.
+- Fix (audit): **battery power is sanity-checked against current × voltage.** When both values are available, a plausible
+  current/voltage product takes precedence if a vendor's `power_now` differs by more than 4x; otherwise the kernel's value
+  is retained. This addresses a POCO F6 diagnostic sample where `power_now` read 10 W while current × voltage implied 0.67 W.
+- Tests (audit): cover kgsl-busmon before KGSL and alone, shared CPU membership in per-CPU fallback, hidden-page idle
+  capture from Home, empty/legacy controller status, and inconsistent battery power. Each new regression case fails on the
+  preceding candidate.
+- Fix (UI audit): **the Home current-profile banner now reflects the active controller.** When Kernel profile owns tuning it shows the actual kernel mode (None, Battery, Balanced, or Performance), labels the banner “Kernel profile”, and reports “Kernel active” rather than incorrectly presenting a saved module preset as active. The saved module preset remains visible as an inactive preference. Unknown/conflicted controller states no longer imply a verified active profile.
+- Fix (UI audit): **live current-frequency values now include units**, e.g. `902 MHz (23%)` for CPU and `255 MHz (13%)` for GPU.
+- Documentation (UI audit): expand the final Monitor “How to read this” section to explain the CPU `/proc/stat` utilization formula, cluster aggregation, GPU busy-counter fallbacks, current allowed frequency limits, and battery drain estimate methodology.
+- Tests (UI audit): verify the active Kernel profile banner uses the live Kprofiles mode, current CPU/GPU MHz units are present, and the percentage calculation guide remains at the bottom of Monitor.
+- Fix: **Kprofiles at the upstream path was treated as absent.** The upstream driver documents its mode as the
+  module parameter `/sys/module/kprofiles/parameters/kp_mode`; the module only looked for it at
+  `/sys/kernel/kprofiles/kp_mode` (the Theettam kernel's node). On a kernel with the upstream layout the module
+  therefore reported "unsupported", disabled the Kernel profiles controls and migrated a legacy setup to
+  Module presets while the kernel profile was still active.
+- Fix: **a Battery profile on such a kernel could be recorded as the phone's own stock limits.** The engine
+  decides whether the kernel profile is holding the limits down by reading the mode node, and it read the wrong
+  one. It now uses the same discovery as `kp.sh`.
+- How it works: one function, `kp_find` in `control-lib.sh`, picks the mode node (`/sys/kernel/kprofiles/kp_mode`
+  first, then the module parameter) and the `auto_kp` node (module parameter first, then `/sys/kernel/kprofiles`).
+  The first one that exists wins, so a phone that already worked keeps using the same node. If neither exists
+  nothing is written anywhere. `KP_PATH` and `AUTO_PATH` still override it. `auto_kp` is still optional.
+- Cleanup: removed two unused path variables from `control.sh` and the wrong "documented ABI" comment in `kp.sh`.
+- Tests: 18 new checks in `tests/kp-test.sh` (upstream, Theettam, both, auto only under /sys/kernel, none, mode
+  without auto_kp, `KP_PATH` override), 5 in `tests/control-test.sh` (legacy migration on the upstream layout) and
+  3 in `tests/tune-test.sh` (stock is not recorded while Battery is active at the upstream node).
+
+## v3.5.1
+Make Kprofiles compatibility capability-aware without changing the POCO F6 CPU/GPU tuning engine.
+- Detection: `kp.sh status` now reports `support=supported|unsupported|unknown` based on the documented mode node and its readable mode value. A missing node is unsupported; a present but unreadable or unrecognized node is unknown.
+- Safety: mode writes and persistence changes refuse to proceed unless the mode interface is confirmed and its current value is one of the documented modes 0–3.
+- Optional feature: `auto_kp` is detected independently. If the mode interface exists but the optional parameter is absent, saved mode profiles still apply; the missing auto setting is skipped with a warning instead of making the boot apply fail. If the parameter exists but cannot be read/recognized, the script fails closed.
+- Unsupported kernels: boot-time `apply` safely skips saved Kprofiles settings when the mode interface is absent, preserving the saved preference for a later compatible kernel without writing to guessed paths.
+- WebUI: consumes explicit support state so a missing interface is shown as unsupported while a present but unreadable/malformed interface is shown as unconfirmed. Kernel commands remain disabled unless support is confirmed. Exposes the complete standard mode set: None (0), Battery (1), Balanced (2), Performance (3); it highlights mode 2 as Balanced instead of incorrectly treating it as None.
+- Scope: CPU/GPU cluster paths, POCO F6 frequencies, presets, and the screen watcher remain device-specific and unchanged. This supports kernels implementing the documented Kprofiles sysfs interface; non-standard forks need a separately verified adapter.
+- Tests: cover supported, unsupported and unknown mode detection, optional `auto_kp` absence, and no writes when mode support is unconfirmed.
+- Fix (found in an audit of the first v3.5.1 candidate): **Reset everything and uninstall could never finish on a kernel whose kernel-profile node is not standard.** The new rule refuses to write a node it cannot read or whose value it does not know, but `tune.sh resetall` counted that refusal as a failure, so Reset everything exited 1 and uninstall reported "restoration failed" and kept its data, even though the CPU/GPU limits had been restored. Now an unreadable or unrecognised kernel-profile node is reported as a warning ("left as it is") and the result is decided by the limits themselves, which are still verified by readback. A node that reads a valid mode but refuses the write is still an error.
+- Fix: **`auto_kp` is written in the node's own style.** The helper accepted a node that reads `0`/`1` as supported but only ever wrote `Y`/`N`, so such a kernel could never change or re-apply it. A `0`/`1` node now gets `1`/`0` (a bool parameter still gets `Y`/`N`); the saved setting stays `Y`/`N`.
+- Tests: Reset everything and uninstall with an unreadable, unknown-value and unknown-text kernel-profile node, with a node that refuses writes, and with an unknown node plus a refused limit; `auto_kp` in the `0`/`1` style (write, save, boot re-apply); the page's failure detection with the new warning. The old "node that cannot be written" test used a folder, which is now an unreadable node, so it was replaced by a real refused write.
+- Version: v3.5.1, versionCode 28.
+
 ## v3.5.0
 First release after v3.0.0. It rolls up the unreleased v3.1.0, v3.2.0 and v3.2.1 work (see those sections below) and adds the
 fixes found when the earlier builds were tested on a phone. v3.1.0 to v3.2.1 were never published, so versionCode goes from 23 (v3.0.0) to 27.

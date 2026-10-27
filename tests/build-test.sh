@@ -51,6 +51,9 @@ if command -v python3 >/dev/null 2>&1; then
   check "manifest is valid JSON" 0 $?
 fi
 check "zip has module.prop" 1 "$(unzip -l "$T/r/dist/"*.zip | grep -c ' module.prop$')"
+check "zip includes the universal monitoring helper" 1 "$(unzip -l "$T/r/dist/"*.zip | grep -c ' monitor.sh$')"
+check "zip includes the controller switch engine" 1 "$(unzip -l "$T/r/dist/"*.zip | grep -c ' control.sh$')"
+check "zip includes the shared controller state library" 1 "$(unzip -l "$T/r/dist/"*.zip | grep -c ' control-lib.sh$')"
 
 # Windows line endings in module.prop and CHANGELOG.md must not leak into the output.
 mk "$(printf '%s' "$PROP" | sed 's/$/\r/')
@@ -141,6 +144,7 @@ for profile in stock tilt saver performance custom dynamic; do
 done
 check "Performance says it does not overclock" yes "$(grep -Fq 'data-preset="performance"><span class="t"><svg' "$page" && grep -Fq 'This is not an overclock' "$page" && echo yes || echo no)"
 check "CPU/GPU Performance and kernel Performance are separate controls" yes "$(grep -F 'data-preset="performance"><span class="t"><svg' "$page" | grep -Fq '</svg>Performance</span>' && grep -F 'data-kp="3"><span class="t"><svg' "$page" | grep -Fq '</svg>Performance</span>' && ! grep -Fq 'No Extra Caps' "$page" && echo yes || echo no)"
+check "all standard Kprofiles modes are present" yes "$(for mode in 0 1 2 3; do grep -Fq "data-kp=\"$mode\"" "$page" || exit 1; done; grep -Fq 'Balanced kernel profile; exact effects depend on the kernel.' "$page" && echo yes || echo no)"
 check "Performance status does not claim caps are applied" yes "$(grep -Fq 'st.preset === "performance"' "$page" && grep -Fq 'No extra caps' "$page" && echo yes || echo no)"
 check "Dynamic screen-on status explains no extra caps" yes "$(grep -Fq 'st.preset === "dynamic" && st.state !== "off"' "$page" && grep -Fq 'No extra caps (screen on)' "$page" && echo yes || echo no)"
 check "Dynamic preset uses screen-off caps" yes "$(grep -Fq 'P_OFF_LITTLE_MAX=1017600; P_OFF_BIG_MAX=787200; P_OFF_PRIME_MAX=633600; P_OFF_GPU_MAX=353000000' "$HERE/../module/tune.sh" && echo yes || echo no)"
@@ -151,7 +155,18 @@ check "Home status and quick-link icons use semantic accent colors" yes "$(grep 
 check "Kernel profiles are collapsed behind a button" yes "$(grep -Fq 'id="kernelProfilesBtn"' "$page" && grep -Fq 'id="kernelProfilesPanel" class="kernel-panel" style="display:none"' "$page" && echo yes || echo no)"
 check "five UI pages are present" yes "$(for id in pageHome pageCpu pageKernel pageMonitor pageSettings; do grep -Fq "id=\"$id\"" "$page" || exit 1; done; echo yes)"
 check "fixed bottom navigation exposes all pages" yes "$(grep -Fq 'class="bottom-nav"' "$page" && grep -Fq 'id="navHome"' "$page" && grep -Fq 'id="navCpu"' "$page" && grep -Fq 'id="navKernel"' "$page" && grep -Fq 'id="navMonitor"' "$page" && grep -Fq 'id="navSettings"' "$page" && echo yes || echo no)"
-check "page navigation does not run shell commands" yes "$(grep -Fq 'function showPage(key)' "$page" && grep -Fq 'Page navigation is local: it never reloads the document or executes a shell command.' "$page" && echo yes || echo no)"
+check "live hardware monitor exists above old Monitor status" yes "$(grep -Fq 'id="hwCpuCards"' "$page" && grep -Fq 'id="hwBatteryCard"' "$page" && grep -Fq 'id="hwGpuCard"' "$page" && grep -Fq 'aria-label="Current status"' "$page" && [ "$(grep -n 'id="hwCpuCards"' "$page" | cut -d: -f1)" -lt "$(grep -n 'aria-label="Current status"' "$page" | head -n 1 | cut -d: -f1)" ] && echo yes || echo no)"
+check "Home Live Monitoring quick card exists" yes "$(grep -Fq 'id="homeMonitor"' "$page" && grep -Fq 'Live Monitoring<small>CPU, GPU &amp; battery' "$page" && echo yes || echo no)"
+check "sampling is visibility-gated and uses one monitor helper" yes "$(grep -Fq 'exec("sh " + BASE + "monitor.sh snapshot")' "$page" && grep -Fq 'currentPage !== "monitor"' "$page" && grep -Fq 'document.addEventListener("visibilitychange"' "$page" && echo yes || echo no)"
+check "GPU busy counter pair fallback is supported" yes "$(grep -Fq 'hwCounterValues(data.gpu_busy_counters, 2)' "$page" && echo yes || echo no)"
+check "per-CPU fallback deduplicates shared policies" yes "$(grep -Fq 'var unique = [], seenPolicies = {}' "$page" && echo yes || echo no)"
+check "temperature and charge thresholds are represented" yes "$(grep -Fq 'if (temp < 38)' "$page" && grep -Fq 'if (temp < 45)' "$page" && grep -Fq 'capacity < 20' "$page" && grep -Fq 'capacity < 80' "$page" && echo yes || echo no)"
+check "controller source switch is visible and explicit" yes "$(grep -Fq 'id="controlSourceCard"' "$page" && grep -Fq 'id="sourceModuleBtn"' "$page" && grep -Fq 'id="sourceKernelBtn"' "$page" && grep -Fq 'C("switch " + target)' "$page" && echo yes || echo no)"
+check "controller switch is enforced in both shell engines" yes "$(grep -Fq 'require_module_controller' "$HERE/../module/tune.sh" && grep -Fq 'sm_source' "$HERE/../module/kp.sh" && echo yes || echo no)"
+check "boot applies only the selected control source" yes "$(grep -Fq 'control.sh" init' "$HERE/../module/service.sh" && grep -Fq 'case "$src" in' "$HERE/../module/service.sh" && grep -Fq 'stock-recorded' "$HERE/../module/service.sh" && echo yes || echo no)"
+check "controller migration preserves conflict for overlapping legacy selections" yes "$(grep -Fq 'ci_module_active' "$HERE/../module/control.sh" && grep -Fq 'ci_auto' "$HERE/../module/control.sh" && grep -Fq 'ci_source=conflict' "$HERE/../module/control.sh" && echo yes || echo no)"
+check "failed handoff can raise the recovery lock" yes "$(grep -Fq 'recovery=1' "$HERE/../module/control.sh" && grep -Fq 'CONTROLLER HANDOFF FAILURE' "$page" && echo yes || echo no)"
+check "page navigation remains local" yes "$(grep -Fq 'function showPage(key)' "$page" && grep -Fq 'syncHardwareSampler();' "$page" && echo yes || echo no)"
 check "the page is a self-contained offline UI" yes "$(! grep -Eq '<script[^>]+src=|<link[^>]+href=|https?://' "$page" && echo yes || echo no)"
 check "Unsupported kernel shows explicit message" yes "$(grep -Fq 'Extra kernel features are not supported by your kernel.' "$page" && grep -Fq 'kernelSupport === "unsupported"' "$page" && echo yes || echo no)"
 check "Kernel profile support is determined by kp.sh status mode" yes "$(grep -Fq 'kernelSupport = "supported"' "$page" && grep -Fq 'kernelSupport = "unsupported"' "$page" && echo yes || echo no)"

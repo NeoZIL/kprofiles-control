@@ -16,6 +16,11 @@ check("first valid status response opens readiness gate", /st = kv\(a\.stdout\);
 check("latest recovery detail has its own storage key", /RECOVERY_LATEST_KEY/.test(src) && /getItem\(RECOVERY_LATEST_KEY\)/.test(src) && /setItem\(RECOVERY_LATEST_KEY, recoveryLatest\)/.test(src), "latest recovery error is not loaded and saved");
 check("latest reset failure persists recovery details", /recoveryLatest = resetDetails[\s\S]{0,260}persistRecoveryLock\(\);/.test(src), "failed reset details are not persisted");
 check("request exception persists recovery details", /request failed before recovery could be confirmed[\s\S]{0,120}persistRecoveryLock\(\);/.test(src), "request failure details are not persisted");
+check("CPU current frequency formatter includes MHz", /function hwFormatCpuCurrent\(khz\)[\s\S]{0,180}\+ \" MHz\"/.test(src), "CPU current frequency unit is missing");
+check("GPU current frequency formatter includes MHz", /function hwFormatGpuCurrent\(hz\)[\s\S]{0,180}\+ \" MHz\"/.test(src), "GPU current frequency unit is missing");
+check("Monitor explains CPU utilization math at the bottom", /change in total CPU counters[\s\S]{0,140}idle and I\/O-wait counters/.test(src), "CPU utilization formula is missing");
+check("Monitor distinguishes utilization from frequency/max percentage", /percentage in brackets is utilization, not frequency as a percentage of maximum/.test(src), "percentage explanation is ambiguous");
+check("Home banner uses the actual kernel mode when Kernel profile owns tuning", /controllerSource === \"kernel\"[\s\S]{0,700}kernelModeLabel\(\)/.test(src), "current profile banner remains tied to the module preset");
 
 // every inline script must at least parse
 const scripts = [...src.matchAll(/<script[^>]*>([\s\S]*?)<\/script>/g)];
@@ -42,6 +47,8 @@ if (m) {
     [false, "preset value not available",            "warn: preset value 1 is not available for big on this phone, skipped"],
     [false, "boot could not read a node",            "warn: could not read these frequency values at boot: big_max (an earlier record is kept if there is one)"],
     [false, "own limits not recorded yet",           "warn: the phone's own value is not recorded for: big_max, so Stock cannot put it back until the next reboot"],
+    [false, "kernel profile node not standard (left alone)", "warn: the kernel profile cannot be read or has a value this module does not know, so it was left as it is; if it holds the limits down, set it to None with the tool that provides it"],
+    [false, "kernel profile write refused",          "error: the kernel profile could not be set to None: wrote 0 but the kernel reports 1"],
     [false, "empty output",                          ""],
   ];
   for (const [want, name, text] of cases) check((want ? "locks on: " : "does not lock on: ") + name, fn(text) === want, "got " + fn(text));
