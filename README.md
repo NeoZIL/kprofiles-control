@@ -3,7 +3,7 @@
 A KernelSU-Next module with a POCO F6 / Redmi Turbo 3 (`peridot`) CPU/GPU tuning engine,
 plus optional Kprofiles mode control for kernels that implement the documented Kprofiles sysfs ABI.
 The CPU/GPU frequency paths and preset values remain specific to the F6 / Theettam configuration;
-Kprofiles support is detected independently. The v4.0.0 interface is organized into Home, CPU & GPU,
+Kprofiles support is detected independently. The v4.0.2 interface is organized into Home, CPU & GPU,
 Kernel, Monitor, and Settings pages. From the UI you can:
 
 - choose **Stock, Battery tilt, Battery saver, Performance, Custom, or Dynamic** CPU/GPU profiles
@@ -24,7 +24,7 @@ an idle-drain baseline regardless of which in-app page was open. The Home Live M
 navigation shortcut and does not start a separate sampler. DOM values are only rewritten when they change. Current CPU/GPU frequencies include the `MHz` unit and are shown
 beside utilization; the percentage in brackets is activity/utilization, not frequency as a percentage of maximum.
 CPU utilization is computed from successive `/proc/stat` counter samples as `(delta total - delta idle - delta I/O wait) / delta total × 100`; for a cluster, the counter deltas are aggregated across CPUs in that policy. The first sample establishes a baseline, so the percentage is unavailable until a second sample exists. GPU utilization uses the driver's busy-percentage value where available, otherwise deltas of GPU busy/total counters or busy-time/total-time counters.
-Active/idle battery drain is shown only after a measurable sample window. The charge counter relative to full-charge capacity is used where reliable, with battery-percentage change as a fallback; only discharging intervals are counted. The screen-off estimate is best-effort and may remain unavailable if Android does not confirm an idle interval. Battery power prefers the standard `power_now` property, but sanity-checks it against current × voltage where both measurements exist. Missing or unidentifiable sensors display Unavailable rather than invented values. Malformed or missing controller status is treated as Unknown/conflict, not inferred to mean Module presets.
+Active/idle battery drain uses the charge counter relative to full-charge capacity where reliable, with battery-percentage change as a fallback; only discharging intervals are counted. The latest valid estimates survive WebUI reopen/reload and are labelled as last measured while the active estimate refreshes. Active sample history expires when stale and is cleared across hidden/screen-off transitions, so the screen-off gap is not included in active drain. The screen-off estimate is finalized when the WebView returns, regardless of which in-app page is selected, and may remain unavailable if Android does not confirm an idle interval. Battery power prefers the standard `power_now` property, but sanity-checks it against current × voltage where both measurements exist. Missing or unidentifiable sensors display Unavailable rather than invented values. Malformed or missing controller status is treated as Unknown/conflict, not inferred to mean Module presets.
 The existing Monitor status, kernel status and explanatory cards remain below the live panel. The
 interface follows the device's light/dark theme and respects reduced-motion preferences.
 

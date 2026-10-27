@@ -1,5 +1,12 @@
 # Changelog
 
+## v4.0.2
+- Fix (monitor): preserve the latest measured active and idle drain estimates across WebUI reopen/reload, with an explicit “Last measured · refreshing” label while a fresh active window is collected.
+- Fix (monitor): keep a too-recent idle baseline instead of consuming it before the required two-minute sample window; finalize idle drain as soon as the WebUI returns, even when Home rather than Monitor is selected.
+- Safety: active sample history is persisted in a compact window, expires when stale, and is cleared on hidden/screen-off transitions or sample gaps so a screen-off interval is never averaged into active drain.
+- Version: v4.0.2, versionCode 32.
+- Tests: add regressions for drain-rate persistence across reloads, screen-off/on sampling from Home, and active sample reset without hiding the last valid estimate.
+
 ## v4.0.1
 Fix the ShellCheck failures that stopped the build workflow. No behaviour change: the module does exactly what v4.0.0 does.
 - Fix (CI): `kp.sh status` assigned `m=?` and `a=?` unquoted, which ShellCheck reads as a glob (SC2125). They are now `m='?'` and `a='?'`; the output is identical.

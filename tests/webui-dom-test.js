@@ -1,4 +1,4 @@
-// Behaviour test for the WebUI's start-up lock and stored recovery notice. It runs the page's real inline
+// Behaviour test for WebUI startup/recovery and battery-drain persistence. It runs the page's real inline
 // script against a very small fake DOM, a fake localStorage and a fake ksu.exec that the test controls, so
 // it checks what the page DOES (which controls are usable, which commands are sent, what is stored), not
 // only that certain text exists in the file. Run by tests/build-test.sh when node is installed.
@@ -72,7 +72,7 @@ async function load(opts) {
   /* the page listens for visibilitychange: let a test hide and show it */
   doc.visibilityState = "visible"; const visListeners = [];
   doc.addEventListener = (t, f) => { if (t === "visibilitychange") visListeners.push(f); };
-  const calls = []; let clock = 1000000; const intervals = []; const timeouts = [];
+  const calls = []; let clock = opts.now === undefined ? 1000000 : opts.now; const intervals = []; const timeouts = [];
   const win = { localStorage: {
     getItem: (k) => (store.has(k) ? store.get(k) : null), setItem: (k, v) => { store.set(k, String(v)); }, removeItem: (k) => { store.delete(k); } } };
   const def = (cmd) => {
@@ -484,18 +484,19 @@ const deferred = () => { let res; const p = new Promise((r) => { res = r; }); re
     let n = 0;
     const d = await load({ handler: (cmd, def) => {
       const r = def(cmd);
-      if (/monitor\.sh snapshot/.test(cmd)) { n++; return ok(r.stdout.replace("battery_charge_counter=2891000", "battery_charge_counter=" + (2891000 - n * 20000))); }
+      if (/monitor\.sh snapshot/.test(cmd)) { n++; return ok(r.stdout.replace("battery_charge_counter=2891000", "battery_charge_counter=" + (2891000 - n * 1000))); }
       return r;
     }});
     d.el("navMonitor").fire("click"); await d.flush();
-    await d.advance(130000);
+    for (let i = 0; i < 52; i++) await d.advance(2500);
     check("active drain shows a rate once two screen-on samples are 2+ minutes apart", /%\/h$/.test(d.el("hwBatteryActiveDrain").textContent), d.el("hwBatteryActiveDrain").textContent);
+    check("active drain saves the last measured rate across a WebUI reopen", d.store.has("kprofiles-ui-monitor-active-rate-v1"), Array.from(d.store.keys()).join(","));
     await d.setVisible(false);          // screen off / page hidden for 20 minutes
     await d.advance(1200000);
     await d.setVisible(true);
-    check("after a hidden gap the active drain starts over instead of averaging the gap in", d.el("hwBatteryActiveDrain").textContent === "Collecting data", d.el("hwBatteryActiveDrain").textContent);
-    await d.advance(130000);
-    check("active drain shows a rate again once new screen-on samples exist", /%\/h$/.test(d.el("hwBatteryActiveDrain").textContent), d.el("hwBatteryActiveDrain").textContent);
+    check("after a hidden gap the last active rate remains visible while refreshing", /%\/h$/.test(d.el("hwBatteryActiveDrain").textContent) && /Last measured/.test(d.el("hwBatteryActiveSub").textContent), d.el("hwBatteryActiveDrain").textContent + " / " + d.el("hwBatteryActiveSub").textContent);
+    for (let i = 0; i < 52; i++) await d.advance(2500);
+    check("active drain returns to live screen-on samples after a new window", /%\/h$/.test(d.el("hwBatteryActiveDrain").textContent) && d.el("hwBatteryActiveSub").textContent === "Screen-on samples", d.el("hwBatteryActiveDrain").textContent + " / " + d.el("hwBatteryActiveSub").textContent);
   }
   {
     const c = await load({ handler: (cmd, def) => (/control\.sh status/.test(cmd) ? { errno: 1, stdout: "", stderr: "sh: control.sh: not found" } : def(cmd)) });
@@ -509,13 +510,42 @@ const deferred = () => { let res; const p = new Promise((r) => { res = r; }); re
     check("legacy controller state is a choice conflict, not Module presets", legacy.el("controlSourcePill").textContent === "Choose one" && legacy.el("controlSourceConflict").style.display === "block", legacy.el("controlSourcePill").textContent);
     check("legacy conflict leaves controller choices available for explicit resolution", !legacy.el("sourceModuleBtn").disabled && !legacy.el("sourceKernelBtn").disabled, "controller choice buttons are disabled");
   }
-  // Screen-off baseline capture must work even if the user is on Home, not only while Monitor is open.
+  // Screen-off baseline capture and completion must work from Home, independently of Monitor sampling.
   {
     const c = await load();
     c.el("navHome").fire("click");
     await c.setVisible(false);
     check("screen-off battery sample is attempted from Home too", c.sent(/monitor\.sh screen/) === 1, c.calls.join(" | "));
     check("confirmed screen-off battery baseline is saved from Home", c.store.has("kprofiles-ui-monitor-idle-baseline-v1"), Array.from(c.store.keys()).join(","));
+  }
+  {
+    let screenCalls = 0;
+    const c = await load({ now: 1000000, handler: (cmd, def) => {
+      if (/monitor\.sh screen/.test(cmd)) {
+        screenCalls++;
+        if (screenCalls === 1) return ok("screen_state=off\nbattery_status=Discharging\nbattery_capacity=68\nbattery_charge_counter=2891000\nbattery_charge_full=4425000\n");
+        return ok("screen_state=on\nbattery_status=Discharging\nbattery_capacity=68\nbattery_charge_counter=2871000\nbattery_charge_full=4425000\n");
+      }
+      return def(cmd);
+    }});
+    await c.setVisible(false);
+    await c.advance(130000);
+    await c.setVisible(true);
+    check("idle rate is finalized on return even while Home is selected", c.store.has("kprofiles-ui-monitor-idle-rate-v1"), Array.from(c.store.keys()).join(","));
+    check("a successful idle sample consumes the baseline", !c.store.has("kprofiles-ui-monitor-idle-baseline-v1"), Array.from(c.store.keys()).join(","));
+    c.el("navMonitor").fire("click"); await c.flush();
+    check("Monitor displays the saved idle rate on entry", /%\/h$/.test(c.el("hwBatteryIdleDrain").textContent), c.el("hwBatteryIdleDrain").textContent);
+  }
+  {
+    const now = 1005000;
+    const c = await load({ now, storage: {
+      "kprofiles-ui-monitor-active-rate-v1": JSON.stringify({ rate: 4.2, t: 1000000 }),
+      "kprofiles-ui-monitor-idle-rate-v1": JSON.stringify({ rate: 1.8, t: 1000000 })
+    }});
+    c.el("navMonitor").fire("click"); await c.flush();
+    check("cached active rate is shown immediately after reopening the WebUI", c.el("hwBatteryActiveDrain").textContent === "4.2%/h", c.el("hwBatteryActiveDrain").textContent);
+    check("cached active rate is labelled as the last measurement", /Last measured/.test(c.el("hwBatteryActiveSub").textContent), c.el("hwBatteryActiveSub").textContent);
+    check("cached idle rate is shown immediately after reopening the WebUI", c.el("hwBatteryIdleDrain").textContent === "1.8%/h", c.el("hwBatteryIdleDrain").textContent);
   }
   process.exit(fail);
 })().catch((e) => { console.log("FAIL the test itself crashed: " + (e && e.stack || e)); process.exit(1); });
