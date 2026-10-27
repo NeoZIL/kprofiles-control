@@ -1,4 +1,4 @@
-// Behaviour test for the WebUI's start-up lock and stored recovery notice. It runs the page's real inline
+// Behaviour test for WebUI startup/recovery and battery-drain persistence. It runs the page's real inline
 // script against a very small fake DOM, a fake localStorage and a fake ksu.exec that the test controls, so
 // it checks what the page DOES (which controls are usable, which commands are sent, what is stored), not
 // only that certain text exists in the file. Run by tests/build-test.sh when node is installed.
@@ -72,7 +72,7 @@ async function load(opts) {
   /* the page listens for visibilitychange: let a test hide and show it */
   doc.visibilityState = "visible"; const visListeners = [];
   doc.addEventListener = (t, f) => { if (t === "visibilitychange") visListeners.push(f); };
-  const calls = []; let clock = 1000000; const intervals = []; const timeouts = [];
+  const calls = []; let clock = opts.now === undefined ? 1000000 : opts.now; const intervals = []; const timeouts = [];
   const win = { localStorage: {
     getItem: (k) => (store.has(k) ? store.get(k) : null), setItem: (k, v) => { store.set(k, String(v)); }, removeItem: (k) => { store.delete(k); } } };
   const def = (cmd) => {
@@ -82,7 +82,7 @@ async function load(opts) {
     if (/kp\.sh status/.test(cmd)) return ok("mode=0 auto=N persist=1 support=supported auto_support=supported\n");
     if (/control\.sh status/.test(cmd)) return ok("source=" + (opts.controllerSource || "module") + "\nsource_message=mock controller state\nkernel_support=supported\n");
     if (/control\.sh switch /.test(cmd)) return ok("source=" + cmd.match(/control\.sh switch (module|kernel)/)[1] + "\n");
-    if (/monitor\.sh snapshot/.test(cmd)) return ok("schema=1\ndevice=peridot\ncpu_online_list=0-7\ncpu_policy_0_cpus=0 1 2\ncpu_policy_0_affected_cpus=0 1 2\ncpu_policy_0_cur_khz=1017600\ncpu_policy_0_min_khz=595200\ncpu_policy_0_max_khz=1017600\ncpu_policy_3_cpus=3 4 5 6\ncpu_policy_3_affected_cpus=3 4 5 6\ncpu_policy_3_cur_khz=787200\ncpu_policy_3_min_khz=633600\ncpu_policy_3_max_khz=787200\ncpu_policy_7_cpus=7\ncpu_policy_7_affected_cpus=7\ncpu_policy_7_cur_khz=633600\ncpu_policy_7_min_khz=633600\ncpu_policy_7_max_khz=633600\nstat_cpu0=1 2 3 4 5 6 7 8 0 0\nstat_cpu1=1 2 3 4 5 6 7 8 0 0\nstat_cpu2=1 2 3 4 5 6 7 8 0 0\nstat_cpu3=1 2 3 4 5 6 7 8 0 0\nstat_cpu4=1 2 3 4 5 6 7 8 0 0\nstat_cpu5=1 2 3 4 5 6 7 8 0 0\nstat_cpu6=1 2 3 4 5 6 7 8 0 0\nstat_cpu7=1 2 3 4 5 6 7 8 0 0\nthermal_1_type=cpu-0-0-0\nthermal_1_raw=37000\nthermal_2_type=cpu-1-0-0\nthermal_2_raw=44000\nthermal_3_type=cpu-2-0-0\nthermal_3_raw=45000\nthermal_4_type=gpuss-0\nthermal_4_raw=33000\ngpu_cur_hz=684000000\ngpu_min_hz=255000000\ngpu_max_hz=736000000\ngpu_busy_pct=27 %\nbattery_status=Discharging\nbattery_capacity=68\nbattery_current_now=-400000\nbattery_voltage_now=4084000\nbattery_power_now=2000000\nbattery_temp=306\nbattery_charge_counter=2891000\nbattery_charge_full=4425000\n");
+    if (/monitor\.sh snapshot/.test(cmd)) return ok("schema=1\ndevice=peridot\ncpu_online_list=0-7\ncpu_policy_0_cpus=0 1 2\ncpu_policy_0_affected_cpus=0 1 2\ncpu_policy_0_cur_khz=1017600\ncpu_policy_0_min_khz=595200\ncpu_policy_0_max_khz=1017600\ncpu_policy_3_cpus=3 4 5 6\ncpu_policy_3_affected_cpus=3 4 5 6\ncpu_policy_3_cur_khz=787200\ncpu_policy_3_min_khz=633600\ncpu_policy_3_max_khz=787200\ncpu_policy_7_cpus=7\ncpu_policy_7_affected_cpus=7\ncpu_policy_7_cur_khz=633600\ncpu_policy_7_min_khz=633600\ncpu_policy_7_max_khz=633600\nstat_cpu0=1 2 3 4 5 6 7 8 0 0\nstat_cpu1=1 2 3 4 5 6 7 8 0 0\nstat_cpu2=1 2 3 4 5 6 7 8 0 0\nstat_cpu3=1 2 3 4 5 6 7 8 0 0\nstat_cpu4=1 2 3 4 5 6 7 8 0 0\nstat_cpu5=1 2 3 4 5 6 7 8 0 0\nstat_cpu6=1 2 3 4 5 6 7 8 0 0\nstat_cpu7=1 2 3 4 5 6 7 8 0 0\nthermal_1_type=cpu-0-0-0\nthermal_1_raw=37000\nthermal_2_type=cpu-1-0-0\nthermal_2_raw=50000\nthermal_3_type=cpu-2-0-0\nthermal_3_raw=75000\nthermal_4_type=gpuss-0\nthermal_4_raw=33000\ngpu_cur_hz=684000000\ngpu_min_hz=255000000\ngpu_max_hz=736000000\ngpu_busy_pct=27 %\nbattery_status=Discharging\nbattery_capacity=68\nbattery_current_now=-400000\nbattery_voltage_now=4084000\nbattery_power_now=2000000\nbattery_temp=306\nbattery_charge_counter=2891000\nbattery_charge_full=4425000\n");
     if (/monitor\.sh screen/.test(cmd)) return ok("screen_state=off\nbattery_status=Discharging\nbattery_capacity=68\nbattery_charge_counter=2891000\nbattery_charge_full=4425000\n");
     return ok("ok\n");
   };
@@ -293,6 +293,16 @@ const deferred = () => { let res; const p = new Promise((r) => { res = r; }); re
     check("Custom is highlighted and its note is shown", cu.doc.all.find((e) => e.getAttribute("data-preset") === "custom").getAttribute("aria-checked") === "true" && cu.el("customNote").style.display === "block", "custom not shown");
     const nt = await load({ handler: (cmd, def) => (/tune\.sh status/.test(cmd) ? ok(statusText({ enabled: 0, preset: "stock" })) : def(cmd)) });
     check("Not active when the module is off", nt.el("sActive").textContent === "Not active", nt.el("sActive").textContent);
+    const perf = await load({ handler: (cmd, def) => (/tune\.sh status/.test(cmd) ? ok(statusText({ enabled: 1, screenoff: 0, preset: "performance", daemon: 0 })) : def(cmd)) });
+    check("Performance reports that the screen watcher is not needed", perf.el("sDaemon").textContent === "Not needed" && perf.el("homeWatcher").textContent === "Not needed", perf.el("sDaemon").textContent + "/" + perf.el("homeWatcher").textContent);
+    const heldOn = await load({ handler: (cmd, def) => (/tune\.sh status/.test(cmd) ? ok(statusText({ enabled: 1, screenoff: 0, preset: "custom", daemon: 1, watcher_needed: 1 })) : def(cmd)) });
+    check("screen-on caps without screen-off caps still show the watcher as Running", heldOn.el("sDaemon").textContent === "Running", heldOn.el("sDaemon").textContent);
+    const heldOnStopped = await load({ handler: (cmd, def) => (/tune\.sh status/.test(cmd) ? ok(statusText({ enabled: 1, screenoff: 0, preset: "custom", daemon: 0, watcher_needed: 1 })) : def(cmd)) });
+    check("held screen-on caps with the watcher down show Stopped, not Not needed", heldOnStopped.el("sDaemon").textContent === "Stopped", heldOnStopped.el("sDaemon").textContent);
+    const stopped = await load({ handler: (cmd, def) => (/tune\.sh status/.test(cmd) ? ok(statusText({ enabled: 1, screenoff: 1, daemon: 0 })) : def(cmd)) });
+    check("required but stopped screen watcher remains visible as a problem", stopped.el("sDaemon").textContent === "Stopped", stopped.el("sDaemon").textContent);
+    const kernel = await load({ controllerSource: "kernel", handler: (cmd, def) => (/tune\.sh status/.test(cmd) ? ok(statusText({ enabled: 1, screenoff: 1, daemon: 0 })) : def(cmd)) });
+    check("kernel-owned tuning reports the module watcher as released", kernel.el("sDaemon").textContent === "Released" && kernel.el("homeWatcher").textContent === "Released", kernel.el("sDaemon").textContent + "/" + kernel.el("homeWatcher").textContent);
   }
   // 10. Kernel profile section: the other states, and what the three choices send
   {
@@ -411,11 +421,20 @@ const deferred = () => { let res; const p = new Promise((r) => { res = r; }); re
     check("CPU current frequency and utilization share the agreed format", c.el("hwCpuFrequency_0").textContent === "1018 MHz (—%)", c.el("hwCpuFrequency_0").textContent);
     check("CPU active min/max limits, not hardware maxima, are displayed", c.el("hwCpuMin_0").textContent === "595.2 MHz" && c.el("hwCpuMax_0").textContent === "1017.6 MHz", c.el("hwCpuMin_0").textContent + " / " + c.el("hwCpuMax_0").textContent);
     check("temperature badge uses blue Normal below 38C", c.el("hwCpuStatus_0").textContent === "Normal" && c.el("hwCpuStatus_0").className.indexOf("hw-temp-normal") >= 0, c.el("hwCpuStatus_0").className);
-    check("temperature badge uses yellow Warm from 38C to below 45C", c.el("hwCpuStatus_1").textContent === "Warm" && c.el("hwCpuStatus_1").className.indexOf("hw-temp-warm") >= 0, c.el("hwCpuStatus_1").className);
-    check("temperature badge uses red Hot at 45C", c.el("hwCpuStatus_2").textContent === "Hot" && c.el("hwCpuStatus_2").className.indexOf("hw-temp-hot") >= 0, c.el("hwCpuStatus_2").className);
+    check("temperature badge uses yellow Warm at 50C SoC temperature", c.el("hwCpuStatus_1").textContent === "Warm" && c.el("hwCpuStatus_1").className.indexOf("hw-temp-warm") >= 0, c.el("hwCpuStatus_1").className);
+    check("temperature badge uses red Hot at 75C SoC temperature", c.el("hwCpuStatus_2").textContent === "Hot" && c.el("hwCpuStatus_2").className.indexOf("hw-temp-hot") >= 0, c.el("hwCpuStatus_2").className);
+    const warmSoc45 = await load({ handler: (cmd, def) => { const r = def(cmd); return /monitor\.sh snapshot/.test(cmd) ? ok(r.stdout.replace("thermal_3_raw=75000", "thermal_3_raw=45000")) : r; } });
+    warmSoc45.el("navMonitor").fire("click"); await warmSoc45.flush();
+    check("45C SoC temperature is Warm rather than a false Hot alert", warmSoc45.el("hwCpuStatus_2").textContent === "Warm", warmSoc45.el("hwCpuStatus_2").textContent);
     check("GPU frequency, activity and allowed range are displayed", c.el("hwGpuFrequency").textContent === "684 MHz (27%)" && c.el("hwGpuMin").textContent === "255 MHz" && c.el("hwGpuMax").textContent === "736 MHz", c.el("hwGpuFrequency").textContent);
     check("battery charge uses its own state and color class", c.el("hwBatteryStatus").textContent === "Normal" && c.el("hwBatteryStatus").className.indexOf("hw-charge-normal") >= 0, c.el("hwBatteryStatus").className);
     check("battery temperature has its own temperature badge", c.el("hwBatteryTempStatus").textContent === "Normal" && c.el("hwBatteryTemperature").textContent === "30.6°C", c.el("hwBatteryTempStatus").textContent + " / " + c.el("hwBatteryTemperature").textContent);
+    const warmBattery = await load({ handler: (cmd, def) => { const r = def(cmd); return /monitor\.sh snapshot/.test(cmd) ? ok(r.stdout.replace("battery_temp=306", "battery_temp=400")) : r; } });
+    warmBattery.el("navMonitor").fire("click"); await warmBattery.flush();
+    check("battery temp remains Warm at 40C", warmBattery.el("hwBatteryTempStatus").textContent === "Warm", warmBattery.el("hwBatteryTempStatus").textContent);
+    const hotBattery = await load({ handler: (cmd, def) => { const r = def(cmd); return /monitor\.sh snapshot/.test(cmd) ? ok(r.stdout.replace("battery_temp=306", "battery_temp=450")) : r; } });
+    hotBattery.el("navMonitor").fire("click"); await hotBattery.flush();
+    check("battery temp becomes Hot at 45C", hotBattery.el("hwBatteryTempStatus").textContent === "Hot", hotBattery.el("hwBatteryTempStatus").textContent);
     check("battery power prefers the kernel-reported power_now value", c.el("hwBatteryPower").textContent === "2 W", c.el("hwBatteryPower").textContent);
     c.el("homeProfiles").fire("click");
     check("Home quick access opens CPU and GPU", c.el("pageCpu").style.display === "block", c.el("pageCpu").style.display);
@@ -443,7 +462,7 @@ const deferred = () => { let res; const p = new Promise((r) => { res = r; }); re
     }});
     g.el("navMonitor").fire("click"); await g.flush();
     check("GPU busy counter fallback waits for a second sample", g.el("hwGpuFrequency").textContent === "684 MHz (—%)", g.el("hwGpuFrequency").textContent);
-    await g.advance(2500);
+    await g.advance(5000);
     check("GPU busy counter fallback calculates utilization from delta", g.el("hwGpuFrequency").textContent === "684 MHz (50%)", g.el("hwGpuFrequency").textContent);
     g.el("navHome").fire("click");
 
@@ -484,18 +503,19 @@ const deferred = () => { let res; const p = new Promise((r) => { res = r; }); re
     let n = 0;
     const d = await load({ handler: (cmd, def) => {
       const r = def(cmd);
-      if (/monitor\.sh snapshot/.test(cmd)) { n++; return ok(r.stdout.replace("battery_charge_counter=2891000", "battery_charge_counter=" + (2891000 - n * 20000))); }
+      if (/monitor\.sh snapshot/.test(cmd)) { n++; return ok(r.stdout.replace("battery_charge_counter=2891000", "battery_charge_counter=" + (2891000 - n * 1000))); }
       return r;
     }});
     d.el("navMonitor").fire("click"); await d.flush();
-    await d.advance(130000);
+    for (let i = 0; i < 52; i++) await d.advance(2500);
     check("active drain shows a rate once two screen-on samples are 2+ minutes apart", /%\/h$/.test(d.el("hwBatteryActiveDrain").textContent), d.el("hwBatteryActiveDrain").textContent);
+    check("active drain saves the last measured rate across a WebUI reopen", d.store.has("kprofiles-ui-monitor-active-rate-v1"), Array.from(d.store.keys()).join(","));
     await d.setVisible(false);          // screen off / page hidden for 20 minutes
     await d.advance(1200000);
     await d.setVisible(true);
-    check("after a hidden gap the active drain starts over instead of averaging the gap in", d.el("hwBatteryActiveDrain").textContent === "Collecting data", d.el("hwBatteryActiveDrain").textContent);
-    await d.advance(130000);
-    check("active drain shows a rate again once new screen-on samples exist", /%\/h$/.test(d.el("hwBatteryActiveDrain").textContent), d.el("hwBatteryActiveDrain").textContent);
+    check("after a hidden gap the last active rate remains visible while refreshing", /%\/h$/.test(d.el("hwBatteryActiveDrain").textContent) && /Last measured/.test(d.el("hwBatteryActiveSub").textContent), d.el("hwBatteryActiveDrain").textContent + " / " + d.el("hwBatteryActiveSub").textContent);
+    for (let i = 0; i < 52; i++) await d.advance(2500);
+    check("active drain returns to live screen-on samples after a new window", /%\/h$/.test(d.el("hwBatteryActiveDrain").textContent) && d.el("hwBatteryActiveSub").textContent === "Screen-on samples", d.el("hwBatteryActiveDrain").textContent + " / " + d.el("hwBatteryActiveSub").textContent);
   }
   {
     const c = await load({ handler: (cmd, def) => (/control\.sh status/.test(cmd) ? { errno: 1, stdout: "", stderr: "sh: control.sh: not found" } : def(cmd)) });
@@ -509,13 +529,61 @@ const deferred = () => { let res; const p = new Promise((r) => { res = r; }); re
     check("legacy controller state is a choice conflict, not Module presets", legacy.el("controlSourcePill").textContent === "Choose one" && legacy.el("controlSourceConflict").style.display === "block", legacy.el("controlSourcePill").textContent);
     check("legacy conflict leaves controller choices available for explicit resolution", !legacy.el("sourceModuleBtn").disabled && !legacy.el("sourceKernelBtn").disabled, "controller choice buttons are disabled");
   }
-  // Screen-off baseline capture must work even if the user is on Home, not only while Monitor is open.
+  // Screen-off baseline capture and completion must work from Home, independently of Monitor sampling.
   {
     const c = await load();
     c.el("navHome").fire("click");
     await c.setVisible(false);
     check("screen-off battery sample is attempted from Home too", c.sent(/monitor\.sh screen/) === 1, c.calls.join(" | "));
     check("confirmed screen-off battery baseline is saved from Home", c.store.has("kprofiles-ui-monitor-idle-baseline-v1"), Array.from(c.store.keys()).join(","));
+  }
+  {
+    let screenCalls = 0;
+    const c = await load({ now: 1000000, handler: (cmd, def) => {
+      if (/monitor\.sh screen/.test(cmd)) {
+        screenCalls++;
+        if (screenCalls === 1) return ok("screen_state=off\nbattery_status=Discharging\nbattery_capacity=68\nbattery_charge_counter=2891000\nbattery_charge_full=4425000\n");
+        return ok("screen_state=on\nbattery_status=Discharging\nbattery_capacity=68\nbattery_charge_counter=2871000\nbattery_charge_full=4425000\n");
+      }
+      return def(cmd);
+    }});
+    await c.setVisible(false);
+    await c.advance(130000);
+    await c.setVisible(true);
+    check("idle rate is finalized on return even while Home is selected", c.store.has("kprofiles-ui-monitor-idle-rate-v1"), Array.from(c.store.keys()).join(","));
+    check("a successful idle sample consumes the baseline", !c.store.has("kprofiles-ui-monitor-idle-baseline-v1"), Array.from(c.store.keys()).join(","));
+    c.el("navMonitor").fire("click"); await c.flush();
+    check("Monitor displays the saved idle rate on entry", /%\/h$/.test(c.el("hwBatteryIdleDrain").textContent), c.el("hwBatteryIdleDrain").textContent);
+  }
+  {
+    const now = 1005000;
+    const c = await load({ now, storage: {
+      "kprofiles-ui-monitor-active-rate-v1": JSON.stringify({ rate: 4.2, t: 1000000 }),
+      "kprofiles-ui-monitor-idle-rate-v1": JSON.stringify({ rate: 1.8, t: 1000000 })
+    }});
+    c.el("navMonitor").fire("click"); await c.flush();
+    check("cached active rate is shown immediately after reopening the WebUI", c.el("hwBatteryActiveDrain").textContent === "4.2%/h", c.el("hwBatteryActiveDrain").textContent);
+    check("cached active rate is labelled as the last measurement", /Last measured/.test(c.el("hwBatteryActiveSub").textContent), c.el("hwBatteryActiveSub").textContent);
+    check("cached idle rate is shown immediately after reopening the WebUI", c.el("hwBatteryIdleDrain").textContent === "1.8%/h", c.el("hwBatteryIdleDrain").textContent);
+  }
+  // A screen-off window that cannot be measured when the screen returns (too short, or no battery change) must be
+  // discarded, not kept: otherwise ordinary screen-on use is later paired with it and stored as an idle drain rate.
+  for (const [label, offMs, onCounter] of [["a 30 s screen toggle", 30000, 2890000], ["a 130 s window with no battery change", 130000, 2891000]]) {
+    let screenCalls = 0, n = 0;
+    const c = await load({ now: 1000000, handler: (cmd, def) => {
+      if (/monitor\.sh screen/.test(cmd)) {
+        screenCalls++;
+        if (screenCalls === 1) return ok("screen_state=off\nbattery_status=Discharging\nbattery_capacity=68\nbattery_charge_counter=2891000\nbattery_charge_full=4425000\n");
+        return ok("screen_state=on\nbattery_status=Discharging\nbattery_capacity=68\nbattery_charge_counter=" + onCounter + "\nbattery_charge_full=4425000\n");
+      }
+      if (/monitor\.sh snapshot/.test(cmd)) { n++; const r = def(cmd); return ok(r.stdout.replace("battery_charge_counter=2891000", "battery_charge_counter=" + (2890000 - n * 1000))); }
+      return def(cmd);
+    }});
+    await c.setVisible(false); await c.advance(offMs); await c.setVisible(true);
+    check("unmeasurable idle window (" + label + ") is discarded on return", !c.store.has("kprofiles-ui-monitor-idle-baseline-v1"), Array.from(c.store.keys()).join(","));
+    c.el("navMonitor").fire("click"); await c.flush();
+    for (let i = 0; i < 80; i++) await c.advance(2500);   // ~200 s of ordinary screen-on use
+    check("screen-on use after " + label + " is not recorded as an idle rate", !c.store.has("kprofiles-ui-monitor-idle-rate-v1"), c.store.get("kprofiles-ui-monitor-idle-rate-v1"));
   }
   process.exit(fail);
 })().catch((e) => { console.log("FAIL the test itself crashed: " + (e && e.stack || e)); process.exit(1); });

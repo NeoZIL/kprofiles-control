@@ -603,6 +603,17 @@ apply_preflight() {
   [ -z "$pf_miss" ]
 }
 NOSTOCK="warn: the phone's own limits are not recorded yet (for example because the kernel Battery profile was on), so Stock cannot put them back until the next reboot"
+# The watcher is needed when screen-off limits are in use, OR when any screen-on limit is held: it also
+# re-asserts held limits and hands them back when the module is disabled or removed in the manager.
+# Only a configuration that holds no limits at all (Performance, or Custom with nothing set) goes without one.
+watcher_needed() {
+  [ "$SCREENOFF" = 1 ] && return 0
+  for wn_c in LITTLE BIG PRIME GPU; do for wn_k in MIN MAX; do
+    eval "wn_v=\${ON_${wn_c}_${wn_k}:-}"
+    [ -z "$wn_v" ] || return 0
+  done; done
+  return 1
+}
 cmd_apply() {
   require_module_controller || return 1
   ca_rc=0
@@ -634,9 +645,18 @@ cmd_apply() {
     fi
     if ! apply_state "$(want_state)"; then report_apply_failure; ca_rc=1; fi
     ! have_def || warn_nodefault
-    if ! start_daemon; then
-      echo "error: your limits are applied for the current screen state, but the watcher that switches them when the screen turns on or off is not running"
-      ca_rc=1
+    if watcher_needed; then
+      if ! start_daemon; then
+        echo "error: your limits are applied for the current screen state, but the watcher that keeps them in place is not running"
+        ca_rc=1
+      fi
+    else
+      # No limits are held by this module (for example, Performance). Stop any watcher left by the
+      # previous preset instead of waking periodically with nothing to switch or re-assert.
+      if ! stop_daemon; then
+        echo "error: this profile does not need a watcher, but the previous watcher could not be stopped"
+        ca_rc=1
+      fi
     fi
   else
     # (With limits of ours in place and no record there is nothing to capture; the line below says so.)
@@ -865,6 +885,7 @@ cmd_status() {
   echo "enabled=$ENABLED"; echo "screenoff=$SCREENOFF"; echo "preset=$PRESET"
   echo "screen=$(screen_state)"; echo "state=$(want_state)"; echo "bl=$(rd "$BL")"
   if daemon_alive; then echo "daemon=1"; else echo "daemon=0"; fi
+  if watcher_needed; then echo "watcher_needed=1"; else echo "watcher_needed=0"; fi
   for s in on off; do for c in $CLUSTERS; do for k in min max; do
     sv=$(upper $s); cv=$(upper $c); kv=$(upper $k)
     eval "v=\${${sv}_${cv}_${kv}:-}"; echo "cfg_${s}_${c}_${k}=$v"

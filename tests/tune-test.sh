@@ -138,14 +138,25 @@ check "stock: prime max"  2668800 "$(v cpufreq/policy7/scaling_max_freq)"
 check "stock: prime min"  633600  "$(v cpufreq/policy7/scaling_min_freq)"
 check "stock: gpu max"    900000000 "$(v gpu/max_freq)"
 
-echo "--- performance profile leaves the phone's own frequency limits in control ---"
-mkfake; S preset tilt >/dev/null
+echo "--- performance profile leaves the phone's own frequency limits in control without a poller ---"
+mkfake; unset TUNE_NO_DAEMON; S preset tilt >/dev/null
 out=$(S preset performance); rc=$?; check "performance preset applies cleanly" 0 "$rc"
 out=$(S status); has "performance preset is named" "preset=performance" "$out"; has "performance leaves limits enabled but does not screen-off-cap" "screenoff=0" "$out"
+has "performance does not keep an unnecessary background watcher" "daemon=0" "$out"
+has "performance reports that no watcher is needed" "watcher_needed=0" "$out"
+export TUNE_NO_DAEMON=1
 check "performance restores little max" 2016000 "$(v cpufreq/policy0/scaling_max_freq)"
 check "performance restores big max" 2572800 "$(v cpufreq/policy3/scaling_max_freq)"
 check "performance restores prime max" 2668800 "$(v cpufreq/policy7/scaling_max_freq)"
 check "performance restores GPU max" 900000000 "$(v gpu/max_freq)"
+
+echo "--- screen-on limits without screen-off caps still keep the watcher (re-assert and hand-back) ---"
+mkfake; unset TUNE_NO_DAEMON; S preset tilt >/dev/null
+S cfg SCREENOFF 0 >/dev/null
+out=$(S status); has "custom screen-on caps without screen-off caps still need a watcher" "watcher_needed=1" "$out"; has "and the watcher is running" "daemon=1" "$out"
+S preset performance >/dev/null
+out=$(S status); has "switching to performance then stops the watcher" "daemon=0" "$out"
+export TUNE_NO_DAEMON=1
 
 echo "--- dynamic profile leaves screen-on unrestricted and caps screen-off ---"
 mkfake; S preset dynamic >/dev/null

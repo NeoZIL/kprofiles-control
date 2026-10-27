@@ -1,5 +1,21 @@
 # Changelog
 
+## v4.0.3
+- Efficiency (tuning): configurations that hold no limits at all (Performance, or Custom with nothing set and screen-off caps off) stop the background watcher instead of waking periodically with nothing to switch or re-assert.
+- Fix (audit): the watcher is kept whenever any limit is held, including Custom with screen-on caps and screen-off caps turned off. The watcher also re-asserts held limits and hands them back when the module is disabled or removed in the manager, so stopping it for such a profile would have left the caps in place until reboot. `tune.sh status` now reports `watcher_needed`, and the WebUI shows Not needed only when that is 0.
+- Efficiency (monitor): returning to the WebUI no longer runs an extra screen-state probe unless a screen-off baseline was actually saved.
+- Efficiency (monitor): visible Monitor telemetry refreshes every 5 seconds instead of every 2.5 seconds; sampling still stops outside Monitor or while the WebView is hidden.
+- Thermal display: battery temperature keeps its stricter 38°C/45°C bands, while CPU/SoC/GPU indicators use 45°C/75°C bands to avoid labelling an ordinary 45°C SoC reading as Hot. These indicators do not replace Android/kernel thermal protection.
+- Version: v4.0.3, versionCode 33.
+- Tests: add regression coverage for no unnecessary Performance watcher and sensor-specific temperature labels.
+
+## v4.0.2
+- Fix (monitor): preserve the latest measured active and idle drain estimates across WebUI reopen/reload, with an explicit “Last measured · refreshing” label while a fresh active window is collected.
+- Fix (monitor): finalize idle drain as soon as the WebUI returns, even when Home rather than Monitor is selected. The screen-off baseline is used once on return and then discarded, so a window that is too short or shows no battery change can never be paired with later screen-on use and stored as an idle rate.
+- Safety: active sample history is persisted in a compact window, expires when stale, and is cleared on hidden/screen-off transitions or sample gaps so a screen-off interval is never averaged into active drain.
+- Version: v4.0.2, versionCode 32.
+- Tests: add regressions for drain-rate persistence across reloads, screen-off/on sampling from Home, active sample reset without hiding the last valid estimate, and unmeasurable idle windows being discarded.
+
 ## v4.0.1
 Fix the ShellCheck failures that stopped the build workflow. No behaviour change: the module does exactly what v4.0.0 does.
 - Fix (CI): `kp.sh status` assigned `m=?` and `a=?` unquoted, which ShellCheck reads as a glob (SC2125). They are now `m='?'` and `a='?'`; the output is identical.

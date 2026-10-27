@@ -137,11 +137,11 @@
         <div class="hw-metric"><div class="hw-label">Temperature</div><div class="hw-temp-inline"><span class="hw-value hw-temperature-value" id="hwBatteryTemperature">Unavailable</span><span class="hw-pill hw-pill-muted" id="hwBatteryTempStatus">Unavailable</span></div></div>
         <div class="hw-metric"><div class="hw-label">Voltage</div><div class="hw-value" id="hwBatteryVoltage">Unavailable</div></div>
       </div>
-      <p class="hint" style="margin:14px 0 0">Drain rates are estimates based on measured battery change. They may say “Collecting data” until there is a reliable sample window.</p>
+      <p class="hint" style="margin:14px 0 0">Drain rates are estimates from measured battery change. The last valid estimates survive WebUI reopen/reload; the active value is labelled “Last measured · refreshing” while a fresh screen-on window is collected. “Collecting data” appears until the first reliable estimate exists.</p>
     </section>
     <section class="card" aria-label="Current status"><h2>Current status</h2><div class="row"><span class="k">Screen</span><span class="badge" id="sScreen">…</span></div><div class="row"><span class="k">CPU/GPU tuning</span><span class="badge" id="sActive">…</span></div><div class="row"><span class="k">Screen watcher</span><span class="badge" id="sDaemon">…</span></div><div class="live" id="live" style="margin-top:8px"></div></section>
     <section class="card"><h2>Kernel status</h2><div class="row"><span class="k">Support</span><span class="badge" id="monitorKernelSupport2">Checking…</span></div><div class="row"><span class="k">Current profile</span><span class="badge" id="monitorKernelMode2">—</span></div><div class="row"><span class="k">Remember after reboot</span><span class="badge" id="monitorKernelPersist">—</span></div></section>
-    <section class="card"><h2>How to read this</h2><p class="hint">Frequency values show the current clock converted to MHz; MIN/MAX FREQUENCY are the current allowed policy limits, not the chip’s theoretical maximum. The percentage in brackets is utilization, not frequency as a percentage of maximum. CPU utilization is calculated from successive <code>/proc/stat</code> samples: (change in total CPU counters − change in idle and I/O-wait counters) ÷ change in total CPU counters × 100. For each CPU cluster, the counter changes are combined across the CPUs in that policy. The first sample establishes a baseline, so utilization may show “—%” until a second sample arrives. GPU utilization uses the driver’s busy-percentage value when available; otherwise it is calculated from successive busy/total counter or busy-time/total-time readings. Battery drain in %/h is estimated from the drop in charge-counter relative to full-charge capacity over elapsed time, falling back to battery-percentage change when charge counters are unavailable. Only discharging samples are used; charging periods are excluded, and the display may say “Collecting data” until enough readings exist. Sensor names and availability vary by kernel, so unsupported readings are shown as Unavailable. The older frequency rows below show limits reported by the tuning engine.</p></section>
+    <section class="card"><h2>How to read this</h2><p class="hint">Frequency values show the current clock converted to MHz; MIN/MAX FREQUENCY are the current allowed policy limits, not the chip’s theoretical maximum. The percentage in brackets is utilization, not frequency as a percentage of maximum. CPU utilization is calculated from successive <code>/proc/stat</code> samples: (change in total CPU counters − change in idle and I/O-wait counters) ÷ change in total CPU counters × 100. For each CPU cluster, the counter changes are combined across the CPUs in that policy. The first sample establishes a baseline, so utilization may show “—%” until a second sample arrives. GPU utilization uses the driver’s busy-percentage value when available; otherwise it is calculated from successive busy/total counter or busy-time/total-time readings. Battery drain in %/h is estimated from the drop in charge-counter relative to full-charge capacity over elapsed time, falling back to battery-percentage change when charge counters are unavailable. Only discharging samples are used; charging periods are excluded. Last valid estimates survive WebUI reopen/reload, while stale active sample windows are discarded and never joined across a screen-off gap. The display may say “Collecting data” until the first reliable estimate exists. Sensor names and availability vary by kernel, so unsupported readings are shown as Unavailable. The older frequency rows below show limits reported by the tuning engine.</p></section>
   </section>
 
   <section class="page" id="pageSettings" aria-label="Settings">
@@ -203,9 +203,15 @@
   ];
   var currentPage = "home";
   var hwTimer = null, hwInFlight = false, hwPrevious = null, hwPolicySignature = null;
-  var hwActiveSamples = [], hwLastIdleRate = null;
+  var hwActiveSamples = [], hwLastIdleRate = null, hwLastActiveRate = null;
+  var hwLastActiveSamplesPersistAt = 0;
   var HW_IDLE_BASELINE_KEY = "kprofiles-ui-monitor-idle-baseline-v1";
   var HW_IDLE_RATE_KEY = "kprofiles-ui-monitor-idle-rate-v1";
+  var HW_ACTIVE_SAMPLES_KEY = "kprofiles-ui-monitor-active-samples-v1";
+  var HW_ACTIVE_RATE_KEY = "kprofiles-ui-monitor-active-rate-v1";
+  var HW_DRAIN_CACHE_MAX_AGE_MS = 604800000;
+  var HW_ACTIVE_SAMPLE_GAP_MS = 20000;
+  var HW_SAMPLE_INTERVAL_MS = 5000;
   function showPage(key) {
     var valid = false;
     for (var i = 0; i < PAGE_ITEMS.length; i++) if (PAGE_ITEMS[i].key === key) valid = true;
@@ -230,6 +236,15 @@
   function presetLabel(preset) {
     var names = { stock: "Stock", tilt: "Battery tilt", saver: "Battery saver", performance: "Performance", custom: "Custom", dynamic: "Dynamic" };
     return names[preset] || "Unknown profile";
+  }
+  function watcherStatusText() {
+    if (controllerSource === "kernel") return "Released";
+    if (controllerSource !== "module") return "Unknown";
+    if (!st || st.enabled !== "1") return "Not needed";
+    /* The engine reports whether any limit is held; older engines only said whether screen-off caps were used. */
+    var needed = st.watcher_needed !== undefined ? st.watcher_needed === "1" : st.screenoff === "1";
+    if (!needed) return "Not needed";
+    return st.daemon === "1" ? "Running" : "Stopped";
   }
   function cpuOverallRange() {
     var mins = [], maxs = [];
@@ -300,7 +315,7 @@
       $("homeCpuRange").textContent = cpuOverallRange();
       $("homeGpuRange").textContent = range("gpu", st.cur_gpu_min, st.cur_gpu_max);
       $("homeScreen").textContent = st.screen === "off" ? "Off" : "On";
-      $("homeWatcher").textContent = st.daemon === "1" ? "Running" : "Stopped";
+      $("homeWatcher").textContent = watcherStatusText();
     }
     var supportText = kernelSupport === "supported" ? "Supported" : (kernelSupport === "unsupported" ? "Unsupported" : "Not confirmed");
     $("homeKernelStatus").textContent = supportText;
@@ -681,15 +696,19 @@
     }
     return null;
   }
-  function hwTemperatureState(temp) {
+  function hwTemperatureState(temp, kind) {
     if (temp === null || !isFinite(temp)) return { label: "Unavailable", cls: "hw-pill-muted", valueCls: "", color: "" };
-    if (temp < 38) return { label: "Normal", cls: "hw-temp-normal", valueCls: "hw-temp-normal", color: "#60a5fa" };
-    if (temp < 45) return { label: "Warm", cls: "hw-temp-warm", valueCls: "hw-temp-warm", color: "#ffb547" };
+    /* Battery temperature needs a lower warning band than SoC/CPU/GPU sensors. These are visual
+       indicators only; Android and the kernel remain responsible for actual thermal throttling. */
+    var normalLimit = kind === "battery" ? 38 : 45;
+    var hotLimit = kind === "battery" ? 45 : 75;
+    if (temp < normalLimit) return { label: "Normal", cls: "hw-temp-normal", valueCls: "hw-temp-normal", color: "#60a5fa" };
+    if (temp < hotLimit) return { label: "Warm", cls: "hw-temp-warm", valueCls: "hw-temp-warm", color: "#ffb547" };
     return { label: "Hot", cls: "hw-temp-hot", valueCls: "hw-temp-hot", color: "#ff6262" };
   }
   function hwFormatTemp(temp) { return temp === null ? "Unavailable" : hwFormatNumber(temp, 1) + "°C"; }
-  function hwApplyTemp(pillId, valueId, noteId, temp, shared) {
-    var state = hwTemperatureState(temp);
+  function hwApplyTemp(pillId, valueId, noteId, temp, shared, kind) {
+    var state = hwTemperatureState(temp, kind);
     var pill = $(pillId), value = $(valueId), note = $(noteId);
     if (pill) { hwSet(pillId, state.label); hwClass(pill, "hw-pill " + state.cls); }
     if (value) { hwSet(valueId, hwFormatTemp(temp)); hwClass(value, "hw-value hw-temperature-value" + (state.valueCls ? " " + state.valueCls : "")); }
@@ -830,43 +849,109 @@
   function hwStorageGet(key) { try { return window.localStorage.getItem(key); } catch (e) { return null; } }
   function hwStorageSet(key, value) { try { window.localStorage.setItem(key, value); } catch (e) { /* storage may be disabled */ } }
   function hwStorageRemove(key) { try { window.localStorage.removeItem(key); } catch (e) { /* storage may be disabled */ } }
+  function hwLoadStoredRate(key) {
+    var raw = hwStorageGet(key);
+    if (!raw) return null;
+    try {
+      var value = JSON.parse(raw), now = Date.now();
+      if (!value || typeof value.t !== "number" || !isFinite(value.t) || value.t > now ||
+          typeof value.rate !== "number" || !isFinite(value.rate) || value.rate < 0 || value.rate >= 100 ||
+          now - value.t >= HW_DRAIN_CACHE_MAX_AGE_MS) {
+        hwStorageRemove(key);
+        return null;
+      }
+      return value;
+    } catch (e) { hwStorageRemove(key); return null; }
+  }
+  function hwLoadIdleRate() { return hwLoadStoredRate(HW_IDLE_RATE_KEY); }
+  function hwLoadActiveRate() { return hwLoadStoredRate(HW_ACTIVE_RATE_KEY); }
+  function hwLoadActiveSamples() {
+    var raw = hwStorageGet(HW_ACTIVE_SAMPLES_KEY);
+    if (!raw) return [];
+    try {
+      var samples = JSON.parse(raw), now = Date.now();
+      if (!Array.isArray(samples) || !samples.length) throw new Error("invalid active samples");
+      samples = samples.filter(function (sample) {
+        return sample && typeof sample.t === "number" && isFinite(sample.t) && sample.t <= now &&
+          sample.status === "Discharging" && now - sample.t <= 1800000;
+      }).sort(function (a, b) { return a.t - b.t; });
+      if (!samples.length || now - samples[samples.length - 1].t > HW_ACTIVE_SAMPLE_GAP_MS) {
+        hwStorageRemove(HW_ACTIVE_SAMPLES_KEY);
+        return [];
+      }
+      /* Keep only the most recent uninterrupted sequence; never bridge a missing-sample gap. */
+      var start = 0;
+      for (var i = 1; i < samples.length; i++) {
+        if (samples[i].t - samples[i - 1].t > HW_ACTIVE_SAMPLE_GAP_MS) start = i;
+      }
+      samples = samples.slice(start);
+      return samples;
+    } catch (e) { hwStorageRemove(HW_ACTIVE_SAMPLES_KEY); return []; }
+  }
+  function hwPersistActiveSamples(force) {
+    var now = Date.now();
+    if (!force && now - hwLastActiveSamplesPersistAt < 10000) return;
+    if (!hwActiveSamples.length) { hwStorageRemove(HW_ACTIVE_SAMPLES_KEY); hwLastActiveSamplesPersistAt = now; return; }
+    /* A small downsampled window is enough for a rate estimate and avoids frequent large storage writes. */
+    var saved = [], lastSaved = -Infinity;
+    hwActiveSamples.forEach(function (sample, index) {
+      if (index === 0 || index === hwActiveSamples.length - 1 || sample.t - lastSaved >= 10000) {
+        saved.push(sample);
+        lastSaved = sample.t;
+      }
+    });
+    hwStorageSet(HW_ACTIVE_SAMPLES_KEY, JSON.stringify(saved));
+    hwLastActiveSamplesPersistAt = now;
+  }
   function hwConsumeIdleBaseline(record) {
     var raw = hwStorageGet(HW_IDLE_BASELINE_KEY);
     if (!raw) return;
+    /* Only ever called with a screen-on sample, so the screen-off window has already ended. The baseline is
+       therefore used exactly once and never kept: if a too-short or unmeasurable window were kept, a later
+       screen-on sample would be paired with it and ordinary use would be recorded as an idle drain rate. */
     hwStorageRemove(HW_IDLE_BASELINE_KEY);
     var baseline;
     try { baseline = JSON.parse(raw); } catch (e) { return; }
-    if (!baseline || !baseline.t || Date.now() - baseline.t < 60000 || Date.now() - baseline.t > 43200000) return;
+    var now = Date.now();
+    if (!baseline || typeof baseline.t !== "number" || !isFinite(baseline.t) || baseline.t > now) return;
+    var age = now - baseline.t;
+    if (age < 60000 || age > 43200000) return;
     if (record.status !== "Discharging" || baseline.status !== "Discharging") return;
     var rate = hwDrainRate(baseline, record);
     if (rate !== null && isFinite(rate) && rate >= 0 && rate < 100) {
-      hwLastIdleRate = { rate: rate, t: Date.now() };
+      hwLastIdleRate = { rate: rate, t: now };
       hwStorageSet(HW_IDLE_RATE_KEY, JSON.stringify(hwLastIdleRate));
     }
   }
-  function hwLoadIdleRate() {
-    var raw = hwStorageGet(HW_IDLE_RATE_KEY);
-    if (!raw) return null;
-    try {
-      var value = JSON.parse(raw);
-      return value && isFinite(value.rate) && Date.now() - value.t < 604800000 ? value : null;
-    } catch (e) { return null; }
-  }
+  /* These values survive a WebUI reload; only short, continuous active samples are reusable. */
+  hwActiveSamples = hwLoadActiveSamples();
+  hwLastActiveRate = hwLoadActiveRate();
+  hwLastIdleRate = hwLoadIdleRate();
+  if (hwActiveSamples.length) hwLastActiveSamplesPersistAt = hwActiveSamples[hwActiveSamples.length - 1].t;
   function hwUpdateDrain(data) {
     var record = hwChargeRecord(data, Date.now());
     hwConsumeIdleBaseline(record);
+    var activeGap = hwActiveSamples.length && record.t - hwActiveSamples[hwActiveSamples.length - 1].t > HW_ACTIVE_SAMPLE_GAP_MS;
+    if (activeGap) hwActiveSamples = [];
     if (record.status === "Discharging") {
       hwActiveSamples.push(record);
       var cutoff = record.t - 1800000;
       hwActiveSamples = hwActiveSamples.filter(function (sample) { return sample.t >= cutoff && sample.status === "Discharging"; });
+      hwPersistActiveSamples(!!activeGap || hwActiveSamples.length === 1);
     } else {
       hwActiveSamples = [];
+      hwPersistActiveSamples(true);
     }
     var activeRate = null;
     if (hwActiveSamples.length > 1) activeRate = hwDrainRate(hwActiveSamples[0], hwActiveSamples[hwActiveSamples.length - 1]);
-    hwSet("hwBatteryActiveDrain", record.status === "Charging" || record.status === "Full" ? "Charging" : (activeRate !== null ? hwFormatNumber(activeRate, 1) + "%/h" : "Collecting data"));
-    hwSet("hwBatteryActiveSub", record.status === "Charging" || record.status === "Full" ? record.status : "Screen-on samples");
-    hwLastIdleRate = hwLoadIdleRate();
+    if (activeRate !== null && isFinite(activeRate) && activeRate >= 0 && activeRate < 100) {
+      hwLastActiveRate = { rate: activeRate, t: record.t };
+      hwStorageSet(HW_ACTIVE_RATE_KEY, JSON.stringify(hwLastActiveRate));
+    }
+    var displayedActiveRate = activeRate !== null ? activeRate : (hwLastActiveRate ? hwLastActiveRate.rate : null);
+    hwSet("hwBatteryActiveDrain", record.status === "Charging" || record.status === "Full" ? "Charging" : (displayedActiveRate !== null ? hwFormatNumber(displayedActiveRate, 1) + "%/h" : "Collecting data"));
+    hwSet("hwBatteryActiveSub", record.status === "Charging" || record.status === "Full" ? record.status : (activeRate !== null ? "Screen-on samples" : (hwLastActiveRate ? "Last measured · refreshing" : "Screen-on samples")));
+    hwLastIdleRate = hwLoadIdleRate() || hwLastIdleRate;
     hwSet("hwBatteryIdleDrain", hwLastIdleRate ? hwFormatNumber(hwLastIdleRate.rate, 1) + "%/h" : "Collecting data");
     hwSet("hwBatteryIdleSub", hwLastIdleRate ? "Last screen-off sample" : "Needs a screen-off sample");
   }
@@ -881,14 +966,14 @@
       hwSet("hwCpuMin_" + index, hwFormatCpuMhz(policy.min));
       hwSet("hwCpuMax_" + index, hwFormatCpuMhz(policy.max));
       var tempInfo = hwPolicyTemperature(temps, policies, index, data.device);
-      hwApplyTemp("hwCpuStatus_" + index, "hwCpuTemperature_" + index, "hwCpuTempNote_" + index, tempInfo.temp, tempInfo.shared);
+      hwApplyTemp("hwCpuStatus_" + index, "hwCpuTemperature_" + index, "hwCpuTempNote_" + index, tempInfo.temp, tempInfo.shared, "soc");
       hwSetProgress("hwCpuProgress_" + index, "hwCpuBar_" + index, usage);
     });
     var gpuUsage = hwGpuUsage(data, previous), gpuFreq = hwFormatGpuCurrent(data.gpu_cur_hz);
     hwSet("hwGpuFrequency", gpuFreq === "Unavailable" ? gpuFreq : gpuFreq + " (" + (gpuUsage === null ? "—" : gpuUsage) + "%)");
     hwSet("hwGpuMin", hwFormatGpuMhz(data.gpu_min_hz));
     hwSet("hwGpuMax", hwFormatGpuMhz(data.gpu_max_hz));
-    hwApplyTemp("hwGpuStatus", "hwGpuTemperature", "hwGpuTempNote", temps.gpu, false);
+    hwApplyTemp("hwGpuStatus", "hwGpuTemperature", "hwGpuTempNote", temps.gpu, false, "soc");
     hwSetProgress("hwGpuProgress", "hwGpuBar", gpuUsage);
 
     var capacity = hwNumber(data.battery_capacity), charge = hwChargeState(capacity);
@@ -918,13 +1003,13 @@
     if (powerW === null && ivPowerW !== null) powerW = ivPowerW;
     hwSet("hwBatteryPower", powerW === null ? "Unavailable" : hwFormatNumber(powerW, 2) + " W");
     hwSet("hwBatteryVoltage", voltageUv === null ? "Unavailable" : hwFormatNumber(voltageUv / 1000000, 2) + " V");
-    var batteryTempState = hwTemperatureState(temps.battery);
+    var batteryTempState = hwTemperatureState(temps.battery, "battery");
     hwSet("hwBatteryTempStatus", batteryTempState.label);
     hwClass($("hwBatteryTempStatus"), "hw-pill " + batteryTempState.cls);
     hwSet("hwBatteryTemperature", hwFormatTemp(temps.battery));
     hwClass($("hwBatteryTemperature"), "hw-value hw-temperature-value" + (batteryTempState.valueCls ? " " + batteryTempState.valueCls : ""));
     hwUpdateDrain(data);
-    hwSet("hwLiveState", "Live · refreshes every 2.5 s");
+    hwSet("hwLiveState", "Live · refreshes every " + (HW_SAMPLE_INTERVAL_MS / 1000) + " s");
     hwClass($("hwLiveDot"), "hw-dot");
     hwPrevious = data;
   }
@@ -952,7 +1037,7 @@
       hwInFlight = false;
       if (currentPage === "monitor" && !(document.visibilityState && document.visibilityState === "hidden")) {
         if (hwTimer) clearTimeout(hwTimer);
-        hwTimer = setTimeout(hwSample, 2500);
+        hwTimer = setTimeout(hwSample, HW_SAMPLE_INTERVAL_MS);
       }
     });
   }
@@ -978,6 +1063,17 @@
       hwStorageSet(HW_IDLE_BASELINE_KEY, JSON.stringify(rec));
     }).catch(function () { /* Idle drain remains unavailable if the screen state cannot be confirmed. */ });
   }
+  function hwCaptureScreenOn() {
+    /* Finish an idle window when the WebView returns, even if Monitor is not the selected page.
+       With no saved screen-off baseline there is nothing to finish, so skip the extra shell call. */
+    if (!hwStorageGet(HW_IDLE_BASELINE_KEY)) return;
+    exec("sh " + BASE + "monitor.sh screen").then(function (r) {
+      if (r.errno !== 0) return;
+      var data = kv(r.stdout || "");
+      if (data.screen_state !== "on") return;
+      hwConsumeIdleBaseline(hwChargeRecord(data, Date.now()));
+    }).catch(function () { /* A later Monitor sample can still consume the saved baseline. */ });
+  }
   if (typeof document.addEventListener === "function") {
     document.addEventListener("visibilitychange", function () {
       if (document.visibilityState === "hidden") {
@@ -987,8 +1083,10 @@
         /* The screen may now be off: samples taken before and after that gap must not be joined into one
            "active" drain rate, or the idle period would be averaged into it. Collection restarts on return. */
         hwActiveSamples = [];
+        hwPersistActiveSamples(true);
         hwCaptureScreenOff();
       } else {
+        hwCaptureScreenOn();
         syncHardwareSampler();
       }
     });
@@ -1059,7 +1157,7 @@
     else if (st.preset === "performance") $("sActive").textContent = "No extra caps";
     else if (st.preset === "dynamic" && st.state !== "off") $("sActive").textContent = "No extra caps (screen on)";
     else $("sActive").textContent = st.state === "off" ? "Screen-off set" : "Screen-on set";
-    $("sDaemon").textContent = st.daemon === "1" ? "Running" : "Stopped";
+    $("sDaemon").textContent = watcherStatusText();
 
     var live = $("live"); live.innerHTML = "";
     DOMS.forEach(function (dm) {

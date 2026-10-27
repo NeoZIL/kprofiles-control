@@ -1,7 +1,7 @@
 id=kprofiles_ui
 name=Kprofiles Control
-version=v4.0.1
-versionCode=31
+version=v4.0.3
+versionCode=33
 author=NeoZIL
 description=Multi-page WebUI for CPU/GPU frequency profiles and optional kernel Kprofiles modes.
 updateJson=https://github.com/NeoZIL/kprofiles-control/releases/latest/download/update.json
