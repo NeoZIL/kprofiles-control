@@ -136,7 +136,7 @@ for z in "$SYS_ROOT"/class/thermal/thermal_zone[0-9]*; do
   read_value "$z/type" || continue
   type=$VALUE
   case "$type" in
-    *cpu*|*CPU*|*cpuss*|*CPUSS*|*gpu*|*GPU*|*gpuss*|*GPUSS*|*battery*|*Battery*|*soc*|*SOC*) ;;
+    *cpu*|*CPU*|*gpu*|*GPU*|*battery*|*Battery*|*soc*|*SOC*) ;;
     *) continue ;;
   esac
   if read_value "$z/temp"; then
@@ -162,7 +162,7 @@ for h in "$SYS_ROOT"/class/hwmon/hwmon[0-9]*; do
 done
 
 # Prefer a GPU devfreq policy; use KGSL's direct values when present.
-GPU_CUR= GPU_MIN= GPU_MAX= GPU_NAME= GPU_GOV= GPU_BUSY= GPU_BUSY_COUNTERS= GPU_BUSY_TIME= GPU_TOTAL_TIME=
+GPU_CUR='' GPU_MIN='' GPU_MAX='' GPU_NAME='' GPU_GOV='' GPU_BUSY='' GPU_BUSY_COUNTERS='' GPU_BUSY_TIME='' GPU_TOTAL_TIME=''
 # KGSL's own devfreq node wins. Otherwise any other GPU-named node is used, but never a bus/bandwidth
 # monitor (for example "gpubw"), which is not the GPU clock and can sort before the real node.
 for pass in kgsl gpu; do

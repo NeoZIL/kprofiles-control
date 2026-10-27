@@ -1,5 +1,13 @@
 # Changelog
 
+## v4.0.1
+Fix the ShellCheck failures that stopped the build workflow. No behaviour change: the module does exactly what v4.0.0 does.
+- Fix (CI): `kp.sh status` assigned `m=?` and `a=?` unquoted, which ShellCheck reads as a glob (SC2125). They are now `m='?'` and `a='?'`; the output is identical.
+- Fix (CI): the thermal-zone filter in `monitor.sh` listed `*cpuss*`, `*CPUSS*`, `*gpuss*` and `*GPUSS*` after `*cpu*`, `*CPU*`, `*gpu*` and `*GPU*`, which already match them (SC2221/SC2222). The redundant patterns are removed; the same zones are exported.
+- Fix (CI): `monitor.sh` cleared the GPU variables with `GPU_CUR= GPU_MIN= ...` on one line (SC1007). Each is now assigned `''` explicitly.
+- Version: v4.0.1, versionCode 31. v4.0.0 was never published (its tag run failed before the release step), so this is the first release of the 4.0 series.
+- Tests: all dash suites and both WebUI suites pass; ShellCheck was not available in the build environment, so the three findings above were fixed from the CI log and should be confirmed by the Actions run.
+
 ## v4.0.0
 This release was prepared as v3.6.0 and v3.6.1, neither of which was ever committed or published; it is numbered v4.0.0.
 Add a universal-interface, read-only live hardware monitor and mutually exclusive tuning-controller selection.

@@ -70,8 +70,8 @@ name_of() {
 status() {
   m=$(read_mode); mr=$?
   a=$(read_auto); ar=$?
-  [ "$mr" = 0 ] && [ -n "$m" ] || m=?
-  [ "$ar" = 0 ] && [ -n "$a" ] || a=?
+  [ "$mr" = 0 ] && [ -n "$m" ] || m='?'
+  [ "$ar" = 0 ] && [ -n "$a" ] || a='?'
   p=1; persist_on || p=0
   echo "mode=$m auto=$a persist=$p support=$(mode_support) auto_support=$(auto_support)"
 }
