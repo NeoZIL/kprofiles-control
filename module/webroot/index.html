@@ -906,21 +906,24 @@
   function hwConsumeIdleBaseline(record) {
     var raw = hwStorageGet(HW_IDLE_BASELINE_KEY);
     if (!raw) return;
-    /* Only ever called with a screen-on sample, so the screen-off window has already ended. The baseline is
-       therefore used exactly once and never kept: if a too-short or unmeasurable window were kept, a later
-       screen-on sample would be paired with it and ordinary use would be recorded as an idle drain rate. */
-    hwStorageRemove(HW_IDLE_BASELINE_KEY);
     var baseline;
-    try { baseline = JSON.parse(raw); } catch (e) { return; }
+    try { baseline = JSON.parse(raw); } catch (e) { hwStorageRemove(HW_IDLE_BASELINE_KEY); return; }
     var now = Date.now();
-    if (!baseline || typeof baseline.t !== "number" || !isFinite(baseline.t) || baseline.t > now) return;
+    if (!baseline || typeof baseline.t !== "number" || !isFinite(baseline.t) || baseline.t > now) {
+      hwStorageRemove(HW_IDLE_BASELINE_KEY); return;
+    }
     var age = now - baseline.t;
-    if (age < 60000 || age > 43200000) return;
-    if (record.status !== "Discharging" || baseline.status !== "Discharging") return;
+    if (age < 60000) return; /* Keep a fresh baseline until a usable sample window exists. */
+    if (age > 43200000) { hwStorageRemove(HW_IDLE_BASELINE_KEY); return; }
+    if (record.status !== "Discharging" || baseline.status !== "Discharging") {
+      if (record.status === "Charging" || record.status === "Full" || baseline.status !== "Discharging") hwStorageRemove(HW_IDLE_BASELINE_KEY);
+      return;
+    }
     var rate = hwDrainRate(baseline, record);
     if (rate !== null && isFinite(rate) && rate >= 0 && rate < 100) {
       hwLastIdleRate = { rate: rate, t: now };
       hwStorageSet(HW_IDLE_RATE_KEY, JSON.stringify(hwLastIdleRate));
+      hwStorageRemove(HW_IDLE_BASELINE_KEY);
     }
   }
   /* These values survive a WebUI reload; only short, continuous active samples are reusable. */
@@ -1067,6 +1070,7 @@
     /* Finish an idle window when the WebView returns, even if Monitor is not the selected page.
        With no saved screen-off baseline there is nothing to finish, so skip the extra shell call. */
     if (!hwStorageGet(HW_IDLE_BASELINE_KEY)) return;
+    /* Finish an idle window when the WebView returns, even if Monitor is not the selected page. */
     exec("sh " + BASE + "monitor.sh screen").then(function (r) {
       if (r.errno !== 0) return;
       var data = kv(r.stdout || "");
