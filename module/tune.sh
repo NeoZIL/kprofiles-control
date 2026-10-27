@@ -603,15 +603,21 @@ apply_preflight() {
   [ -z "$pf_miss" ]
 }
 NOSTOCK="warn: the phone's own limits are not recorded yet (for example because the kernel Battery profile was on), so Stock cannot put them back until the next reboot"
-# The watcher is needed when screen-off limits are in use, OR when any screen-on limit is held: it also
-# re-asserts held limits and hands them back when the module is disabled or removed in the manager.
-# Only a configuration that holds no limits at all (Performance, or Custom with nothing set) goes without one.
+# A watcher is needed only when this enabled configuration actually holds a limit. It must stay
+# alive for on-screen limits (to re-assert/restore them) and for active screen-off limits (to switch
+# them), but a bare SCREENOFF=1 setting with no OFF values must not create a needless poller.
 watcher_needed() {
-  [ "$SCREENOFF" = 1 ] && return 0
+  [ "$ENABLED" = 1 ] || return 1
   for wn_c in LITTLE BIG PRIME GPU; do for wn_k in MIN MAX; do
     eval "wn_v=\${ON_${wn_c}_${wn_k}:-}"
     [ -z "$wn_v" ] || return 0
   done; done
+  if [ "$SCREENOFF" = 1 ]; then
+    for wn_c in LITTLE BIG PRIME GPU; do for wn_k in MIN MAX; do
+      eval "wn_v=\${OFF_${wn_c}_${wn_k}:-}"
+      [ -z "$wn_v" ] || return 0
+    done; done
+  fi
   return 1
 }
 cmd_apply() {
@@ -699,6 +705,52 @@ cmd_cfg() { # KEY VALUE
       ;;
   esac
   cmd_apply
+}
+
+# Custom editor uses one validated transaction for all 16 frequency selectors. This avoids applying
+# partially edited min/max pairs one at a time (which can race the screen-state watcher and make a
+# preset appear half-applied). Input keys are a fixed whitelist and values are either '-' or digits.
+cmd_custom_save() { # exactly KEY VALUE pairs for all ON/OFF × LITTLE/BIG/PRIME/GPU × MIN/MAX
+  require_module_controller || return 1
+  [ "$#" -eq 32 ] || { echo "error: Custom Save & Apply requires all 16 frequency values"; return 1; }
+  load_cfg
+  [ -z "$CFG_BAD" ] || { echo "$NOREAD"; return 1; }
+  [ "$PRESET" = custom ] || { echo "error: select Custom before saving frequency limits"; return 1; }
+  cs_seen=" "
+  while [ "$#" -ge 2 ]; do
+    key="$1"; val="$2"; shift 2
+    parse_key "$key" || { echo "error: unknown setting $key"; return 1; }
+    case "$cs_seen" in *" $key "*) echo "error: duplicate setting $key"; return 1 ;; esac
+    cs_seen="$cs_seen$key "
+    case "$val" in default|-) val="" ;; esac
+    if [ -n "$val" ]; then
+      case "$val" in *[!0-9]*) echo "error: value must be a number or Default"; return 1 ;; esac
+      [ "$val" -gt 0 ] 2>/dev/null || { echo "error: frequency must be positive"; return 1; }
+      list_has "$PK_c" "$val" || { echo "error: $val is not an available $PK_c frequency on this phone"; return 1; }
+    fi
+    eval "${PK_S}_${PK_C}_${PK_K}=\"$val\""
+  done
+  [ "$cs_seen" = " ON_LITTLE_MIN ON_LITTLE_MAX ON_BIG_MIN ON_BIG_MAX ON_PRIME_MIN ON_PRIME_MAX ON_GPU_MIN ON_GPU_MAX OFF_LITTLE_MIN OFF_LITTLE_MAX OFF_BIG_MIN OFF_BIG_MAX OFF_PRIME_MIN OFF_PRIME_MAX OFF_GPU_MIN OFF_GPU_MAX " ] || {
+    # Order is not significant; a strict count plus unique whitelisted keys guarantees complete coverage.
+    cs_count=$(printf '%s' "$cs_seen" | awk '{print NF}')
+    [ "$cs_count" = 16 ] || { echo "error: Custom Save & Apply requires each frequency value exactly once"; return 1; }
+  }
+  cfg_values_valid || { echo "error: min must not be above max; nothing was saved"; return 1; }
+  cfg_values_available || { echo "error: a saved frequency is no longer available on this phone; nothing was saved"; return 1; }
+  # A single atomic config replacement persists every selector plus the active profile name.
+  cfg_keep
+  cfg_put PRESET custom \
+    ON_LITTLE_MIN "${ON_LITTLE_MIN:-}" ON_LITTLE_MAX "${ON_LITTLE_MAX:-}" \
+    ON_BIG_MIN "${ON_BIG_MIN:-}" ON_BIG_MAX "${ON_BIG_MAX:-}" \
+    ON_PRIME_MIN "${ON_PRIME_MIN:-}" ON_PRIME_MAX "${ON_PRIME_MAX:-}" \
+    ON_GPU_MIN "${ON_GPU_MIN:-}" ON_GPU_MAX "${ON_GPU_MAX:-}" \
+    OFF_LITTLE_MIN "${OFF_LITTLE_MIN:-}" OFF_LITTLE_MAX "${OFF_LITTLE_MAX:-}" \
+    OFF_BIG_MIN "${OFF_BIG_MIN:-}" OFF_BIG_MAX "${OFF_BIG_MAX:-}" \
+    OFF_PRIME_MIN "${OFF_PRIME_MIN:-}" OFF_PRIME_MAX "${OFF_PRIME_MAX:-}" \
+    OFF_GPU_MIN "${OFF_GPU_MIN:-}" OFF_GPU_MAX "${OFF_GPU_MAX:-}" || { cfg_rollback_if_refused; echo "$NOSAVE"; return 1; }
+  cmd_apply; cs_rc=$?
+  cfg_rollback_if_refused
+  return "$cs_rc"
 }
 
 preset_vals() {
@@ -900,6 +952,7 @@ case "$1" in
   lists)     cmd_lists ;;
   stock-recorded) cmd_stock_recorded ;;
   cfg)       cmd_cfg "$2" "$3" && echo ok ;;
+  custom-save) shift; cmd_custom_save "$@" && echo ok ;;
   preset)    cmd_preset "$2" && echo ok ;;
   resetall)  cmd_resetall && echo ok ;;
   apply)     cmd_apply && echo ok ;;
@@ -910,5 +963,5 @@ case "$1" in
              stop_daemon || { st_rc=1; st_msg="the watcher did not stop"; }
              apply_state none || { st_rc=1; st_msg="${st_msg:+$st_msg; }the phone's own values could not all be put back"; }
              if [ "$st_rc" = 0 ]; then echo ok; else echo "error: $st_msg"; exit 1; fi ;;
-  *) echo "usage: tune.sh status | lists | stock-recorded | cfg KEY VALUE | preset stock|tilt|saver|performance|dynamic|custom | resetall | apply | boot [capture-only] | stop"; exit 1 ;;
+  *) echo "usage: tune.sh status | lists | stock-recorded | cfg KEY VALUE | custom-save KEY VALUE... | preset stock|tilt|saver|performance|dynamic|custom | resetall | apply | boot [capture-only] | stop"; exit 1 ;;
 esac

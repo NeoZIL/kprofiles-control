@@ -125,6 +125,23 @@ check "custom big min" 787200 "$(v cpufreq/policy3/scaling_min_freq)"
 S cfg ON_BIG_MIN default >/dev/null
 check "min back to system default" 633600 "$(v cpufreq/policy3/scaling_min_freq)"
 
+echo "--- Custom Save & Apply validates and saves all frequency values together ---"
+batch_args='ON_LITTLE_MIN 595200 ON_LITTLE_MAX 1593600 ON_BIG_MIN 633600 ON_BIG_MAX 2188800 ON_PRIME_MIN 633600 ON_PRIME_MAX 2457600 ON_GPU_MIN 255000000 ON_GPU_MAX 736000000 OFF_LITTLE_MIN - OFF_LITTLE_MAX 1017600 OFF_BIG_MIN - OFF_BIG_MAX 787200 OFF_PRIME_MIN - OFF_PRIME_MAX 633600 OFF_GPU_MIN - OFF_GPU_MAX 353000000'
+mkfake; S preset tilt >/dev/null
+out=$(S custom-save $batch_args); rc=$?; check "batch save refuses a built-in preset" 1 "$rc"; has "batch save explains Custom requirement" "select Custom" "$out"
+check "refused batch leaves Battery tilt selected" tilt "$(sed -n 's/^PRESET=//p' "$T/cfg/tune.conf")"
+S preset custom >/dev/null
+out=$(S custom-save $batch_args); rc=$?; check "batch Save & Apply succeeds in Custom" 0 "$rc"; has "batch completion is reported" "ok" "$out"
+out=$(S status); has "batch saves Custom preset" "preset=custom" "$out"; has "batch stores little min" "cfg_on_little_min=595200" "$out"; has "batch stores GPU off max" "cfg_off_gpu_max=353000000" "$out"
+check "batch applies little min and max" "595200:1593600" "$(v cpufreq/policy0/scaling_min_freq):$(v cpufreq/policy0/scaling_max_freq)"
+old_cfg=$(sed -n 's/^ON_LITTLE_MIN=//p' "$T/cfg/tune.conf")
+bad_args=$(printf '%s' "$batch_args" | sed 's/ON_LITTLE_MIN 595200/ON_LITTLE_MIN 1708800/')
+out=$(S custom-save $bad_args); rc=$?; check "batch rejects invalid min/max before applying" 1 "$rc"; has "batch reports min/max conflict" "min must not be above max" "$out"
+check "rejected batch leaves saved values unchanged" "$old_cfg" "$(sed -n 's/^ON_LITTLE_MIN=//p' "$T/cfg/tune.conf")"
+check "rejected batch leaves current frequency unchanged" 595200 "$(v cpufreq/policy0/scaling_min_freq)"
+# Restore the fixture state expected by the following existing implicit-clamp regression tests.
+mkfake; S preset tilt >/dev/null
+
 echo "--- implicit clamp (max below the system min) ---"
 S cfg ON_PRIME_MAX 480000 >/dev/null
 check "prime max 480000" 480000 "$(v cpufreq/policy7/scaling_max_freq)"
@@ -157,6 +174,12 @@ out=$(S status); has "custom screen-on caps without screen-off caps still need a
 S preset performance >/dev/null
 out=$(S status); has "switching to performance then stops the watcher" "daemon=0" "$out"
 export TUNE_NO_DAEMON=1
+
+echo "--- empty Custom profile with screen-off enabled does not keep a watcher ---"
+mkfake
+printf 'ENABLED=1\nSCREENOFF=1\nPRESET=custom\n' > "$T/cfg/tune.conf"
+out=$(S apply); rc=$?; check "empty Custom applies without limits" 0 "$rc"
+out=$(S status); has "empty Custom reports no watcher needed" "watcher_needed=0" "$out"; has "empty Custom has no daemon" "daemon=0" "$out"
 
 echo "--- dynamic profile leaves screen-on unrestricted and caps screen-off ---"
 mkfake; S preset dynamic >/dev/null

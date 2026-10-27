@@ -7,16 +7,65 @@
 <style>
 :root{color-scheme:light dark;--bg:#f2f5f9;--surface:#fff;--surface-2:#f6f8fb;--text:#17202c;--muted:#647184;--line:#dfe5ed;--accent:#1677f9;--accent-soft:#e8f1ff;--ok:#13834f;--warn:#a56608;--err:#bd332a;--danger:#c72c2c;--danger-soft:#fff0ef;--icon-blue:#1677f9;--icon-orange:#c77417;--icon-green:#13834f;--icon-purple:#7856c8;--icon-cyan:#1686a5;--icon-neutral:#647184;--shadow:0 2px 10px rgba(20,42,72,.04)}
 @media(prefers-color-scheme:dark){:root{--bg:#0b1017;--surface:#131b26;--surface-2:#192332;--text:#eef3fa;--muted:#a0aec0;--line:#283648;--accent:#4a9bff;--accent-soft:#182f4e;--ok:#53d69a;--warn:#f1bb5c;--err:#ff938c;--danger:#f04d4d;--danger-soft:#351d22;--icon-blue:#65aaff;--icon-orange:#ffad5c;--icon-green:#53d69a;--icon-purple:#b39aff;--icon-cyan:#5dd4f3;--icon-neutral:#a0aec0;--shadow:none}}
-*{box-sizing:border-box}html,body{margin:0;min-height:100%;background:var(--bg);color:var(--text);font:15px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-text-size-adjust:100%}body{overscroll-behavior-y:contain}button,input,select{font:inherit}button{touch-action:manipulation}.topbar{position:sticky;top:0;z-index:20;background:var(--bg);border-bottom:1px solid var(--line)}.topbar-inner{max-width:720px;margin:0 auto;padding:12px 16px;display:flex;align-items:center;gap:11px}.brand-mark{width:40px;height:40px;flex:none;display:grid;place-items:center;border-radius:13px;color:white;background:var(--accent)}.brand-mark svg{width:23px;height:23px}.brand-copy{min-width:0;flex:1}.brand-copy h1{font-size:1.08rem;line-height:1.2;letter-spacing:-.025em;margin:0;font-weight:750}.version{display:block;color:var(--muted);font-size:.73rem;margin-top:3px}.icon-button{width:40px;height:40px;display:grid;place-items:center;flex:none;border:1px solid var(--line);border-radius:13px;color:var(--text);background:var(--surface);cursor:pointer}.icon-button svg{width:19px;height:19px}main{max-width:720px;margin:0 auto;padding:16px 16px calc(100px + env(safe-area-inset-bottom))}.page{display:none;min-height:48vh}.page.active{display:block;animation:page-in .14s ease-out}@keyframes page-in{from{opacity:.7;transform:translateY(3px)}to{opacity:1;transform:translateY(0)}}.page-heading{margin:4px 2px 16px}.page-heading h2{font-size:1.38rem;letter-spacing:-.035em;line-height:1.2;margin:0 0 5px}.page-heading p{margin:0;color:var(--muted);font-size:.88rem}.section-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:22px 2px 10px}.section-heading h3{font-size:.98rem;font-weight:750;margin:0;letter-spacing:-.015em}.text-link{padding:5px 0;border:0;background:transparent;color:var(--accent);font-weight:650;font-size:.84rem;cursor:pointer}.card{background:var(--surface);border:1px solid var(--line);border-radius:17px;padding:15px;margin:0 0 13px;box-shadow:var(--shadow)}.card h2,.card h3{font-size:.96rem;letter-spacing:-.01em;margin:0 0 10px;font-weight:740}.hint{color:var(--muted);font-size:.82rem;margin:0 0 10px}.hero-card{background:var(--accent-soft);border:1px solid var(--line);border-radius:20px;padding:17px;margin-bottom:15px}.hero-head{display:flex;align-items:flex-start;gap:13px}.hero-symbol{width:48px;height:48px;flex:none;display:grid;place-items:center;border-radius:16px;background:var(--accent);color:white}.hero-symbol svg{width:25px;height:25px}.eyebrow{font-size:.68rem;letter-spacing:.09em;font-weight:800;color:var(--accent);text-transform:uppercase;margin:0 0 4px}.hero-copy{flex:1;min-width:0}.hero-copy h2{font-size:1.35rem;line-height:1.15;letter-spacing:-.03em;margin:0 0 5px;font-weight:780}.hero-copy p{font-size:.83rem;color:var(--muted);margin:0;max-width:400px}.status-pill{display:inline-flex;align-items:center;gap:5px;padding:4px 9px;border-radius:999px;font-size:.72rem;font-weight:750;background:var(--surface);color:var(--muted);white-space:nowrap}.status-pill.ok{color:var(--ok)}.status-pill.warn{color:var(--warn)}.status-pill.err{color:var(--err)}.stat-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}.stat-card{min-width:0;background:var(--surface);border:1px solid var(--line);border-radius:15px;padding:12px}.stat-label{display:flex;align-items:center;gap:7px;font-size:.76rem;color:var(--muted);font-weight:650;margin-bottom:8px}.stat-label .mini-icon{display:grid;place-items:center;width:25px;height:25px;border-radius:8px;background:var(--accent-soft);color:var(--accent);font-size:.9rem}.stat-value{font-size:.91rem;font-weight:760;letter-spacing:-.015em;overflow-wrap:anywhere;font-variant-numeric:tabular-nums}.stat-sub{font-size:.72rem;color:var(--muted);margin-top:3px}.quick-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}.quick-card{min-height:66px;display:flex;align-items:center;gap:10px;padding:12px;text-align:left;border:1px solid var(--line);border-radius:14px;background:var(--surface);color:var(--text);cursor:pointer}.quick-card:active,.icon-button:active,.nav-btn:active{opacity:.78}.quick-icon{width:34px;height:34px;display:grid;place-items:center;flex:none;border-radius:11px;background:var(--accent-soft);color:var(--accent);font-size:1rem}.quick-copy{font-size:.84rem;font-weight:700;line-height:1.25}.quick-copy small{display:block;font-size:.72rem;font-weight:450;color:var(--muted);margin-top:3px}
+*{box-sizing:border-box}html,body{margin:0;min-height:100%;background:var(--bg);color:var(--text);font:15px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-text-size-adjust:100%}body{overscroll-behavior-y:contain}button,input,select{font:inherit}button{touch-action:manipulation}.topbar{position:sticky;top:0;z-index:20;background:var(--bg);border-bottom:1px solid var(--line)}.topbar-inner{max-width:720px;margin:0 auto;padding:12px 16px;display:flex;align-items:center;gap:11px}.brand-mark{width:40px;height:40px;flex:none;display:grid;place-items:center;border-radius:13px;color:white;background:var(--accent)}.brand-mark svg{width:23px;height:23px}.brand-copy{min-width:0;flex:1}.brand-copy h1{font-size:1.08rem;line-height:1.2;letter-spacing:-.025em;margin:0;font-weight:750}.version{display:block;color:var(--muted);font-size:.73rem;margin-top:3px}.icon-button{width:40px;height:40px;display:grid;place-items:center;flex:none;border:1px solid var(--line);border-radius:13px;color:var(--text);background:var(--surface);cursor:pointer}.icon-button svg{width:19px;height:19px}main{max-width:720px;margin:0 auto;padding:16px 16px calc(124px + env(safe-area-inset-bottom))}.page{display:none;min-height:48vh}.page.active{display:block;animation:page-in .14s ease-out}@keyframes page-in{from{opacity:.7;transform:translateY(3px)}to{opacity:1;transform:translateY(0)}}.page-heading{margin:4px 2px 16px}.page-heading h2{font-size:1.38rem;letter-spacing:-.035em;line-height:1.2;margin:0 0 5px}.page-heading p{margin:0;color:var(--muted);font-size:.88rem}.section-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:22px 2px 10px}.section-heading h3{font-size:.98rem;font-weight:750;margin:0;letter-spacing:-.015em}.text-link{padding:5px 0;border:0;background:transparent;color:var(--accent);font-weight:650;font-size:.84rem;cursor:pointer}.card{background:var(--surface);border:1px solid var(--line);border-radius:17px;padding:15px;margin:0 0 13px;box-shadow:var(--shadow)}.card h2,.card h3{font-size:.96rem;letter-spacing:-.01em;margin:0 0 10px;font-weight:740}.hint{color:var(--muted);font-size:.82rem;margin:0 0 10px}.hero-card{background:var(--accent-soft);border:1px solid var(--line);border-radius:20px;padding:17px;margin-bottom:15px}.hero-head{display:flex;align-items:flex-start;gap:13px}.hero-symbol{width:48px;height:48px;flex:none;display:grid;place-items:center;border-radius:16px;background:var(--accent);color:white}.hero-symbol svg{width:25px;height:25px}.eyebrow{font-size:.68rem;letter-spacing:.09em;font-weight:800;color:var(--accent);text-transform:uppercase;margin:0 0 4px}.hero-copy{flex:1;min-width:0}.hero-copy h2{font-size:1.35rem;line-height:1.15;letter-spacing:-.03em;margin:0 0 5px;font-weight:780}.hero-copy p{font-size:.83rem;color:var(--muted);margin:0;max-width:400px}.status-pill{display:inline-flex;align-items:center;gap:5px;padding:4px 9px;border-radius:999px;font-size:.72rem;font-weight:750;background:var(--surface);color:var(--muted);white-space:nowrap}.status-pill.ok{color:var(--ok)}.status-pill.warn{color:var(--warn)}.status-pill.err{color:var(--err)}.stat-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}.stat-card{min-width:0;background:var(--surface);border:1px solid var(--line);border-radius:15px;padding:12px}.stat-label{display:flex;align-items:center;gap:7px;font-size:.76rem;color:var(--muted);font-weight:650;margin-bottom:8px}.stat-label .mini-icon{display:grid;place-items:center;width:25px;height:25px;border-radius:8px;background:var(--accent-soft);color:var(--accent);font-size:.9rem}.stat-value{font-size:.91rem;font-weight:760;letter-spacing:-.015em;overflow-wrap:anywhere;font-variant-numeric:tabular-nums}.stat-sub{font-size:.72rem;color:var(--muted);margin-top:3px}.quick-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}.quick-card{min-height:66px;display:flex;align-items:center;gap:10px;padding:12px;text-align:left;border:1px solid var(--line);border-radius:14px;background:var(--surface);color:var(--text);cursor:pointer}.quick-card:active,.icon-button:active,.nav-btn:active{opacity:.78}.quick-icon{width:34px;height:34px;display:grid;place-items:center;flex:none;border-radius:11px;background:var(--accent-soft);color:var(--accent);font-size:1rem}.quick-copy{font-size:.84rem;font-weight:700;line-height:1.25}.quick-copy small{display:block;font-size:.72rem;font-weight:450;color:var(--muted);margin-top:3px}
 .control-source-card .source-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}.control-source-card .source-choice{min-height:72px}.control-source-card .source-choice[aria-pressed="true"]{border-color:var(--accent);background:var(--accent-soft)}.control-source-card .source-choice[aria-pressed="true"] .t{color:var(--accent)}.control-source-card .source-choice:disabled{opacity:.5}.control-source-status{margin:0 0 10px}.control-source-conflict{border-left-color:var(--warn)}
-.opts{display:grid;gap:9px}.profile-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.opt{display:block;width:100%;min-width:0;text-align:left;color:var(--text);background:var(--surface);border:1px solid var(--line);border-radius:13px;padding:11px 12px;cursor:pointer;transition:border-color .12s,background-color .12s}.opt .t{display:flex;align-items:flex-start;font-weight:720;line-height:1.3}.opt .d{display:block;margin-top:4px;color:var(--muted);font-size:.76rem;line-height:1.35;font-weight:450}.opt[aria-checked="true"]{border-color:var(--accent);background:var(--accent-soft)}.profile-grid .opt{min-height:91px;padding:12px}.profile-grid .opt[aria-checked="true"] .t{color:var(--accent)}.opt:active{transform:scale(.995)}.opt:disabled,select:disabled,.sw input:disabled,.quick-card:disabled{opacity:.55;cursor:not-allowed}.danger-opt{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:58px;padding:13px 14px;border-color:var(--line);background:var(--surface);color:var(--text);font-weight:750}.danger-opt .danger-leading{display:flex;align-items:center;gap:10px;min-width:0}.danger-opt .reset-icon{width:19px;height:19px;flex:none;color:var(--danger);stroke:currentColor;fill:none;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}.danger-opt .t{font-size:.91rem;color:var(--danger)}.danger-opt .danger-chevron{font-size:1.15rem;line-height:1;color:var(--muted);padding-left:6px}.danger-opt:active{background:var(--surface-2)}.item-icon{width:18px;height:18px;display:block;flex:none;margin-right:7px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}#presets [data-preset="stock"] .item-icon,#kpopts [data-kp="0"] .item-icon{color:var(--icon-neutral)}#presets [data-preset="tilt"] .item-icon{color:var(--icon-orange)}#presets [data-preset="saver"] .item-icon,#kpopts [data-kp="1"] .item-icon{color:var(--icon-green)}#presets [data-preset="performance"] .item-icon{color:var(--icon-blue)}#presets [data-preset="dynamic"] .item-icon{color:var(--icon-purple)}#presets [data-preset="custom"] .item-icon{color:var(--icon-cyan)}#kpopts [data-kp="3"] .item-icon{color:var(--icon-purple)}.mini-icon svg{width:15px;height:15px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}.stat-label .tone-blue{color:var(--icon-blue)}.stat-label .tone-purple{color:var(--icon-purple)}.stat-label .tone-orange{color:var(--icon-orange)}.stat-label .tone-green{color:var(--icon-green)}.quick-icon svg{width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}#homeProfiles .quick-icon{color:var(--icon-blue)}#homeKernel .quick-icon{color:var(--icon-purple)}#homeSettings .quick-icon{color:var(--icon-neutral)}.row{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:8px 0;border-bottom:1px solid var(--line)}.row:last-child{border-bottom:0}.row .k{color:var(--muted);font-size:.84rem}.badge{padding:4px 9px;border-radius:999px;background:var(--accent-soft);font-weight:700;font-size:.8rem;max-width:60%;text-align:right;overflow-wrap:anywhere}.live{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.2fr);gap:0 12px;font-size:.83rem}.live>div{padding:8px 0;border-bottom:1px solid var(--line)}.live>div:nth-last-child(-n+2){border-bottom:0}.live .v{text-align:right;font-variant-numeric:tabular-nums;overflow-wrap:anywhere;font-weight:650}.sw{display:flex;align-items:center;gap:13px;padding:12px 0}.sw+.sw{border-top:1px solid var(--line)}.sw .txt{flex:1;min-width:0}.sw .t{font-weight:700;display:block;font-size:.88rem}.sw .d{color:var(--muted);font-size:.77rem;display:block;margin-top:3px}.sw input{appearance:none;-webkit-appearance:none;flex:none;width:44px;height:27px;border-radius:999px;background:var(--line);position:relative;margin:0;cursor:pointer;transition:background .12s}.sw input::after{content:"";position:absolute;top:3px;left:3px;width:21px;height:21px;border-radius:50%;background:#fff;transition:transform .12s}.sw input:checked{background:var(--accent)}.sw input:checked::after{transform:translateX(17px)}.sw input:disabled{opacity:.55}.grid{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr) minmax(0,1fr);gap:9px 8px;align-items:center}.grid .hd{color:var(--muted);font-size:.75rem;font-weight:700}.grid .lab{font-size:.82rem;line-height:1.25}.grid .lab small{display:block;color:var(--muted);font-size:.69rem;margin-top:3px}.grid select{font-size:.79rem}.grid select:first-of-type{}.select-row{padding-top:4px}select{width:100%;min-width:0;color:var(--text);background:var(--surface-2);border:1px solid var(--line);border-radius:10px;padding:8px 5px;font:inherit;font-size:.84rem;min-height:38px}.warnbox{border:1px solid var(--line);border-left:4px solid var(--warn);border-radius:12px;padding:10px 12px;margin:0 0 10px;font-size:.82rem;color:var(--muted);background:var(--surface-2)}.kernel-unavailable{border-left-color:var(--err)}.kernel-toggle{margin:0 0 10px;display:flex;align-items:center;justify-content:space-between;gap:12px}.kernel-toggle:after{content:"⌄";font-size:1.2rem;color:var(--muted);flex:none}.kernel-toggle[aria-expanded="true"]:after{content:"⌃"}.kernel-panel{margin-top:12px}.kernel-panel .opts{gap:8px}.kernel-panel .opt{min-height:67px}#msg{min-height:0;white-space:pre-line;font-size:.84rem;margin:0 0 12px;padding:0 2px}#msg:not(:empty){min-height:1.3em}#msg.ok{color:var(--ok)}#msg.warn{color:var(--warn)}#msg.err{color:var(--err)}.retry{display:none;width:100%;margin:0 0 12px;font:inherit;font-weight:700;color:var(--text);background:var(--surface);border:1px solid var(--line);border-radius:13px;padding:11px 12px;cursor:pointer}.note{color:var(--muted);font-size:.78rem;margin:10px 2px}.info-list{list-style:none;padding:0;margin:0}.info-list li{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;padding:10px 0;border-bottom:1px solid var(--line);font-size:.83rem}.info-list li:last-child{border-bottom:0}.info-list .k{color:var(--muted)}.info-list .v{text-align:right;font-weight:650;overflow-wrap:anywhere}.bottom-nav{position:fixed;left:0;right:0;bottom:0;z-index:30;padding:7px 10px calc(7px + env(safe-area-inset-bottom));background:var(--surface);border-top:1px solid var(--line)}.bottom-nav-inner{max-width:720px;margin:0 auto;display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:3px}.nav-btn{min-width:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;min-height:52px;padding:5px 2px;border:0;border-radius:12px;background:transparent;color:var(--muted);font-size:.66rem;font-weight:650;cursor:pointer}.nav-icon{width:22px;height:22px;display:grid;place-items:center}.nav-icon svg{width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}.nav-btn[aria-current="page"]{color:var(--accent);background:var(--accent-soft)}.muted-value{color:var(--muted)}
+.opts{display:grid;gap:9px}.profile-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.opt{display:block;width:100%;min-width:0;text-align:left;color:var(--text);background:var(--surface);border:1px solid var(--line);border-radius:13px;padding:11px 12px;cursor:pointer;transition:border-color .12s,background-color .12s}.opt .t{display:flex;align-items:flex-start;font-weight:720;line-height:1.3}.opt .d{display:block;margin-top:4px;color:var(--muted);font-size:.76rem;line-height:1.35;font-weight:450}.opt[aria-checked="true"]{border-color:var(--accent);background:var(--accent-soft)}.profile-grid .opt{min-height:91px;padding:12px}.profile-grid .opt[aria-checked="true"] .t{color:var(--accent)}.opt:active{transform:scale(.995)}.opt:disabled,select:disabled,.sw input:disabled,.quick-card:disabled{opacity:.55;cursor:not-allowed}.danger-opt{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:58px;padding:13px 14px;border-color:var(--line);background:var(--surface);color:var(--text);font-weight:750}.danger-opt .danger-leading{display:flex;align-items:center;gap:10px;min-width:0}.danger-opt .reset-icon{width:19px;height:19px;flex:none;color:var(--danger);stroke:currentColor;fill:none;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}.danger-opt .t{font-size:.91rem;color:var(--danger)}.danger-opt .danger-chevron{font-size:1.15rem;line-height:1;color:var(--muted);padding-left:6px}.danger-opt:active{background:var(--surface-2)}.item-icon{width:18px;height:18px;display:block;flex:none;margin-right:7px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}#presets [data-preset="stock"] .item-icon,#kpopts [data-kp="0"] .item-icon{color:var(--icon-neutral)}#presets [data-preset="tilt"] .item-icon{color:var(--icon-orange)}#presets [data-preset="saver"] .item-icon,#kpopts [data-kp="1"] .item-icon{color:var(--icon-green)}#presets [data-preset="performance"] .item-icon{color:var(--icon-blue)}#presets [data-preset="dynamic"] .item-icon{color:var(--icon-purple)}#presets [data-preset="custom"] .item-icon{color:var(--icon-cyan)}#kpopts [data-kp="3"] .item-icon{color:var(--icon-purple)}.mini-icon svg{width:15px;height:15px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}.stat-label .tone-blue{color:var(--icon-blue)}.stat-label .tone-purple{color:var(--icon-purple)}.stat-label .tone-orange{color:var(--icon-orange)}.stat-label .tone-green{color:var(--icon-green)}.quick-icon svg{width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}#homeProfiles .quick-icon{color:var(--icon-blue)}#homeKernel .quick-icon{color:var(--icon-purple)}#homeSettings .quick-icon{color:var(--icon-neutral)}.row{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:8px 0;border-bottom:1px solid var(--line)}.row:last-child{border-bottom:0}.row .k{color:var(--muted);font-size:.84rem}.badge{padding:4px 9px;border-radius:999px;background:var(--accent-soft);font-weight:700;font-size:.8rem;max-width:60%;text-align:right;overflow-wrap:anywhere}.live{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.2fr);gap:0 12px;font-size:.83rem}.live>div{padding:8px 0;border-bottom:1px solid var(--line)}.live>div:nth-last-child(-n+2){border-bottom:0}.live .v{text-align:right;font-variant-numeric:tabular-nums;overflow-wrap:anywhere;font-weight:650}.sw{display:flex;align-items:center;gap:13px;padding:12px 0}.sw+.sw{border-top:1px solid var(--line)}.sw .txt{flex:1;min-width:0}.sw .t{font-weight:700;display:block;font-size:.88rem}.sw .d{color:var(--muted);font-size:.77rem;display:block;margin-top:3px}.sw input{appearance:none;-webkit-appearance:none;flex:none;width:44px;height:27px;border-radius:999px;background:var(--line);position:relative;margin:0;cursor:pointer;transition:background .12s}.sw input::after{content:"";position:absolute;top:3px;left:3px;width:21px;height:21px;border-radius:50%;background:#fff;transition:transform .12s}.sw input:checked{background:var(--accent)}.sw input:checked::after{transform:translateX(17px)}.sw input:disabled{opacity:.55}.grid{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr) minmax(0,1fr);gap:9px 8px;align-items:center}.grid .hd{color:var(--muted);font-size:.75rem;font-weight:700}.grid .lab{font-size:.82rem;line-height:1.25}.grid .lab small{display:block;color:var(--muted);font-size:.69rem;margin-top:3px}.grid select{font-size:.79rem}.grid select:first-of-type{}.select-row{padding-top:4px}select{width:100%;min-width:0;color:var(--text);background:var(--surface-2);border:1px solid var(--line);border-radius:10px;padding:8px 5px;font:inherit;font-size:.84rem;min-height:38px}.warnbox{border:1px solid var(--line);border-left:4px solid var(--warn);border-radius:12px;padding:10px 12px;margin:0 0 10px;font-size:.82rem;color:var(--muted);background:var(--surface-2)}.kernel-unavailable{border-left-color:var(--err)}.kernel-toggle{margin:0 0 10px;display:flex;align-items:center;justify-content:space-between;gap:12px}.kernel-toggle:after{content:"⌄";font-size:1.2rem;color:var(--muted);flex:none}.kernel-toggle[aria-expanded="true"]:after{content:"⌃"}.kernel-panel{margin-top:12px}.kernel-panel .opts{gap:8px}.kernel-panel .opt{min-height:67px}#msg{min-height:0;white-space:pre-line;font-size:.84rem;margin:0 0 12px;padding:0 2px}#msg:not(:empty){min-height:1.3em}#msg.ok{color:var(--ok)}#msg.warn{color:var(--warn)}#msg.err{color:var(--err)}.retry{display:none;width:100%;margin:0 0 12px;font:inherit;font-weight:700;color:var(--text);background:var(--surface);border:1px solid var(--line);border-radius:13px;padding:11px 12px;cursor:pointer}.note{color:var(--muted);font-size:.78rem;margin:10px 2px}.info-list{list-style:none;padding:0;margin:0}.info-list li{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;padding:10px 0;border-bottom:1px solid var(--line);font-size:.83rem}.info-list li:last-child{border-bottom:0}.info-list .k{color:var(--muted)}.info-list .v{text-align:right;font-weight:650;overflow-wrap:anywhere}.bottom-nav{position:fixed;left:0;right:0;bottom:0;z-index:30;padding:0 12px calc(10px + env(safe-area-inset-bottom));background:linear-gradient(to top,var(--bg) 48%,transparent);border:0;pointer-events:none}.bottom-nav-inner{max-width:680px;margin:0 auto;display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:4px;padding:6px;border:1px solid var(--line);border-radius:23px;background:var(--surface);box-shadow:0 10px 34px rgba(0,0,0,.22);pointer-events:auto}.nav-btn{position:relative;min-width:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;min-height:58px;padding:6px 2px;border:1px solid transparent;border-radius:16px;background:transparent;color:var(--muted);font-size:.67rem;font-weight:680;letter-spacing:-.01em;cursor:pointer;transition:background-color .16s ease,color .16s ease,transform .16s ease}.nav-icon{width:25px;height:24px;display:grid;place-items:center;transition:transform .16s ease}.nav-icon svg{width:21px;height:21px;stroke:currentColor;fill:none;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}.nav-btn[aria-current="page"]{color:var(--ok);background:var(--accent-soft);border-color:var(--line)}.nav-btn[aria-current="page"]::before{content:"";position:absolute;top:4px;width:17px;height:3px;border-radius:999px;background:var(--ok)}.nav-btn[aria-current="page"] .nav-icon{transform:translateY(1px)}.nav-btn:focus-visible{outline:2px solid var(--accent);outline-offset:2px}.muted-value{color:var(--muted)}@supports (backdrop-filter:blur(10px)){.bottom-nav-inner{background:color-mix(in srgb,var(--surface) 91%,transparent);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px)}}
 @media(min-width:560px){main{padding-top:22px}.profile-grid{grid-template-columns:repeat(3,minmax(0,1fr))}.quick-grid{grid-template-columns:repeat(3,minmax(0,1fr))}.stat-grid{grid-template-columns:repeat(4,minmax(0,1fr))}.profile-grid .opt{min-height:105px}.hero-copy h2{font-size:1.5rem}}
-@media(max-width:360px){main{padding-left:11px;padding-right:11px}.topbar-inner{padding-left:12px;padding-right:12px}.bottom-nav{padding-left:5px;padding-right:5px}.nav-btn{font-size:.61rem}.profile-grid{gap:7px}.profile-grid .opt{padding:10px}.grid{gap:8px 5px}.grid .lab{font-size:.76rem}.grid select{font-size:.73rem;padding-left:3px;padding-right:3px}.danger-opt{align-items:flex-start;flex-direction:column}.danger-opt .d{max-width:none;text-align:left}}
+@media(max-width:360px){main{padding-left:11px;padding-right:11px;padding-bottom:calc(120px + env(safe-area-inset-bottom))}.topbar-inner{padding-left:12px;padding-right:12px}.bottom-nav{padding-left:6px;padding-right:6px}.bottom-nav-inner{gap:2px;padding:5px;border-radius:20px}.nav-btn{font-size:.59rem;min-height:55px;border-radius:14px}.nav-icon{width:23px}.nav-icon svg{width:19px;height:19px}.profile-grid{gap:7px}.profile-grid .opt{padding:10px}.grid{gap:8px 5px}.grid .lab{font-size:.76rem}.grid select{font-size:.73rem;padding-left:3px;padding-right:3px}.danger-opt{align-items:flex-start;flex-direction:column}.danger-opt .d{max-width:none;text-align:left}}
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;transition-duration:.01ms!important;scroll-behavior:auto!important}}
 
 /* Live hardware monitor: small fixed-layout cards, no charting library or heavy redraws. */
-.hw-stack{display:block}.hw-card h3{font-size:.96rem;font-weight:740;letter-spacing:-.01em;margin:0}.hw-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px}.hw-pill{display:inline-flex;align-items:center;justify-content:center;padding:4px 10px;border-radius:999px;font-size:.72rem;font-weight:750;white-space:nowrap;line-height:1.25}.hw-temp-normal{background:#102d50;color:#60a5fa}.hw-temp-warm{background:#492400;color:#ffb547}.hw-temp-hot{background:#4a1010;color:#ff6262}.hw-charge-low{background:#4a1010;color:#ff6262}.hw-charge-normal{background:#003d22;color:#00d878}.hw-charge-full{background:#102d50;color:#60a5fa}.hw-pill-muted{background:var(--surface-2);color:var(--muted)}.hw-metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px 8px;align-items:start}.hw-metrics-two{grid-template-columns:repeat(2,minmax(0,1fr))}.hw-metric{min-width:0}.hw-label{color:var(--muted);font-size:.76rem;font-weight:650;margin-bottom:4px}.hw-value{font-size:.88rem;font-weight:750;letter-spacing:-.015em;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}.hw-value-soft{font-weight:650}.hw-progress{height:6px;border-radius:999px;background:var(--line);overflow:hidden;margin:12px 0 8px}.hw-progress>span{display:block;height:100%;width:0;background:#3985e8;border-radius:inherit;transition:width .18s linear}.hw-temp-note{font-size:.78rem;font-weight:650;margin:0 0 12px}.hw-range{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;padding-top:10px;border-top:1px solid var(--line)}.hw-range-side{min-width:0}.hw-range-side:last-child{text-align:right}.hw-range-label{font-size:.67rem;letter-spacing:.035em;font-weight:750;color:var(--muted)}.hw-range-value{font-size:.82rem;font-weight:700;font-variant-numeric:tabular-nums;margin-top:3px;overflow-wrap:anywhere}.hw-battery-level{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:2px 0 8px}.hw-battery-percent{font-size:1.42rem;line-height:1.15;font-weight:800;letter-spacing:-.03em;font-variant-numeric:tabular-nums}.hw-battery-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px 12px;margin-top:14px}.hw-battery-grid .hw-value{font-size:.98rem}.hw-battery-sub{font-size:.7rem;color:var(--muted);margin-top:3px}.hw-updated{font-size:.72rem;color:var(--muted);font-weight:550}.hw-refresh-line{display:flex;align-items:center;gap:8px}.hw-dot{width:7px;height:7px;flex:none;border-radius:50%;background:var(--ok)}.hw-dot.off{background:var(--muted)}.hw-error{color:var(--muted);font-size:.82rem;margin:0}.hw-temp-inline{display:flex;align-items:center;gap:6px;flex-wrap:wrap}.hw-temperature-value.hw-temp-normal{background:transparent;color:#60a5fa;padding:0}.hw-temperature-value.hw-temp-warm{background:transparent;color:#ffb547;padding:0}.hw-temperature-value.hw-temp-hot{background:transparent;color:#ff6262;padding:0}.hw-temperature-value{border-radius:0}
+.hw-stack{display:contents}.hw-hardware-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.hw-hardware-grid .hw-card{min-width:0;margin:0;padding:12px;border-radius:15px}.hw-hardware-grid .hw-head{align-items:flex-start;flex-wrap:wrap;gap:6px}.hw-hardware-grid .hw-head h3{font-size:.9rem}.hw-hardware-grid .hw-pill{padding:3px 7px;font-size:.65rem}.hw-hardware-grid .hw-metrics{grid-template-columns:repeat(2,minmax(0,1fr));gap:9px 7px}.hw-hardware-grid .hw-value{font-size:.79rem}.hw-hardware-grid .hw-label{font-size:.69rem}.hw-hardware-grid .hw-range-label{font-size:.59rem}.hw-hardware-grid .hw-range-value{font-size:.72rem}.hw-hardware-grid .hw-temp-note{font-size:.7rem}.hw-hardware-grid .hw-progress{margin:10px 0 7px}.hw-card h3{font-size:.96rem;font-weight:740;letter-spacing:-.01em;margin:0}.hw-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px}.hw-pill{display:inline-flex;align-items:center;justify-content:center;padding:4px 10px;border-radius:999px;font-size:.72rem;font-weight:750;white-space:nowrap;line-height:1.25}.hw-temp-normal{background:#102d50;color:#60a5fa}.hw-temp-warm{background:#492400;color:#ffb547}.hw-temp-hot{background:#4a1010;color:#ff6262}.hw-charge-low{background:#4a1010;color:#ff6262}.hw-charge-normal{background:#003d22;color:#00d878}.hw-charge-full{background:#102d50;color:#60a5fa}.hw-pill-muted{background:var(--surface-2);color:var(--muted)}.hw-metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px 8px;align-items:start}.hw-metrics-two{grid-template-columns:repeat(2,minmax(0,1fr))}.hw-metric{min-width:0}.hw-label{color:var(--muted);font-size:.76rem;font-weight:650;margin-bottom:4px}.hw-value{font-size:.88rem;font-weight:750;letter-spacing:-.015em;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}.hw-value-soft{font-weight:650}.hw-progress{height:6px;border-radius:999px;background:var(--line);overflow:hidden;margin:12px 0 8px}.hw-progress>span{display:block;height:100%;width:0;background:#3985e8;border-radius:inherit;transition:width .18s linear}.hw-temp-note{font-size:.78rem;font-weight:650;margin:0 0 12px}.hw-range{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;padding-top:10px;border-top:1px solid var(--line)}.hw-range-side{min-width:0}.hw-range-side:last-child{text-align:right}.hw-range-label{font-size:.67rem;letter-spacing:.035em;font-weight:750;color:var(--muted)}.hw-range-value{font-size:.82rem;font-weight:700;font-variant-numeric:tabular-nums;margin-top:3px;overflow-wrap:anywhere}.hw-battery-level{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:2px 0 8px}.hw-battery-percent{font-size:1.42rem;line-height:1.15;font-weight:800;letter-spacing:-.03em;font-variant-numeric:tabular-nums}.hw-battery-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px 12px;margin-top:14px}.hw-battery-grid .hw-value{font-size:.98rem}.hw-drain-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-top:16px;padding-top:14px;border-top:1px solid var(--line)}.hw-drain-metric{min-width:0;background:var(--surface-2);border:1px solid var(--line);border-radius:13px;padding:11px}.hw-drain-metric .hw-label{font-size:.73rem;margin-bottom:7px}.hw-drain-metric .hw-value{font-size:1rem}.hw-battery-sub{font-size:.7rem;color:var(--muted);margin-top:3px}.hw-updated{font-size:.72rem;color:var(--muted);font-weight:550}.hw-refresh-line{display:flex;align-items:center;gap:8px}.hw-dot{width:7px;height:7px;flex:none;border-radius:50%;background:var(--ok)}.hw-dot.off{background:var(--muted)}.hw-error{color:var(--muted);font-size:.82rem;margin:0}.hw-temp-inline{display:flex;align-items:center;gap:6px;flex-wrap:wrap}.hw-temperature-value.hw-temp-normal{background:transparent;color:#60a5fa;padding:0}.hw-temperature-value.hw-temp-warm{background:transparent;color:#ffb547;padding:0}.hw-temperature-value.hw-temp-hot{background:transparent;color:#ff6262;padding:0}.hw-temperature-value{border-radius:0}
 
+
+#batteryMonitoringSettings .bm-head{display:flex;align-items:flex-start;gap:11px;margin-bottom:13px}
+#batteryMonitoringSettings .bm-icon{width:40px;height:40px;border-radius:12px;display:grid;place-items:center;flex:none;background:var(--accent-soft);color:var(--accent)}
+#batteryMonitoringSettings .bm-icon svg{width:22px;height:22px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+#batteryMonitoringSettings .bm-title{flex:1;min-width:0}
+#batteryMonitoringSettings .bm-title h3{margin:0 0 3px;font-size:1rem;font-weight:760}
+#batteryMonitoringSettings .bm-title p{margin:0;font-size:.78rem;color:var(--muted)}
+#batteryMonitoringSettings .bm-state{padding:4px 9px;border-radius:999px;font-weight:750;font-size:.72rem;color:var(--ok);background:var(--accent-soft);white-space:nowrap}
+#batteryMonitoringSettings .bm-state.disabled{color:var(--muted);background:var(--surface-2)}
+#batteryMonitoringSettings .sw{padding:11px 0}
+#batteryMonitoringSettings .bm-separator{height:1px;background:var(--line);margin:11px 0 14px}
+#batteryMonitoringSettings .bm-interval-head{display:flex;justify-content:space-between;align-items:baseline;gap:10px;margin-bottom:9px}
+#batteryMonitoringSettings .bm-interval-head strong{font-size:.91rem}
+#batteryMonitoringSettings .bm-interval-head span{font-size:.75rem;color:var(--muted)}
+#batteryMonitoringSettings .bm-intervals{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+#batteryMonitoringSettings .bm-interval{min-height:46px;border-radius:12px;border:1px solid var(--line);background:var(--surface);color:var(--text);font-weight:720;cursor:pointer}
+#batteryMonitoringSettings .bm-interval[aria-pressed="true"]{border-color:var(--ok);background:var(--accent-soft);color:var(--ok)}
+#batteryMonitoringSettings .bm-stats-head{font-weight:750;font-size:.92rem;margin-bottom:3px}
+#batteryMonitoringSettings .bm-stats-desc{font-size:.78rem;color:var(--muted);margin-bottom:12px}
+#batteryMonitoringSettings .bm-reset-row{display:flex;justify-content:flex-end;align-items:center;gap:12px}
+#batteryMonitoringSettings .bm-reset{border:1px solid var(--danger);color:var(--danger);background:transparent;padding:8px 16px;border-radius:999px;font-weight:700;cursor:pointer}
+#batteryMonitoringSettings .bm-reset:active{background:var(--danger-soft)}
+#batteryMonitoringSettings .bm-sot-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 0 13px;margin-bottom:12px;border-bottom:1px solid var(--line)}
+#batteryMonitoringSettings .bm-sot-copy{display:flex;flex-direction:column;gap:3px;min-width:0}
+#batteryMonitoringSettings .bm-sot-copy strong{font-size:.83rem}
+#batteryMonitoringSettings .bm-sot-copy span{font-size:.72rem;color:var(--muted)}
+#batteryMonitoringSettings .bm-reset-sot{display:inline-flex;align-items:center;gap:6px;flex:none;padding:7px 10px;font-size:.75rem}
+#batteryMonitoringSettings .bm-reset svg,.hw-sot-reset svg{width:14px;height:14px;stroke:currentColor;fill:none;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round;flex:none}
+.hw-sot-reset-row{display:flex;justify-content:flex-end;margin-top:7px}
+.hw-sot-reset{display:inline-flex;align-items:center;gap:4px;padding:3px 7px;border:1px solid var(--danger);border-radius:999px;background:transparent;color:var(--danger);font-size:.68rem;line-height:1.2;font-weight:700;white-space:nowrap;cursor:pointer}
+.hw-sot-reset svg{width:12px;height:12px}
+.hw-sot-reset:active{background:var(--danger-soft)}
+.hw-hardware-grid .hw-usage{grid-column:1 / -1}.hw-hardware-grid .hw-usage .hw-value{white-space:nowrap;overflow-wrap:normal}
+@media(max-width:360px){.hw-hardware-grid .hw-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.hw-drain-metric{padding:9px}.hw-drain-metric .hw-label{font-size:.67rem}.hw-drain-metric .hw-value{font-size:.9rem}}
+.apply-custom-btn{display:flex;align-items:center;justify-content:center;gap:9px;min-height:50px;margin-top:12px;text-align:center;border-color:var(--accent);background:var(--accent-soft);color:var(--accent);font-weight:800}
+.apply-custom-btn svg{width:18px;height:18px;flex:none;stroke:currentColor;fill:none;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
+.apply-custom-btn:disabled{opacity:.42}
+#customDraftStatus{margin:9px 2px 0;color:var(--muted);font-size:.78rem;line-height:1.45}
+
+/* Keep CPU/GPU and status cards on the same full-width grid as the battery card. */
+.hw-hardware-grid{width:100%;min-width:0;grid-template-columns:repeat(2,minmax(0,1fr));align-items:stretch}
+.hw-hardware-grid .hw-card{box-sizing:border-box;width:100%;min-width:0;justify-self:stretch;align-self:stretch}
+.hw-hardware-grid #hwCpuCards{min-width:0}
+.hw-hardware-grid #hwCpuCards>.hw-card{width:100%;min-width:0;box-sizing:border-box}
+.hw-hardware-grid .hw-status-card{grid-column:1/-1;min-width:0;width:100%;box-sizing:border-box;justify-self:stretch;align-self:stretch}
+.hw-hardware-grid .hw-status-card .live{min-width:0;overflow-wrap:anywhere}
+.hw-hardware-grid .hw-status-card .row{gap:10px;min-width:0}
+.hw-hardware-grid .hw-status-card .row>*{min-width:0}
+@media(max-width:360px){.hw-hardware-grid .hw-status-card{grid-column:1/-1}}
 </style>
 </head>
 <body>
@@ -31,7 +80,7 @@
   <div id="msg" class="msg" role="status" aria-live="polite"></div>
   <button type="button" class="retry" id="retryLoad">Try again</button>
 
-  <section class="page active" id="pageHome" aria-label="Home">
+  <section class="page" id="pageHome" aria-label="Home">
     <div class="hero-card">
       <div class="hero-head">
         <div class="hero-symbol" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 19 7v10l-7 4-7-4V7z"/><path d="M8 12h8M12 8v8"/></svg></div>
@@ -83,11 +132,17 @@
         <button class="opt" role="radio" aria-checked="false" data-preset="dynamic"><span class="t"><svg class="item-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg>Dynamic</span><span class="d">No extra caps on-screen; Battery tilt caps with the screen off.</span></button>
         <button class="opt" role="radio" aria-checked="false" data-preset="custom"><span class="t"><svg class="item-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h9m4 0h3M4 12h3m4 0h9M4 18h9m4 0h3"/><circle cx="15" cy="6" r="2"/><circle cx="9" cy="12" r="2"/><circle cx="15" cy="18" r="2"/></svg>Custom</span><span class="d">Keep current values and edit them below.</span></button>
       </div>
-      <p class="hint" id="customNote" style="margin:10px 0 0;display:none">Custom values are active. Use the selectors below to change limits; choose Default to leave a limit at the phone’s own value.</p>
+      <p class="hint" id="customNote" style="margin:10px 0 0;display:none">Custom is the only profile that unlocks frequency editing. Choose Default to leave a limit at the phone’s own setting; use Save &amp; Apply below to commit all changes together.</p>
       <p class="hint" id="profileRuleNote" role="status" aria-live="polite" style="margin:10px 0 0">To switch between Battery tilt and Battery saver, select Stock or Reset everything first. All controls pause for 8 seconds after a successful profile change.</p>
     </section>
     <section class="card" aria-label="Screen on limits" id="cardOn"><h2>Screen on limits</h2><p class="hint">Choose Default to leave a value at the phone’s own setting.</p><div class="grid" id="gridOn"></div></section>
     <section class="card" id="cardOff" aria-label="Screen off limits"><h2>Screen off limits</h2><p class="hint">These values apply only when separate screen-off limits are enabled in Settings.</p><div class="grid" id="gridOff"></div></section>
+    <section class="card" id="customApplyCard" aria-label="Save and apply custom frequency values">
+      <h2>Custom frequency values</h2>
+      <p class="hint">Frequency selectors are locked for Stock, Battery tilt, Battery saver, Performance and Dynamic. Select Custom to edit both sets, then apply all changes together.</p>
+      <button type="button" class="opt apply-custom-btn" id="saveApplyCustom" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3h12l4 4v14H3V3z"/><path d="M7 3v6h10V3M7 21v-7h10v7"/><path d="m9 17 2 2 4-4"/></svg><span>Save &amp; Apply custom values</span></button>
+      <p id="customDraftStatus" role="status" aria-live="polite">Select Custom to unlock frequency selectors and edit values.</p>
+    </section>
   </section>
 
   <section class="page" id="pageKernel" aria-label="Kernel profiles">
@@ -111,41 +166,67 @@
     <section class="card"><h2>About kernel support</h2><p class="hint">Kernel profile controls remain disabled unless the WebUI confirms support. CPU/GPU profiles continue to work independently when kernel profiles are unavailable.</p><div class="row"><span class="k">Support status</span><span class="badge" id="monitorKernelSupport">Checking…</span></div><div class="row"><span class="k">Current kernel mode</span><span class="badge" id="monitorKernelMode">—</span></div></section>
   </section>
 
-  <section class="page" id="pageMonitor" aria-label="Monitor">
-    <div class="page-heading"><h2>Monitor</h2><p>Live hardware readings first, then tuning-engine and kernel status.</p></div>
+  <section class="page active" id="pageMonitor" aria-label="Monitor">
+    <div class="page-heading"><h2>Monitor</h2></div>
     <div class="section-heading hw-monitor-heading"><h3>Live Hardware Monitor</h3><span class="hw-refresh-line"><span class="hw-dot off" id="hwLiveDot" aria-hidden="true"></span><span class="hw-updated" id="hwLiveState" role="status" aria-live="polite">Open Monitor to sample</span></span></div>
+    <section class="card hw-card" id="hwBatteryCard" aria-label="Live battery readings">
+      <div class="hw-head"><h3>Battery</h3><span class="hw-pill hw-pill-muted" id="hwBatteryStatus">Unavailable</span></div>
+      <div class="hw-battery-level"><div class="hw-label" id="hwBatteryLevelLabel">Battery level</div><div class="hw-battery-percent" id="hwBatteryLevel">Unavailable</div></div>
+      <div class="hw-progress" role="progressbar" aria-label="Battery charge" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="hwBatteryProgress"><span id="hwBatteryBar"></span></div>
+      <div class="hw-battery-grid">
+        <div class="hw-metric"><div class="hw-label" id="hwBatteryCurrentLabel">Current</div><div class="hw-value" id="hwBatteryCurrent">Unavailable</div></div>
+        <div class="hw-metric"><div class="hw-label">Power</div><div class="hw-value" id="hwBatteryPower">Unavailable</div></div>
+        <div class="hw-metric"><div class="hw-label">Temperature</div><div class="hw-temp-inline"><span class="hw-value hw-temperature-value" id="hwBatteryTemperature">Unavailable</span><span class="hw-pill hw-pill-muted" id="hwBatteryTempStatus">Unavailable</span></div></div>
+        <div class="hw-metric"><div class="hw-label">Voltage</div><div class="hw-value" id="hwBatteryVoltage">Unavailable</div></div>
+      </div>
+      <div class="hw-drain-grid">
+        <div class="hw-drain-metric"><div class="hw-label">Active drain · screen ON</div><div class="hw-value" id="hwBatteryActiveDrain">Loading…</div><div class="hw-battery-sub" id="hwBatteryActiveSub">Reading saved monitor data…</div></div>
+        <div class="hw-drain-metric"><div class="hw-label">Idle drain · screen OFF</div><div class="hw-value" id="hwBatteryIdleDrain">Loading…</div><div class="hw-battery-sub" id="hwBatteryIdleSub">Reading saved monitor data…</div></div>
+        <div class="hw-drain-metric hw-sot-card"><div class="hw-label">Screen-on time (SOT)</div><div class="hw-value" id="hwBatteryScreenOnTime">Loading…</div><div class="hw-battery-sub" id="hwBatteryScreenOnSub">Since last reset · on battery</div><div class="hw-sot-reset-row"><button type="button" class="hw-sot-reset" id="hwResetSotMini" aria-label="Reset screen-on time"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg><span>Reset</span></button></div></div>
+        <div class="hw-drain-metric"><div class="hw-label">Screen-off time</div><div class="hw-value" id="hwBatteryScreenOffTime">Loading…</div><div class="hw-battery-sub" id="hwBatteryScreenOffSub">Since last reset · on battery</div></div>
+      </div>
+    </section>
+    <div class="hw-hardware-grid">
     <div id="hwCpuCards" class="hw-stack"><section class="card hw-card"><p class="hw-error" id="hwCpuLoading">Waiting for hardware readings…</p></section></div>
     <section class="card hw-card" id="hwGpuCard" aria-label="Live GPU readings">
       <div class="hw-head"><h3>GPU</h3><span class="hw-pill hw-pill-muted" id="hwGpuStatus">Unavailable</span></div>
       <div class="hw-metrics hw-metrics-two">
-        <div class="hw-metric"><div class="hw-label">Utilization</div><div class="hw-value" id="hwGpuFrequency">Unavailable</div></div>
+        <div class="hw-metric"><div class="hw-label">Frequency</div><div class="hw-value" id="hwGpuFrequency">Unavailable</div></div>
+        <div class="hw-metric hw-usage"><div class="hw-label">Utilization</div><div class="hw-value" id="hwGpuUtilization">Unavailable</div></div>
         <div class="hw-metric"><div class="hw-label">Temperature</div><div class="hw-value hw-temperature-value" id="hwGpuTemperature">Unavailable</div></div>
       </div>
       <div class="hw-progress" role="progressbar" aria-label="GPU utilization" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="hwGpuProgress"><span id="hwGpuBar"></span></div>
       <p class="hw-temp-note" id="hwGpuTempNote">Temperature · Unavailable</p>
       <div class="hw-range"><div class="hw-range-side"><div class="hw-range-label">MIN FREQUENCY</div><div class="hw-range-value" id="hwGpuMin">Unavailable</div></div><div class="hw-range-side"><div class="hw-range-label">MAX FREQUENCY</div><div class="hw-range-value" id="hwGpuMax">Unavailable</div></div></div>
     </section>
-    <section class="card hw-card" id="hwBatteryCard" aria-label="Live battery readings">
-      <div class="hw-head"><h3>Battery</h3><span class="hw-pill hw-pill-muted" id="hwBatteryStatus">Unavailable</span></div>
-      <div class="hw-battery-level"><div class="hw-label" id="hwBatteryLevelLabel">Battery level</div><div class="hw-battery-percent" id="hwBatteryLevel">Unavailable</div></div>
-      <div class="hw-progress" role="progressbar" aria-label="Battery charge" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="hwBatteryProgress"><span id="hwBatteryBar"></span></div>
-      <div class="hw-battery-grid">
-        <div class="hw-metric"><div class="hw-label">Active drain</div><div class="hw-value" id="hwBatteryActiveDrain">Collecting data</div><div class="hw-battery-sub" id="hwBatteryActiveSub">Screen-on samples</div></div>
-        <div class="hw-metric"><div class="hw-label">Idle drain</div><div class="hw-value" id="hwBatteryIdleDrain">Collecting data</div><div class="hw-battery-sub" id="hwBatteryIdleSub">Needs a screen-off sample</div></div>
-        <div class="hw-metric"><div class="hw-label" id="hwBatteryCurrentLabel">Current</div><div class="hw-value" id="hwBatteryCurrent">Unavailable</div></div>
-        <div class="hw-metric"><div class="hw-label">Power</div><div class="hw-value" id="hwBatteryPower">Unavailable</div></div>
-        <div class="hw-metric"><div class="hw-label">Temperature</div><div class="hw-temp-inline"><span class="hw-value hw-temperature-value" id="hwBatteryTemperature">Unavailable</span><span class="hw-pill hw-pill-muted" id="hwBatteryTempStatus">Unavailable</span></div></div>
-        <div class="hw-metric"><div class="hw-label">Voltage</div><div class="hw-value" id="hwBatteryVoltage">Unavailable</div></div>
-      </div>
-      <p class="hint" style="margin:14px 0 0">Drain rates are estimates from measured battery change. The last valid estimates survive WebUI reopen/reload; the active value is labelled “Last measured · refreshing” while a fresh screen-on window is collected. “Collecting data” appears until the first reliable estimate exists.</p>
-    </section>
-    <section class="card" aria-label="Current status"><h2>Current status</h2><div class="row"><span class="k">Screen</span><span class="badge" id="sScreen">…</span></div><div class="row"><span class="k">CPU/GPU tuning</span><span class="badge" id="sActive">…</span></div><div class="row"><span class="k">Screen watcher</span><span class="badge" id="sDaemon">…</span></div><div class="live" id="live" style="margin-top:8px"></div></section>
-    <section class="card"><h2>Kernel status</h2><div class="row"><span class="k">Support</span><span class="badge" id="monitorKernelSupport2">Checking…</span></div><div class="row"><span class="k">Current profile</span><span class="badge" id="monitorKernelMode2">—</span></div><div class="row"><span class="k">Remember after reboot</span><span class="badge" id="monitorKernelPersist">—</span></div></section>
-    <section class="card"><h2>How to read this</h2><p class="hint">Frequency values show the current clock converted to MHz; MIN/MAX FREQUENCY are the current allowed policy limits, not the chip’s theoretical maximum. The percentage in brackets is utilization, not frequency as a percentage of maximum. CPU utilization is calculated from successive <code>/proc/stat</code> samples: (change in total CPU counters − change in idle and I/O-wait counters) ÷ change in total CPU counters × 100. For each CPU cluster, the counter changes are combined across the CPUs in that policy. The first sample establishes a baseline, so utilization may show “—%” until a second sample arrives. GPU utilization uses the driver’s busy-percentage value when available; otherwise it is calculated from successive busy/total counter or busy-time/total-time readings. Battery drain in %/h is estimated from the drop in charge-counter relative to full-charge capacity over elapsed time, falling back to battery-percentage change when charge counters are unavailable. Only discharging samples are used; charging periods are excluded. Last valid estimates survive WebUI reopen/reload, while stale active sample windows are discarded and never joined across a screen-off gap. The display may say “Collecting data” until the first reliable estimate exists. Sensor names and availability vary by kernel, so unsupported readings are shown as Unavailable. The older frequency rows below show limits reported by the tuning engine.</p></section>
+    <section class="card hw-card hw-status-card" id="hwCurrentStatusCard" aria-label="Current status"><h2>Current status</h2><div class="row"><span class="k">Screen</span><span class="badge" id="sScreen">…</span></div><div class="row"><span class="k">CPU/GPU tuning</span><span class="badge" id="sActive">…</span></div><div class="row"><span class="k">Screen watcher</span><span class="badge" id="sDaemon">…</span></div><div class="live" id="live" style="margin-top:8px"></div></section>
+    <section class="card hw-card hw-status-card" id="hwKernelStatusCard" aria-label="Kernel status"><h2>Kernel status</h2><div class="row"><span class="k">Support</span><span class="badge" id="monitorKernelSupport2">Checking…</span></div><div class="row"><span class="k">Current profile</span><span class="badge" id="monitorKernelMode2">—</span></div><div class="row"><span class="k">Remember after reboot</span><span class="badge" id="monitorKernelPersist">—</span></div></section>
+    </div>
   </section>
 
   <section class="page" id="pageSettings" aria-label="Settings">
-    <div class="page-heading"><h2>Settings</h2><p>Control how the CPU/GPU tuning behaves.</p></div>
+    <div class="page-heading"><h2>Settings</h2><p>Control monitoring and CPU/GPU tuning behavior.</p></div>
+    <section class="card" id="batteryMonitoringSettings" aria-label="Battery Monitor settings">
+      <div class="bm-head">
+        <div class="bm-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="7" width="16" height="10" rx="2"/><path d="M21 10v4M10 9l-2 3h3l-1 3"/></svg></div>
+        <div class="bm-title"><h3>Battery Monitor</h3><p>Monitoring &amp; preferences</p></div>
+        <span class="bm-state" id="bmEnabledState">Enabled</span>
+      </div>
+      <label class="sw"><span class="txt"><span class="t">Battery monitoring</span><span class="d">Background sampling, even when this page is closed</span></span><input type="checkbox" role="switch" id="bmMonitorToggle" checked></label>
+      <label class="sw"><span class="txt"><span class="t">Reset data on charging</span><span class="d">Clear all monitor statistics when plugged in</span></span><input type="checkbox" role="switch" id="bmResetChargeToggle" checked></label>
+      <div class="bm-separator"></div>
+      <div class="bm-interval-head"><strong>Refresh interval</strong><span id="bmIntervalLabel">Current: 30 seconds</span></div>
+      <div class="bm-intervals" role="group" aria-label="Screen-on battery sampling interval">
+        <button type="button" class="bm-interval" id="bmInterval15" data-monitor-interval="15" aria-pressed="false">15s</button>
+        <button type="button" class="bm-interval" id="bmInterval30" data-monitor-interval="30" aria-pressed="true">30s</button>
+        <button type="button" class="bm-interval" id="bmInterval60" data-monitor-interval="60" aria-pressed="false">60s</button>
+      </div>
+      <div class="bm-separator"></div>
+      <div class="bm-stats-head">Monitoring statistics</div>
+      <div class="bm-stats-desc">Active/idle drain rates and screen-on/off time while discharging</div>
+      <div class="bm-sot-row"><div class="bm-sot-copy"><strong>Screen-on time (SOT)</strong><span>Automatically resets when each charging cycle starts</span></div><button type="button" class="bm-reset bm-reset-sot" id="bmResetSot"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg><span>Reset SOT</span></button></div>
+      <div class="bm-reset-row"><button type="button" class="bm-reset" id="bmResetData">Reset data</button></div>
+    </section>
     <section class="card"><h2>Tuning behavior</h2>
       <label class="sw"><span class="txt"><span class="t">Apply my limits</span><span class="d">Off means the phone’s own CPU/GPU values are restored.</span></span><input type="checkbox" role="switch" id="swEnabled"></label>
       <label class="sw"><span class="txt"><span class="t">Use different limits when the screen is off</span><span class="d">The watcher switches between your on-screen and screen-off values.</span></span><input type="checkbox" role="switch" id="swScreenOff"></label>
@@ -155,10 +236,10 @@
   </section>
 </main>
 <nav class="bottom-nav" aria-label="Main navigation"><div class="bottom-nav-inner">
-  <button type="button" class="nav-btn active" id="navHome" aria-current="page"><span class="nav-icon"><svg viewBox="0 0 24 24"><path d="m3 10 9-7 9 7"/><path d="M5 9v11h5v-6h4v6h5V9"/></svg></span><span>Home</span></button>
+  <button type="button" class="nav-btn active" id="navMonitor" aria-current="page"><span class="nav-icon"><svg viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="m6 14 4-4 4 3 5-7"/></svg></span><span>Monitor</span></button>
   <button type="button" class="nav-btn" id="navCpu" aria-current="false"><span class="nav-icon"><svg viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v4m6-4v4M9 18v4m6-4v4M2 9h4m-4 6h4m12-6h4m-4 6h4"/></svg></span><span>CPU &amp; GPU</span></button>
+  <button type="button" class="nav-btn" id="navHome" aria-current="false"><span class="nav-icon"><svg viewBox="0 0 24 24"><path d="m3 10 9-7 9 7"/><path d="M5 9v11h5v-6h4v6h5V9"/></svg></span><span>Home</span></button>
   <button type="button" class="nav-btn" id="navKernel" aria-current="false"><span class="nav-icon"><svg viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="2"/><path d="M9 3v4m6-4v4M9 17v4m6-4v4M3 9h4m-4 6h4m10-6h4m-4 6h4"/><path d="m10 10 4 4m0-4-4 4"/></svg></span><span>Kernel</span></button>
-  <button type="button" class="nav-btn" id="navMonitor" aria-current="false"><span class="nav-icon"><svg viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="m6 14 4-4 4 3 5-7"/></svg></span><span>Monitor</span></button>
   <button type="button" class="nav-btn" id="navSettings" aria-current="false"><span class="nav-icon"><svg viewBox="0 0 24 24"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg></span><span>Settings</span></button>
 </div></nav>
 
@@ -183,6 +264,7 @@
   var BRIDGE_ORIGIN_KEY = "kprofiles-ui-tilt-saver-bridge-v1";
   var bridgeOrigin = "";
   var recoveryLock = false, recoveryMessage = "", recoveryLatest = "";
+  var customDraft = {}, customDraftDirty = false;
   try {
     recoveryLock = window.localStorage.getItem(RECOVERY_LOCK_KEY) === "1";
     recoveryMessage = window.localStorage.getItem(RECOVERY_MESSAGE_KEY) || "";
@@ -195,23 +277,27 @@
 
   /* Page navigation is local: it never reloads the document or executes a shell command. */
   var PAGE_ITEMS = [
-    { key: "home", page: "pageHome", nav: "navHome" },
-    { key: "cpu", page: "pageCpu", nav: "navCpu" },
-    { key: "kernel", page: "pageKernel", nav: "navKernel" },
     { key: "monitor", page: "pageMonitor", nav: "navMonitor" },
+    { key: "cpu", page: "pageCpu", nav: "navCpu" },
+    { key: "home", page: "pageHome", nav: "navHome" },
+    { key: "kernel", page: "pageKernel", nav: "navKernel" },
     { key: "settings", page: "pageSettings", nav: "navSettings" }
   ];
-  var currentPage = "home";
+  var currentPage = "monitor"
   var hwTimer = null, hwInFlight = false, hwPrevious = null, hwPolicySignature = null;
-  var hwActiveSamples = [], hwLastIdleRate = null, hwLastActiveRate = null;
-  var hwLastActiveSamplesPersistAt = 0;
+  var hwDaemonEnsureAt = 0, hwDaemonEnsureInFlight = false;
+  var hwLastIdleRate = null, hwLastActiveRate = null;
+  var hwDiskWriteQueue = Promise.resolve();
+  var hwDiskGeneration = null, hwLastCacheReadAt = 0, hwCacheInFlight = false, hwDataResetEpoch = 0;
+  var hwDiskCacheLoaded = false, hwDiskCacheReadFailed = false;
+  var hwDrainCurrentStatus = "";
   var HW_IDLE_BASELINE_KEY = "kprofiles-ui-monitor-idle-baseline-v1";
   var HW_IDLE_RATE_KEY = "kprofiles-ui-monitor-idle-rate-v1";
   var HW_ACTIVE_SAMPLES_KEY = "kprofiles-ui-monitor-active-samples-v1";
   var HW_ACTIVE_RATE_KEY = "kprofiles-ui-monitor-active-rate-v1";
-  var HW_DRAIN_CACHE_MAX_AGE_MS = 604800000;
-  var HW_ACTIVE_SAMPLE_GAP_MS = 20000;
+  var HW_LOCAL_GENERATION_KEY = "kprofiles-ui-monitor-data-generation-v1";
   var HW_SAMPLE_INTERVAL_MS = 5000;
+  var hwMonitorPrefs = { enabled: true, interval: 30, resetOnCharging: true };
   function showPage(key) {
     var valid = false;
     for (var i = 0; i < PAGE_ITEMS.length; i++) if (PAGE_ITEMS[i].key === key) valid = true;
@@ -231,6 +317,7 @@
       }
     }
     if (window.scrollTo) window.scrollTo(0, 0);
+    if (key === "monitor") hwRenderSavedDrainRates();
     syncHardwareSampler();
   }
   function presetLabel(preset) {
@@ -415,6 +502,17 @@
       unknown.style.display = kernelSupport === "unknown" ? "block" : "none";
     }
   }
+  function updateCustomDraftUI() {
+    var status = $("customDraftStatus");
+    if (!status) return;
+    if (recoveryLock) status.textContent = "Frequency recovery is active. Use Reset everything before tuning again.";
+    else if (!statusReady || !st) status.textContent = "Reading the current phone state; frequency controls are locked.";
+    else if (controllerSource !== "module") status.textContent = "Switch Control source to Module presets on Home before editing CPU/GPU frequencies.";
+    else if (st.preset !== "custom") status.textContent = "Frequency values are locked under " + presetLabel(st.preset) + ". Select Custom to unlock them.";
+    else if (customDraftDirty) status.textContent = "Unsaved custom changes. Save & Apply writes all 16 values together, then applies them once.";
+    else status.textContent = "Custom is active. Change any selectors above; changes stay pending until Save & Apply.";
+  }
+
   function syncControlLocks() {
     var disabled = busy || isCoolingDown();
     var els = document.querySelectorAll(".opt, input, select");
@@ -423,15 +521,21 @@
       var kpTarget = els[i].getAttribute("data-kp");
       var bridgeBlocked = target && isBlockedDirectSwitch(target);
       var isReset = els[i].id === "resetAll";
+      var isFrequencyPicker = els[i].tagName === "SELECT" && /^sel-(on|off)-/.test(els[i].id || "");
+      var presetLocked = isFrequencyPicker && (!st || st.preset !== "custom");
+      var isCustomSave = els[i].id === "saveApplyCustom";
+      var customSaveBlocked = isCustomSave && (!st || st.preset !== "custom" || !customDraftDirty);
       var initialBlocked = !statusReady && !isReset;
       var recoveryBlocked = recoveryLock && !isReset;
-      var sourceBlocked = (target && controllerSource !== "module") || (kpTarget !== null && controllerSource !== "kernel") || (controllerSource !== "module" && (els[i].tagName === "SELECT" || els[i].id === "swEnabled" || els[i].id === "swScreenOff"));
-      els[i].disabled = disabled || !!bridgeBlocked || initialBlocked || recoveryBlocked || !!sourceBlocked;
+      var sourceBlocked = (target && controllerSource !== "module") || (kpTarget !== null && controllerSource !== "kernel") || (controllerSource !== "module" && (els[i].tagName === "SELECT" || els[i].id === "swEnabled" || els[i].id === "swScreenOff" || isCustomSave));
+      els[i].disabled = disabled || !!bridgeBlocked || initialBlocked || recoveryBlocked || !!sourceBlocked || !!presetLocked || !!customSaveBlocked;
       if (recoveryBlocked) els[i].title = "Frequency error recovery is active. Use Reset everything.";
       else if (sourceBlocked && target) els[i].title = controllerSource === "kernel" ? "Kernel profile is the active controller. Switch to Module presets from Home first." : "Choose Module presets as the active controller first.";
       else if (sourceBlocked && kpTarget !== null) els[i].title = "Choose Kernel profile as the active controller from Home first.";
       else if (bridgeBlocked) els[i].title = "Switch to Stock or use Reset everything before selecting this profile.";
-      else if (els[i].hasAttribute && (els[i].hasAttribute("data-preset") || els[i].id === "resetAll")) els[i].removeAttribute("title");
+      else if (presetLocked) els[i].title = "Frequency values are locked for this preset. Select Custom to edit them.";
+      else if (customSaveBlocked) els[i].title = !st || st.preset !== "custom" ? "Select Custom before editing frequency values." : "Change a frequency value to enable Save & Apply.";
+      else if (els[i].hasAttribute && (els[i].hasAttribute("data-preset") || els[i].id === "resetAll" || isCustomSave)) els[i].removeAttribute("title");
     }
     var note = $("profileRuleNote");
     if (note) {
@@ -459,6 +563,7 @@
     }
     var persistSwitch = $("swKpPersist");
     if (persistSwitch) persistSwitch.disabled = kernelSupport !== "supported" || controllerSource !== "kernel" || disabled || !statusReady || recoveryLock;
+    updateCustomDraftUI();
     renderKernelSupport();
     renderControlSource();
   }
@@ -661,7 +766,8 @@
       var pill = hwAppend(head, hwCreate("span", "hw-pill hw-pill-muted", "Unavailable"));
       pill.id = "hwCpuStatus_" + index;
       var grid = hwAppend(card, hwCreate("div", "hw-metrics"));
-      hwMetric(grid, "Utilization", "hwCpuFrequency_" + index);
+      hwMetric(grid, "Frequency", "hwCpuFrequency_" + index);
+      hwMetric(grid, "Utilization", "hwCpuUtilization_" + index, "hw-usage");
       hwMetric(grid, "Temperature", "hwCpuTemperature_" + index);
       hwMetric(grid, "Online cores", "hwCpuOnline_" + index);
       var progress = hwAppend(card, hwCreate("div", "hw-progress"));
@@ -829,34 +935,24 @@
     if (capacity < 80) return { label: "Normal", cls: "hw-charge-normal", color: "#00d878" };
     return { label: "Nearly full", cls: "hw-charge-full", color: "#60a5fa" };
   }
-  function hwChargeRecord(data, now) {
-    return { t: now, status: String(data.battery_status || "Unknown"), capacity: hwNumber(data.battery_capacity), charge: hwNumber(data.battery_charge_counter), full: hwNumber(data.battery_charge_full) || hwNumber(data.battery_charge_full_design) };
-  }
-  function hwDrainRate(from, to) {
-    if (!from || !to || to.t <= from.t) return null;
-    var elapsed = to.t - from.t;
-    if (elapsed < 120000 || from.status !== "Discharging" || to.status !== "Discharging") return null;
-    var lost = null, full = to.full || from.full;
-    if (from.charge !== null && to.charge !== null && full !== null && full > 0) {
-      lost = from.charge - to.charge;
-      if (lost > 0) return (lost / full) * 100 * 3600000 / elapsed;
-    }
-    if (from.capacity !== null && to.capacity !== null && from.capacity > to.capacity) {
-      return (from.capacity - to.capacity) * 3600000 / elapsed;
-    }
-    return null;
-  }
   function hwStorageGet(key) { try { return window.localStorage.getItem(key); } catch (e) { return null; } }
   function hwStorageSet(key, value) { try { window.localStorage.setItem(key, value); } catch (e) { /* storage may be disabled */ } }
   function hwStorageRemove(key) { try { window.localStorage.removeItem(key); } catch (e) { /* storage may be disabled */ } }
+  function hwClearLocalDrainData() {
+    hwStorageRemove(HW_ACTIVE_RATE_KEY);
+    hwStorageRemove(HW_IDLE_RATE_KEY);
+    hwStorageRemove(HW_ACTIVE_SAMPLES_KEY);
+    hwStorageRemove(HW_IDLE_BASELINE_KEY);
+    hwLastActiveRate = null;
+    hwLastIdleRate = null;
+  }
   function hwLoadStoredRate(key) {
     var raw = hwStorageGet(key);
     if (!raw) return null;
     try {
       var value = JSON.parse(raw), now = Date.now();
-      if (!value || typeof value.t !== "number" || !isFinite(value.t) || value.t > now ||
-          typeof value.rate !== "number" || !isFinite(value.rate) || value.rate < 0 || value.rate >= 100 ||
-          now - value.t >= HW_DRAIN_CACHE_MAX_AGE_MS) {
+      if (!value || typeof value.t !== "number" || !isFinite(value.t) || value.t <= 0 || value.t > now ||
+          Math.floor(value.t) !== value.t || typeof value.rate !== "number" || !isFinite(value.rate) || value.rate <= 0 || value.rate >= 100) {
         hwStorageRemove(key);
         return null;
       }
@@ -865,103 +961,278 @@
   }
   function hwLoadIdleRate() { return hwLoadStoredRate(HW_IDLE_RATE_KEY); }
   function hwLoadActiveRate() { return hwLoadStoredRate(HW_ACTIVE_RATE_KEY); }
-  function hwLoadActiveSamples() {
-    var raw = hwStorageGet(HW_ACTIVE_SAMPLES_KEY);
-    if (!raw) return [];
-    try {
-      var samples = JSON.parse(raw), now = Date.now();
-      if (!Array.isArray(samples) || !samples.length) throw new Error("invalid active samples");
-      samples = samples.filter(function (sample) {
-        return sample && typeof sample.t === "number" && isFinite(sample.t) && sample.t <= now &&
-          sample.status === "Discharging" && now - sample.t <= 1800000;
-      }).sort(function (a, b) { return a.t - b.t; });
-      if (!samples.length || now - samples[samples.length - 1].t > HW_ACTIVE_SAMPLE_GAP_MS) {
-        hwStorageRemove(HW_ACTIVE_SAMPLES_KEY);
-        return [];
-      }
-      /* Keep only the most recent uninterrupted sequence; never bridge a missing-sample gap. */
-      var start = 0;
-      for (var i = 1; i < samples.length; i++) {
-        if (samples[i].t - samples[i - 1].t > HW_ACTIVE_SAMPLE_GAP_MS) start = i;
-      }
-      samples = samples.slice(start);
-      return samples;
-    } catch (e) { hwStorageRemove(HW_ACTIVE_SAMPLES_KEY); return []; }
+  function hwRateObject(rateText, timeText) {
+    var rate = hwNumber(rateText), time = hwNumber(timeText), now = Date.now();
+    if (rate === null || time === null || rate <= 0 || rate >= 100 || time <= 0 ||
+        Math.floor(time) !== time || time > now) return null;
+    return { rate: rate, t: time };
   }
-  function hwPersistActiveSamples(force) {
-    var now = Date.now();
-    if (!force && now - hwLastActiveSamplesPersistAt < 10000) return;
-    if (!hwActiveSamples.length) { hwStorageRemove(HW_ACTIVE_SAMPLES_KEY); hwLastActiveSamplesPersistAt = now; return; }
-    /* A small downsampled window is enough for a rate estimate and avoids frequent large storage writes. */
-    var saved = [], lastSaved = -Infinity;
-    hwActiveSamples.forEach(function (sample, index) {
-      if (index === 0 || index === hwActiveSamples.length - 1 || sample.t - lastSaved >= 10000) {
-        saved.push(sample);
-        lastSaved = sample.t;
-      }
-    });
-    hwStorageSet(HW_ACTIVE_SAMPLES_KEY, JSON.stringify(saved));
-    hwLastActiveSamplesPersistAt = now;
+  function hwPersistRateToDisk(kind, value, generation, resetEpoch) {
+    if (!value || (kind !== "active" && kind !== "idle")) return;
+    var rate = Number(value.rate), timestamp = Math.floor(Number(value.t));
+    if (!isFinite(rate) || rate <= 0 || rate >= 100 || !isFinite(timestamp) || timestamp <= 0) return;
+    var command = "sh " + BASE + "monitor-cache.sh set-" + kind + " " + rate.toFixed(6) + " " + timestamp + " " + generation;
+    hwDiskWriteQueue = hwDiskWriteQueue.then(function () {
+      if (resetEpoch !== hwDataResetEpoch) return;
+      return exec(command).then(function () { /* A generation mismatch means a reset won the race. */ });
+    }).catch(function () { /* Disk cache remains authoritative; localStorage is only a fallback. */ });
   }
-  function hwConsumeIdleBaseline(record) {
-    var raw = hwStorageGet(HW_IDLE_BASELINE_KEY);
-    if (!raw) return;
-    /* Only ever called with a screen-on sample, so the screen-off window has already ended. The baseline is
-       therefore used exactly once and never kept: if a too-short or unmeasurable window were kept, a later
-       screen-on sample would be paired with it and ordinary use would be recorded as an idle drain rate. */
-    hwStorageRemove(HW_IDLE_BASELINE_KEY);
-    var baseline;
-    try { baseline = JSON.parse(raw); } catch (e) { return; }
-    var now = Date.now();
-    if (!baseline || typeof baseline.t !== "number" || !isFinite(baseline.t) || baseline.t > now) return;
-    var age = now - baseline.t;
-    if (age < 60000 || age > 43200000) return;
-    if (record.status !== "Discharging" || baseline.status !== "Discharging") return;
-    var rate = hwDrainRate(baseline, record);
-    if (rate !== null && isFinite(rate) && rate >= 0 && rate < 100) {
-      hwLastIdleRate = { rate: rate, t: now };
-      hwStorageSet(HW_IDLE_RATE_KEY, JSON.stringify(hwLastIdleRate));
+  function hwFormatSavedTime(timestamp) {
+    try { return new Date(timestamp).toLocaleString([], { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }); }
+    catch (e) { return new Date(timestamp).toLocaleString(); }
+  }
+  var hwScreenOnMs = 0, hwScreenOffMs = 0;
+  function hwFormatDuration(milliseconds) {
+    var totalMinutes = Math.floor(Math.max(0, Number(milliseconds) || 0) / 60000);
+    var days = Math.floor(totalMinutes / 1440);
+    var hours = Math.floor((totalMinutes % 1440) / 60);
+    var minutes = totalMinutes % 60;
+    if (days > 0) return days + "d " + hours + "h " + minutes + "m";
+    if (hours > 0) return hours + "h " + minutes + "m";
+    if (totalMinutes === 0 && Number(milliseconds) > 0) return "<1m";
+    return totalMinutes + "m";
+  }
+  function hwRenderScreenTimes() {
+    if (!hwDiskCacheLoaded) {
+      var cacheLabel = hwDiskCacheReadFailed ? "Unavailable" : "Loading…";
+      hwSet("hwBatteryScreenOnTime", cacheLabel);
+      hwSet("hwBatteryScreenOffTime", cacheLabel);
+      return;
     }
+    hwSet("hwBatteryScreenOnTime", hwFormatDuration(hwScreenOnMs));
+    hwSet("hwBatteryScreenOffTime", hwFormatDuration(hwScreenOffMs));
   }
-  /* These values survive a WebUI reload; only short, continuous active samples are reusable. */
-  hwActiveSamples = hwLoadActiveSamples();
+  function hwRenderSavedDrainRates() {
+    if (!hwDiskCacheLoaded) {
+      var cacheLabel = hwDiskCacheReadFailed ? "Unavailable" : "Loading…";
+      ["hwBatteryActiveDrain", "hwBatteryIdleDrain"].forEach(function (id) { hwSet(id, cacheLabel); });
+      ["hwBatteryActiveSub", "hwBatteryIdleSub"].forEach(function (id) {
+        hwSet(id, hwDiskCacheReadFailed ? "Saved monitor data could not be read; retrying" : "Reading saved monitor data…");
+      });
+      hwRenderScreenTimes();
+      return;
+    }
+    if (hwLastActiveRate && isFinite(hwLastActiveRate.rate)) {
+      hwSet("hwBatteryActiveDrain", hwFormatNumber(hwLastActiveRate.rate, 1) + "%/h");
+      hwSet("hwBatteryActiveSub", "Last saved · " + hwFormatSavedTime(hwLastActiveRate.t));
+    } else {
+      hwSet("hwBatteryActiveDrain", "Collecting data");
+      hwSet("hwBatteryActiveSub", "Waiting for a valid measurement");
+    }
+    if (hwLastIdleRate && isFinite(hwLastIdleRate.rate)) {
+      hwSet("hwBatteryIdleDrain", hwFormatNumber(hwLastIdleRate.rate, 1) + "%/h");
+      hwSet("hwBatteryIdleSub", "Last saved · " + hwFormatSavedTime(hwLastIdleRate.t));
+    } else {
+      hwSet("hwBatteryIdleDrain", "Collecting data");
+      hwSet("hwBatteryIdleSub", "Waiting for a valid measurement");
+    }
+    hwRenderScreenTimes();
+  }
+  function hwApplyMonitorSettings(saved) {
+    hwMonitorPrefs.enabled = saved.monitor_enabled !== "0";
+    hwMonitorPrefs.interval = Number(saved.sampling_interval) === 15 || Number(saved.sampling_interval) === 60 ? Number(saved.sampling_interval) : 30;
+    hwMonitorPrefs.resetOnCharging = saved.reset_on_charging !== "0";
+    var monitorToggle = $("bmMonitorToggle"), chargeToggle = $("bmResetChargeToggle"), state = $("bmEnabledState"), intervalLabel = $("bmIntervalLabel");
+    if (monitorToggle) monitorToggle.checked = hwMonitorPrefs.enabled;
+    if (chargeToggle) chargeToggle.checked = hwMonitorPrefs.resetOnCharging;
+    if (state) {
+      state.textContent = hwMonitorPrefs.enabled ? "Enabled" : "Disabled";
+      state.className = hwMonitorPrefs.enabled ? "bm-state" : "bm-state disabled";
+    }
+    if (intervalLabel) intervalLabel.textContent = "Current: " + hwMonitorPrefs.interval + " seconds";
+    [15, 30, 60].forEach(function (seconds) {
+      var button = $("bmInterval" + seconds);
+      if (button) button.setAttribute("aria-pressed", seconds === hwMonitorPrefs.interval ? "true" : "false");
+    });
+  }
+  function hwLoadDiskDrainCache(allowLegacyMigration) {
+    if (hwCacheInFlight) return;
+    hwCacheInFlight = true;
+    var resetEpoch = hwDataResetEpoch;
+    exec("sh " + BASE + "monitor-cache.sh get").then(function (r) {
+      if (resetEpoch !== hwDataResetEpoch) return;
+      if (r.errno !== 0) {
+        hwDiskCacheReadFailed = true;
+        if (!hwDiskCacheLoaded) hwRenderSavedDrainRates();
+        return;
+      }
+      hwDiskCacheLoaded = true;
+      hwDiskCacheReadFailed = false;
+      var saved = kv(r.stdout || ""), generation = Number(saved.generation);
+      if (!isFinite(generation) || generation < 0 || Math.floor(generation) !== generation) generation = 0;
+      var localGenerationText = hwStorageGet(HW_LOCAL_GENERATION_KEY);
+      var localGeneration = localGenerationText === null ? null : Number(localGenerationText);
+      var generationMismatch = localGeneration !== null && (!isFinite(localGeneration) || localGeneration !== generation);
+      var staleLegacyData = generation > 0 && localGeneration === null;
+      if (generationMismatch || staleLegacyData) hwClearLocalDrainData();
+      hwDiskGeneration = generation;
+      hwStorageSet(HW_LOCAL_GENERATION_KEY, String(generation));
+      function safeDuration(text) {
+        if (!/^[0-9]{1,15}$/.test(String(text === undefined ? "" : text))) return 0;
+        var value = Number(text);
+        return isFinite(value) && value >= 0 ? value : 0;
+      }
+      hwScreenOnMs = safeDuration(saved.screen_on_ms);
+      hwScreenOffMs = safeDuration(saved.screen_off_ms);
+      hwApplyMonitorSettings(saved);
+      var diskActive = hwRateObject(saved.active_rate, saved.active_time);
+      var diskIdle = hwRateObject(saved.idle_rate, saved.idle_time);
+      if (diskActive) {
+        hwLastActiveRate = diskActive;
+        hwStorageSet(HW_ACTIVE_RATE_KEY, JSON.stringify(diskActive));
+      } else if (generationMismatch || staleLegacyData || generation > 0) {
+        hwLastActiveRate = null;
+        hwStorageRemove(HW_ACTIVE_RATE_KEY);
+      } else {
+        hwLastActiveRate = hwLoadActiveRate();
+      }
+      if (diskIdle) {
+        hwLastIdleRate = diskIdle;
+        hwStorageSet(HW_IDLE_RATE_KEY, JSON.stringify(diskIdle));
+      } else if (generationMismatch || staleLegacyData || generation > 0) {
+        hwLastIdleRate = null;
+        hwStorageRemove(HW_IDLE_RATE_KEY);
+      } else {
+        hwLastIdleRate = hwLoadIdleRate();
+      }
+      /* Migrate v4.0.5 localStorage-only rates once, before any reset generation exists. */
+      if (allowLegacyMigration && generation === 0 && localGeneration === null) {
+        if (!diskActive && hwLastActiveRate) hwPersistRateToDisk("active", hwLastActiveRate, generation, resetEpoch);
+        if (!diskIdle && hwLastIdleRate) hwPersistRateToDisk("idle", hwLastIdleRate, generation, resetEpoch);
+      }
+      hwLastCacheReadAt = Date.now();
+      hwRenderSavedDrainRates();
+    }).catch(function () {
+      hwDiskCacheReadFailed = true;
+      if (!hwDiskCacheLoaded) hwRenderSavedDrainRates();
+    }).then(function () {
+      hwCacheInFlight = false;
+    });
+  }
+  function hwUpdateDrain(data) {
+    hwDrainCurrentStatus = String(data.battery_status || "Unknown");
+    hwEnsureMonitorDaemon(false);
+    if (Date.now() - hwLastCacheReadAt >= 15000) hwLoadDiskDrainCache(false);
+    hwRenderSavedDrainRates();
+  }
+  function hwSetMonitorPreference(command, value, update) {
+    var resetEpoch = hwDataResetEpoch;
+    exec("sh " + BASE + "monitor-cache.sh " + command + " " + value).then(function (r) {
+      if (r.errno !== 0) {
+        setMsg("Could not save Battery Monitor setting. The previous setting is unchanged.", "err");
+        hwLoadDiskDrainCache(false);
+        return;
+      }
+      update();
+      hwApplyMonitorSettings({ monitor_enabled: hwMonitorPrefs.enabled ? "1" : "0", sampling_interval: String(hwMonitorPrefs.interval), reset_on_charging: hwMonitorPrefs.resetOnCharging ? "1" : "0" });
+      hwLoadDiskDrainCache(false);
+      setMsg("Battery Monitor setting saved.", "ok");
+    }).catch(function () {
+      if (resetEpoch !== hwDataResetEpoch) return;
+      setMsg("Could not save Battery Monitor setting.", "err");
+      hwLoadDiskDrainCache(false);
+    });
+  }
+  function hwResetScreenOnTime() {
+    if (typeof window.confirm === "function" && !window.confirm("Reset Screen-on Time (SOT)?\n\nOnly the saved screen-on time total will be cleared. Active/Idle Drain and screen-off time will be preserved.")) return;
+    hwDataResetEpoch++;
+    var resetEpoch = hwDataResetEpoch;
+    hwDiskWriteQueue = Promise.resolve();
+    exec("sh " + BASE + "monitor-cache.sh reset-screen-on-time").then(function (r) {
+      if (resetEpoch !== hwDataResetEpoch) return;
+      if (r.errno !== 0) {
+        setMsg("Could not reset Screen-on Time. No success was reported.", "err");
+        hwLoadDiskDrainCache(false);
+        return;
+      }
+      hwScreenOnMs = 0;
+      hwRenderScreenTimes();
+      hwLoadDiskDrainCache(false);
+      setMsg("Screen-on Time reset. Active/Idle Drain and screen-off time were preserved.", "ok");
+    }).catch(function () {
+      if (resetEpoch !== hwDataResetEpoch) return;
+      setMsg("Could not reset Screen-on Time.", "err");
+    });
+  }
+  function hwResetMonitorData() {
+    if (typeof window.confirm === "function" && !window.confirm("Reset all Battery Monitor data?\n\nThis clears saved Active/Idle Drain rates, timestamps, screen-on/off time totals, baselines and pending measurements. It does not reset Android battery statistics or change monitoring settings.")) return;
+    hwDataResetEpoch++;
+    var resetEpoch = hwDataResetEpoch;
+    hwDiskWriteQueue = Promise.resolve();
+    exec("sh " + BASE + "monitor-cache.sh reset-data").then(function (r) {
+      if (resetEpoch !== hwDataResetEpoch) return;
+      if (r.errno !== 0) {
+        setMsg("Could not reset Battery Monitor data. No success was reported.", "err");
+        hwLoadDiskDrainCache(false);
+        return;
+      }
+      hwClearLocalDrainData();
+      hwStorageRemove(HW_LOCAL_GENERATION_KEY);
+      hwScreenOnMs = 0;
+      hwScreenOffMs = 0;
+      hwRenderSavedDrainRates();
+      hwLoadDiskDrainCache(false);
+      setMsg("Battery Monitor data reset. Fresh measurements will be collected.", "ok");
+    }).catch(function () {
+      if (resetEpoch !== hwDataResetEpoch) return;
+      setMsg("Could not reset Battery Monitor data.", "err");
+    });
+  }
+  function hwWireMonitorSettings() {
+    var monitorToggle = $("bmMonitorToggle"), chargeToggle = $("bmResetChargeToggle");
+    if (monitorToggle) monitorToggle.addEventListener("change", function () {
+      var wanted = monitorToggle.checked ? 1 : 0;
+      hwSetMonitorPreference("set-enabled", wanted, function () { hwMonitorPrefs.enabled = !!wanted; });
+    });
+    if (chargeToggle) chargeToggle.addEventListener("change", function () {
+      var wanted = chargeToggle.checked ? 1 : 0;
+      hwSetMonitorPreference("set-reset-on-charging", wanted, function () { hwMonitorPrefs.resetOnCharging = !!wanted; });
+    });
+    [15, 30, 60].forEach(function (seconds) {
+      var button = $("bmInterval" + seconds);
+      if (!button) return;
+      button.addEventListener("click", function () {
+        hwSetMonitorPreference("set-interval", seconds, function () { hwMonitorPrefs.interval = seconds; });
+      });
+    });
+    var resetButton = $("bmResetData");
+    if (resetButton) resetButton.addEventListener("click", hwResetMonitorData);
+    var resetSotButton = $("bmResetSot"), resetSotMiniButton = $("hwResetSotMini");
+    if (resetSotButton) resetSotButton.addEventListener("click", hwResetScreenOnTime);
+    if (resetSotMiniButton) resetSotMiniButton.addEventListener("click", hwResetScreenOnTime);
+  }
+
+  function hwEnsureMonitorDaemon(force) {
+    var now = Date.now();
+    if (hwDaemonEnsureInFlight || (!force && now - hwDaemonEnsureAt < 60000)) return;
+    hwDaemonEnsureAt = now;
+    hwDaemonEnsureInFlight = true;
+    var modDir = BASE.replace(/\/+$/, "");
+    exec('sh "' + modDir + '/monitor-daemon.sh" ensure "' + modDir + '"').then(function (r) {
+      if (r.errno !== 0) {
+        hwSet("hwLiveState", "Background collector unavailable; retrying");
+        hwClass($("hwLiveDot"), "hw-dot off");
+      }
+    }).catch(function () {
+      hwSet("hwLiveState", "Background collector unavailable; retrying");
+      hwClass($("hwLiveDot"), "hw-dot off");
+    }).then(function () { hwDaemonEnsureInFlight = false; });
+  }
+
+  /* The background daemon owns measurement windows; the WebUI only renders its durable results. */
+  hwEnsureMonitorDaemon(true);
   hwLastActiveRate = hwLoadActiveRate();
   hwLastIdleRate = hwLoadIdleRate();
-  if (hwActiveSamples.length) hwLastActiveSamplesPersistAt = hwActiveSamples[hwActiveSamples.length - 1].t;
-  function hwUpdateDrain(data) {
-    var record = hwChargeRecord(data, Date.now());
-    hwConsumeIdleBaseline(record);
-    var activeGap = hwActiveSamples.length && record.t - hwActiveSamples[hwActiveSamples.length - 1].t > HW_ACTIVE_SAMPLE_GAP_MS;
-    if (activeGap) hwActiveSamples = [];
-    if (record.status === "Discharging") {
-      hwActiveSamples.push(record);
-      var cutoff = record.t - 1800000;
-      hwActiveSamples = hwActiveSamples.filter(function (sample) { return sample.t >= cutoff && sample.status === "Discharging"; });
-      hwPersistActiveSamples(!!activeGap || hwActiveSamples.length === 1);
-    } else {
-      hwActiveSamples = [];
-      hwPersistActiveSamples(true);
-    }
-    var activeRate = null;
-    if (hwActiveSamples.length > 1) activeRate = hwDrainRate(hwActiveSamples[0], hwActiveSamples[hwActiveSamples.length - 1]);
-    if (activeRate !== null && isFinite(activeRate) && activeRate >= 0 && activeRate < 100) {
-      hwLastActiveRate = { rate: activeRate, t: record.t };
-      hwStorageSet(HW_ACTIVE_RATE_KEY, JSON.stringify(hwLastActiveRate));
-    }
-    var displayedActiveRate = activeRate !== null ? activeRate : (hwLastActiveRate ? hwLastActiveRate.rate : null);
-    hwSet("hwBatteryActiveDrain", record.status === "Charging" || record.status === "Full" ? "Charging" : (displayedActiveRate !== null ? hwFormatNumber(displayedActiveRate, 1) + "%/h" : "Collecting data"));
-    hwSet("hwBatteryActiveSub", record.status === "Charging" || record.status === "Full" ? record.status : (activeRate !== null ? "Screen-on samples" : (hwLastActiveRate ? "Last measured · refreshing" : "Screen-on samples")));
-    hwLastIdleRate = hwLoadIdleRate() || hwLastIdleRate;
-    hwSet("hwBatteryIdleDrain", hwLastIdleRate ? hwFormatNumber(hwLastIdleRate.rate, 1) + "%/h" : "Collecting data");
-    hwSet("hwBatteryIdleSub", hwLastIdleRate ? "Last screen-off sample" : "Needs a screen-off sample");
-  }
+  hwRenderSavedDrainRates();
+  hwLoadDiskDrainCache(true);
   function hwUpdate(data) {
     var policies = hwGetPolicies(data), previous = hwPrevious;
     hwBuildCpuCards(policies, data);
     var temps = hwSensorTemps(data);
     policies.forEach(function (policy, index) {
       var usage = hwCpuUsage(policy, data, previous), freq = hwFormatCpuCurrent(policy.current);
-      hwSet("hwCpuFrequency_" + index, freq === "Unavailable" ? freq : freq + " (" + (usage === null ? "—" : usage) + "%)");
+      hwSet("hwCpuFrequency_" + index, freq);
+      hwSet("hwCpuUtilization_" + index, usage === null ? "—%" : usage + "%");
       hwSet("hwCpuOnline_" + index, hwOnlineCount(policy, data));
       hwSet("hwCpuMin_" + index, hwFormatCpuMhz(policy.min));
       hwSet("hwCpuMax_" + index, hwFormatCpuMhz(policy.max));
@@ -970,7 +1241,12 @@
       hwSetProgress("hwCpuProgress_" + index, "hwCpuBar_" + index, usage);
     });
     var gpuUsage = hwGpuUsage(data, previous), gpuFreq = hwFormatGpuCurrent(data.gpu_cur_hz);
-    hwSet("hwGpuFrequency", gpuFreq === "Unavailable" ? gpuFreq : gpuFreq + " (" + (gpuUsage === null ? "—" : gpuUsage) + "%)");
+    hwSet("hwGpuFrequency", gpuFreq);
+    var directGpuUsage = hwNumber(String(data.gpu_busy_pct || "").replace(/[^0-9.+-]/g, ""));
+    var gpuCounterSource = !!hwCounterValues(data.gpu_busy_counters, 2) ||
+      (hwNumber(data.gpu_busy_time) !== null && hwNumber(data.gpu_total_time) !== null);
+    var gpuUsageAvailable = (directGpuUsage !== null && directGpuUsage >= 0 && directGpuUsage <= 100) || gpuCounterSource;
+    hwSet("hwGpuUtilization", gpuUsage === null ? (gpuUsageAvailable ? "—%" : "Unavailable") : gpuUsage + "%");
     hwSet("hwGpuMin", hwFormatGpuMhz(data.gpu_min_hz));
     hwSet("hwGpuMax", hwFormatGpuMhz(data.gpu_max_hz));
     hwApplyTemp("hwGpuStatus", "hwGpuTemperature", "hwGpuTempNote", temps.gpu, false, "soc");
@@ -1051,43 +1327,16 @@
     }
     if (!hwInFlight && !hwTimer) hwSample();
   }
-  function hwCaptureScreenOff() {
-    /* Capture once whenever the WebView becomes hidden, regardless of the in-app page.
-       The user can be on Home (or another page) when the phone screen turns off. */
-    exec("sh " + BASE + "monitor.sh screen").then(function (r) {
-      if (r.errno !== 0) return;
-      var data = kv(r.stdout || "");
-      if (data.screen_state !== "off" || data.battery_status !== "Discharging") return;
-      var rec = hwChargeRecord(data, Date.now());
-      if (rec.charge === null && rec.capacity === null) return;
-      hwStorageSet(HW_IDLE_BASELINE_KEY, JSON.stringify(rec));
-    }).catch(function () { /* Idle drain remains unavailable if the screen state cannot be confirmed. */ });
-  }
-  function hwCaptureScreenOn() {
-    /* Finish an idle window when the WebView returns, even if Monitor is not the selected page.
-       With no saved screen-off baseline there is nothing to finish, so skip the extra shell call. */
-    if (!hwStorageGet(HW_IDLE_BASELINE_KEY)) return;
-    exec("sh " + BASE + "monitor.sh screen").then(function (r) {
-      if (r.errno !== 0) return;
-      var data = kv(r.stdout || "");
-      if (data.screen_state !== "on") return;
-      hwConsumeIdleBaseline(hwChargeRecord(data, Date.now()));
-    }).catch(function () { /* A later Monitor sample can still consume the saved baseline. */ });
-  }
   if (typeof document.addEventListener === "function") {
     document.addEventListener("visibilitychange", function () {
       if (document.visibilityState === "hidden") {
         if (hwTimer) clearTimeout(hwTimer);
         hwTimer = null;
         hwPrevious = null;
-        /* The screen may now be off: samples taken before and after that gap must not be joined into one
-           "active" drain rate, or the idle period would be averaged into it. Collection restarts on return. */
-        hwActiveSamples = [];
-        hwPersistActiveSamples(true);
-        hwCaptureScreenOff();
       } else {
-        hwCaptureScreenOn();
+        hwEnsureMonitorDaemon(true);
         syncHardwareSampler();
+        hwLoadDiskDrainCache(false);
       }
     });
   }
@@ -1141,7 +1390,15 @@
           var o = document.createElement("option"); o.value = String(v); o.textContent = fmt(dm[0], v); sel.appendChild(o);
         });
         sel.addEventListener("change", function () {
-          act("cfg " + sel.getAttribute("data-key") + " " + sel.value, "Saved and applied.");
+          if (!statusReady || !st || st.preset !== "custom" || controllerSource !== "module" || recoveryLock || busy || isCoolingDown()) {
+            render();
+            return;
+          }
+          var key = sel.getAttribute("data-key"), value = sel.value || "-";
+          if (!/^(?:-|[0-9]+)$/.test(value)) { render(); return; }
+          customDraft[key] = value;
+          customDraftDirty = true;
+          syncControlLocks();
         });
         g.appendChild(sel);
       });
@@ -1152,6 +1409,7 @@
   /* ---------- show the state ---------- */
   function render() {
     if (!st) return;
+    if (st.preset !== "custom") { customDraft = {}; customDraftDirty = false; }
     $("sScreen").textContent = st.screen === "off" ? "Off" : "On";
     if (st.enabled !== "1") $("sActive").textContent = "Not active";
     else if (st.preset === "performance") $("sActive").textContent = "No extra caps";
@@ -1182,8 +1440,13 @@
         ["min", "max"].forEach(function (kind) {
           var sel = $("sel-" + setName + "-" + dm[0] + "-" + kind);
           if (!sel) return;
-          var v = st["cfg_" + setName + "_" + dm[0] + "_" + kind];
-          sel.value = v ? v : "-";
+          var key = sel.getAttribute("data-key");
+          var hasDraft = customDraft && Object.prototype.hasOwnProperty.call(customDraft, key);
+          var v = hasDraft ? customDraft[key] : st["cfg_" + setName + "_" + dm[0] + "_" + kind];
+          var desired = v ? String(v) : "-";
+          var optionExists = false;
+          for (var oi = 0; oi < sel.options.length; oi++) if (String(sel.options[oi].value) === desired) optionExists = true;
+          sel.value = optionExists ? desired : "-";
           var d = st["def_" + dm[0] + "_" + kind];
           sel.options[0].textContent = d ? "Default (" + fmt(dm[0], d).replace(" MHz", "") + ")" : "Default";
         });
@@ -1296,7 +1559,8 @@
       setMsg(kernelSupport === "unsupported" ? "Extra kernel features are not supported by your kernel, so nothing was changed." : "Kernel-profile support has not been confirmed yet, so nothing was changed.", "warn");
       return;
     }
-    var profileAction = cmdLine === "resetall" || /^preset (stock|tilt|saver|performance|custom|dynamic)$/.test(cmdLine);
+    var customSaveAction = /^custom-save(?:\s|$)/.test(cmdLine);
+    var profileAction = cmdLine === "resetall" || /^preset (stock|tilt|saver|performance|custom|dynamic)$/.test(cmdLine) || customSaveAction;
     var previousPreset = st ? st.preset : "";
     var succeeded = false, refreshed = false, notice = okText, noticeKind = "ok";
     var frequencyFailure = false, warns = [], combined = "", wasLocked = recoveryLock;
@@ -1358,6 +1622,10 @@
           saveBridgeOrigin(previousPreset);
         }
         if (profileAction) startProfileCooldown(notice, noticeKind);
+        if (customSaveAction) {
+          customDraft = {}; customDraftDirty = false;
+          render();
+        }
       }
       lockUI(false);
     }).catch(function (e) {
@@ -1384,7 +1652,8 @@
   $("homeOpenMonitor").addEventListener("click", function () { showPage("monitor"); });
   $("sourceModuleBtn").addEventListener("click", function () { switchController("module"); });
   $("sourceKernelBtn").addEventListener("click", function () { switchController("kernel"); });
-  showPage("home");
+  showPage("monitor");
+  hwWireMonitorSettings();
 
   $("presets").addEventListener("click", function (e) {
     var b = e.target.closest ? e.target.closest(".opt") : null;
@@ -1395,7 +1664,35 @@
       setMsg("Direct switching between Battery tilt and Battery saver is disabled. Select Stock or Reset everything first.", "warn");
       return;
     }
+    if (customDraftDirty && p !== "custom" && typeof window.confirm === "function" &&
+        !window.confirm("Discard unsaved Custom frequency edits?\n\nOnly the pending selector changes will be discarded. The currently saved/applied values will remain until the new profile is successfully applied.")) return;
     act("preset " + p, names[p] + " applied.");
+  });
+  $("saveApplyCustom").addEventListener("click", function () {
+    if (!st || st.preset !== "custom" || !customDraftDirty || busy || isCoolingDown() || recoveryLock || controllerSource !== "module") return;
+    var args = [], pairs = {}, valid = true, invalidPair = "";
+    ["on", "off"].forEach(function (setName) {
+      DOMS.forEach(function (dm) {
+        ["min", "max"].forEach(function (kind) {
+          var sel = $("sel-" + setName + "-" + dm[0] + "-" + kind);
+          if (!sel) { valid = false; return; }
+          var key = sel.getAttribute("data-key"), value = sel.value || "-";
+          if (!/^(?:-|[0-9]+)$/.test(value)) { valid = false; invalidPair = key; return; }
+          pairs[setName + "_" + dm[0] + "_" + kind] = value === "-" ? null : Number(value);
+          args.push(key, value);
+        });
+      });
+    });
+    if (!valid || args.length !== 32) { setMsg("A frequency value is invalid" + (invalidPair ? " (" + invalidPair + ")" : "") + ". No changes were applied.", "err"); return; }
+    for (var pi = 0; pi < 2; pi++) {
+      var prefix = pi === 0 ? "on" : "off";
+      DOMS.forEach(function (dm) {
+        var mn = pairs[prefix + "_" + dm[0] + "_min"], mx = pairs[prefix + "_" + dm[0] + "_max"];
+        if (mn !== null && mx !== null && mn > mx) { valid = false; invalidPair = prefix + " " + dm[0]; }
+      });
+    }
+    if (!valid) { setMsg("Minimum frequency must not exceed maximum for " + invalidPair + ". Nothing was saved or applied.", "err"); return; }
+    act("custom-save " + args.join(" "), "Custom frequency values saved and applied.");
   });
   $("resetAll").addEventListener("click", function () {
     act("resetall", "Everything is back to your phone’s own behavior.");

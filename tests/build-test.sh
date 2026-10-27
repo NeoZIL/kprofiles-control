@@ -52,6 +52,8 @@ if command -v python3 >/dev/null 2>&1; then
 fi
 check "zip has module.prop" 1 "$(unzip -l "$T/r/dist/"*.zip | grep -c ' module.prop$')"
 check "zip includes the universal monitoring helper" 1 "$(unzip -l "$T/r/dist/"*.zip | grep -c ' monitor.sh$')"
+check "zip includes durable WebUI drain cache helper" 1 "$(unzip -l "$T/r/dist/"*.zip | grep -c ' monitor-cache.sh$')"
+check "zip includes background battery monitor daemon" 1 "$(unzip -l "$T/r/dist/"*.zip | grep -c ' monitor-daemon.sh$')"
 check "zip includes the controller switch engine" 1 "$(unzip -l "$T/r/dist/"*.zip | grep -c ' control.sh$')"
 check "zip includes the shared controller state library" 1 "$(unzip -l "$T/r/dist/"*.zip | grep -c ' control-lib.sh$')"
 
@@ -149,12 +151,18 @@ check "Performance status does not claim caps are applied" yes "$(grep -Fq 'st.p
 check "Dynamic screen-on status explains no extra caps" yes "$(grep -Fq 'st.preset === "dynamic" && st.state !== "off"' "$page" && grep -Fq 'No extra caps (screen on)' "$page" && echo yes || echo no)"
 check "Dynamic preset uses screen-off caps" yes "$(grep -Fq 'P_OFF_LITTLE_MAX=1017600; P_OFF_BIG_MAX=787200; P_OFF_PRIME_MAX=633600; P_OFF_GPU_MAX=353000000' "$HERE/../module/tune.sh" && echo yes || echo no)"
 check "Custom command preserves existing settings" yes "$(grep -Fq 'cfg_put PRESET custom ENABLED 1' "$HERE/../module/tune.sh" && echo yes || echo no)"
+check "custom frequency values require one atomic Save & Apply command" yes "$(grep -Fq 'cmd_custom_save()' "$HERE/../module/tune.sh" && grep -Fq 'custom-save) shift; cmd_custom_save "$@" && echo ok ;;' "$HERE/../module/tune.sh" && grep -Fq 'id="saveApplyCustom"' "$page" && grep -Fq 'custom-save ' "$page" && echo yes || echo no)"
+check "frequency controls show locked state outside Custom" yes "$(grep -Fq 'var presetLocked = isFrequencyPicker && (!st || st.preset !== "custom")' "$page" && grep -Fq 'Frequency values are locked under ' "$page" && echo yes || echo no)"
 check "Reset uses neutral outline with red icon and label only" yes "$(grep -Fq 'class="opt danger-opt" id="resetAll"' "$page" && grep -Fq '.danger-opt{display:flex' "$page" && grep -Fq 'border-color:var(--line);background:var(--surface)' "$page" && grep -Fq '.danger-opt .t{font-size:.91rem;color:var(--danger)}' "$page" && grep -Fq '.danger-opt .reset-icon' "$page" && grep -Fq 'id="resetIcon"' "$page" && echo yes || echo no)"
 check "profile and kernel mode labels have minimal inline icons" yes "$(grep -Fq 'class="item-icon"' "$page" && grep -Fq '#presets [data-preset="tilt"] .item-icon{color:var(--icon-orange)}' "$page" && grep -Fq '#kpopts [data-kp="1"] .item-icon{color:var(--icon-green)}' "$page" && echo yes || echo no)"
 check "Home status and quick-link icons use semantic accent colors" yes "$(grep -Fq 'tone-purple' "$page" && grep -Fq '#homeKernel .quick-icon{color:var(--icon-purple)}' "$page" && echo yes || echo no)"
 check "Kernel profiles are collapsed behind a button" yes "$(grep -Fq 'id="kernelProfilesBtn"' "$page" && grep -Fq 'id="kernelProfilesPanel" class="kernel-panel" style="display:none"' "$page" && echo yes || echo no)"
 check "five UI pages are present" yes "$(for id in pageHome pageCpu pageKernel pageMonitor pageSettings; do grep -Fq "id=\"$id\"" "$page" || exit 1; done; echo yes)"
 check "fixed bottom navigation exposes all pages" yes "$(grep -Fq 'class="bottom-nav"' "$page" && grep -Fq 'id="navHome"' "$page" && grep -Fq 'id="navCpu"' "$page" && grep -Fq 'id="navKernel"' "$page" && grep -Fq 'id="navMonitor"' "$page" && grep -Fq 'id="navSettings"' "$page" && echo yes || echo no)"
+check "Monitor is the default route and the first dock item" yes "$(grep -Fq 'var currentPage = "monitor"' "$page" && grep -Fq 'showPage("monitor");' "$page" && [ "$(grep -n 'id="navMonitor"' "$page" | cut -d: -f1)" -lt "$(grep -n 'id="navCpu"' "$page" | cut -d: -f1)" ] && echo yes || echo no)"
+check "floating dock uses rounded material surface and selected state" yes "$(grep -Fq '.bottom-nav-inner' "$page" && grep -Fq 'border-radius:23px' "$page" && grep -Fq 'backdrop-filter:blur(18px)' "$page" && grep -Fq '.nav-btn[aria-current="page"]' "$page" && echo yes || echo no)"
+check "Battery Monitor settings expose interval, general reset and SOT reset" yes "$(grep -Fq 'id="batteryMonitoringSettings"' "$page" && grep -Fq 'id="bmInterval15"' "$page" && grep -Fq 'id="bmInterval30"' "$page" && grep -Fq 'id="bmInterval60"' "$page" && grep -Fq 'id="bmResetChargeToggle"' "$page" && grep -Fq 'id="bmResetData"' "$page" && grep -Fq 'id="bmResetSot"' "$page" && grep -Fq 'id="hwResetSotMini"' "$page" && echo yes || echo no)"
+check "battery telemetry and drain appear before CPU and GPU" yes "$( [ "$(grep -n 'id="hwBatteryCard"' "$page" | cut -d: -f1)" -lt "$(grep -n 'id="hwCpuCards"' "$page" | cut -d: -f1)" ] && [ "$(grep -n 'id="hwCpuCards"' "$page" | cut -d: -f1)" -lt "$(grep -n 'id="hwGpuCard"' "$page" | cut -d: -f1)" ] && grep -Fq 'id="hwBatteryActiveDrain"' "$page" && grep -Fq 'id="hwBatteryIdleDrain"' "$page" && echo yes || echo no)"
 check "live hardware monitor exists above old Monitor status" yes "$(grep -Fq 'id="hwCpuCards"' "$page" && grep -Fq 'id="hwBatteryCard"' "$page" && grep -Fq 'id="hwGpuCard"' "$page" && grep -Fq 'aria-label="Current status"' "$page" && [ "$(grep -n 'id="hwCpuCards"' "$page" | cut -d: -f1)" -lt "$(grep -n 'aria-label="Current status"' "$page" | head -n 1 | cut -d: -f1)" ] && echo yes || echo no)"
 check "Home Live Monitoring quick card exists" yes "$(grep -Fq 'id="homeMonitor"' "$page" && grep -Fq 'Live Monitoring<small>CPU, GPU &amp; battery' "$page" && echo yes || echo no)"
 check "sampling is visibility-gated and uses one monitor helper" yes "$(grep -Fq 'exec("sh " + BASE + "monitor.sh snapshot")' "$page" && grep -Fq 'currentPage !== "monitor"' "$page" && grep -Fq 'document.addEventListener("visibilitychange"' "$page" && echo yes || echo no)"
@@ -167,6 +175,8 @@ check "boot applies only the selected control source" yes "$(grep -Fq 'control.s
 check "controller migration preserves conflict for overlapping legacy selections" yes "$(grep -Fq 'ci_module_active' "$HERE/../module/control.sh" && grep -Fq 'ci_auto' "$HERE/../module/control.sh" && grep -Fq 'ci_source=conflict' "$HERE/../module/control.sh" && echo yes || echo no)"
 check "failed handoff can raise the recovery lock" yes "$(grep -Fq 'recovery=1' "$HERE/../module/control.sh" && grep -Fq 'CONTROLLER HANDOFF FAILURE' "$page" && echo yes || echo no)"
 check "page navigation remains local" yes "$(grep -Fq 'function showPage(key)' "$page" && grep -Fq 'syncHardwareSampler();' "$page" && echo yes || echo no)"
+check "boot service starts the detached background drain collector through ensure" yes "$(grep -Fq 'monitor-daemon.sh" ensure' "$HERE/../module/service.sh" && grep -Fq 'command -v setsid' "$HERE/../module/monitor-daemon.sh" && echo yes || echo no)"
+check "uninstall stops the background drain collector first" yes "$(grep -Fq 'monitor-daemon.sh" stop' "$HERE/../module/uninstall.sh" && grep -Fq 'monitor.pid' "$HERE/../module/monitor-daemon.sh" && echo yes || echo no)"
 check "the page is a self-contained offline UI" yes "$(! grep -Eq '<script[^>]+src=|<link[^>]+href=|https?://' "$page" && echo yes || echo no)"
 check "Unsupported kernel shows explicit message" yes "$(grep -Fq 'Extra kernel features are not supported by your kernel.' "$page" && grep -Fq 'kernelSupport === "unsupported"' "$page" && echo yes || echo no)"
 check "Kernel profile support is determined by kp.sh status mode" yes "$(grep -Fq 'kernelSupport = "supported"' "$page" && grep -Fq 'kernelSupport = "unsupported"' "$page" && echo yes || echo no)"
@@ -197,6 +207,10 @@ else
 fi
 rm -rf "$T/real"; mkdir -p "$T/real/module"; cp "$HERE/../build.sh" "$HERE/../CHANGELOG.md" "$T/real/"; cp -r "$HERE/../module/." "$T/real/module/"
 ( cd "$T/real" && sh build.sh >/dev/null 2>&1 ); check "real repo builds" 0 $?
+
+# The file-backed drain cache must survive a new shell process and reject malformed fields.
+sh "$HERE/monitor-cache-test.sh"; check "persistent battery-rate cache suite" 0 $?
+sh "$HERE/monitor-daemon-test.sh"; check "background battery monitor daemon suite" 0 $?
 
 # A refused build must not leave an earlier build's files behind (they could be uploaded by mistake).
 mk "$PROP" "$LOG"; ( cd "$T/r" && sh build.sh >/dev/null 2>&1 )

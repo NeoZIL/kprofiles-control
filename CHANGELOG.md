@@ -1,5 +1,75 @@
 # Changelog
 
+
+## v4.0.12
+- Fix the percentage-only drain estimator: preserve measurement baselines while battery percentage is unchanged, so low idle drain is not inflated by recurring 10-minute rebases. Use bounded windows of up to 90 minutes for active drain and 12 hours for idle drain, still breaking windows on screen-state and charging transitions.
+- Harden collector lifetime: boot and WebUI recovery use one verified detached-start path, preferring `setsid` where available; wait for daemon startup instead of reporting success before it has initialized.
+- Make cache failures visible. Until the durable monitor cache is read successfully, show Loading/Unavailable rather than false `0m` values or incorrectly implying a fresh measurement cycle. Keep the latest displayed values when a later cache read fails.
+- Align CPU, GPU, Current status and Kernel status cards with a shared width-safe grid; remove the explanatory drain/screen-time notes from Monitor.
+- Add regression coverage for capacity-only active/idle calculations over long measurement windows, failed cache reads, card alignment and removal of Monitor notes.
+- Version: v4.0.12, versionCode 42. Background process lifetime and real battery-counter behavior still need confirmation on the target POCO F6 ROM.
+
+## v4.0.11
+- Fix (background monitor): detach the battery collector from the boot script and ensure it is started when the WebUI opens or returns to the foreground. Validate the PID file against the actual process command line and module path so a stale PID after reboot cannot suppress collection or cause an unrelated process to be signalled.
+- Fix (screen time): persist elapsed time between conservative screen-state samples. Long screen-off intervals are attributed to the prior confirmed screen-off state when the device next wakes, and short screen-on intervals are limited to the configured sampler window.
+- Fix (idle drain): finalize a pending screen-off measurement when the display wakes, and allow overnight idle windows (up to 12 hours) when battery readings show discharge without a charge/capacity increase. Charging-contaminated windows are still discarded.
+- UI: remove the inline drain/screen-time explainer paragraph from Monitor. Keep hardware telemetry and current/kernel status cards on the same grid edges, with status cards spanning the full grid width.
+- Diagnostics: log failed persistent monitor-cache writes rather than silently discarding them.
+- Tests: cover stale/reused PID protection, WebUI-triggered daemon startup, screen-off intervals ending at wake, overnight idle-rate finalization, cache persistence, and the compact Monitor layout.
+- Version: v4.0.11, versionCode 41. Collector restart and battery counter behavior still require verification on the target POCO F6 ROM.
+
+## v4.0.10
+- Safety (CPU/GPU controls): lock all 16 frequency selectors whenever a built-in preset is active. Frequency editing is available only after explicitly selecting **Custom**, and remains subject to the existing controller, recovery, cooldown, and availability guards.
+- UI (Custom editor): stage frequency selections locally instead of writing/applying each change immediately. Add one **Save & Apply custom values** action that submits all 16 screen-on/screen-off CPU/GPU min/max values as one validated transaction and applies them once.
+- Validation: reject saves outside Custom, malformed or unavailable frequencies, duplicate/missing values, and min/max inversions before saving. Keep edits visible after a failed save, clear them only after confirmed success, and warn before leaving Custom with unsaved edits.
+- Tests: cover preset locking, staged edits, one-call Save & Apply, unsaved-change confirmation, backend Custom-only enforcement, batch validation and rollback-safe failure handling.
+- Version: v4.0.10, versionCode 40. Changes are validated off-device; they do not replace the need to check frequency availability and apply/restore behavior on the target POCO F6 kernel.
+
+## v4.0.9
+- Fix (monitor UI): split CPU **Frequency** and **Utilization** into distinct values so the initial `—%` baseline stays on one line below its label, never wrapping into or across the frequency value. GPU utilization also uses a non-wrapping value row.
+- UI: remove the **How to read this** explainer card from Monitor to keep the live dashboard compact.
+- Feature (SOT): add a small red-outline Reset control with a reset icon in the Screen-on Time card and a matching **Reset SOT** button in Settings. SOT-only reset asks for confirmation and preserves Active/Idle Drain plus Screen-off time.
+- Reliability (SOT): automatically reset Screen-on Time at the beginning of every detected charger connection/charging cycle, even when the global **Reset data on charging** option is OFF. When that global option is ON, the existing full monitor-data reset also resets SOT. Generation checks reject in-flight pre-reset screen-time writes.
+- Tests: cover CPU/GPU utilization value layout, removal of the Monitor explainer, SOT-only reset and confirmation, preserved drain/screen-off values, cache generation guards, and SOT reset on charging with global reset disabled.
+- Version: v4.0.9, versionCode 39. Charging-cycle detection and UI layout still require confirmation on the target ROM/device.
+
+## v4.0.8
+- Fix (monitor UI): apply the same compact sizing rules to GPU and dynamically generated CPU cards, fixing mismatched padding, margins and card alignment in the two-column hardware grid.
+- Fix (GPU telemetry): separate **Frequency** (MHz) from **Utilization** (%) so the number and its label agree; show a clear unavailable/baseline state when utilization cannot yet be calculated. Temperature remains a separate value, with min/max frequency limits unchanged.
+- Tests: cover GPU card sizing consistency, metric label/value alignment, and direct/counter-based utilization display.
+- Version: v4.0.8, versionCode 38. The GPU sensors and layout still require confirmation on the target ROM/device.
+
+## v4.0.7
+- Feature (monitor): show persistent **Screen-on time** and **Screen-off time** totals on the Monitor page, alongside the Active/Idle Drain cards.
+- Accuracy (monitor): screen-time totals use only consecutive, same-state samples while on battery (including confirmed-unplugged Full/Not charging states); intervals crossing screen transitions, charging, disabled monitoring, or daemon restarts are discarded rather than guessed. Totals persist across WebUI reopen/reboot.
+- Reset semantics (monitor): charging-triggered auto-reset and manual Reset data clear screen-time totals together with the drain cache when the reset applies; disabling auto-reset preserves the existing totals across charging sessions. Monitoring preferences remain unchanged.
+- Tests: cover cache persistence/validation, on/off time accounting, charging reset behavior, state-transition exclusion, saved UI rendering and manual reset.
+- Version: v4.0.7, versionCode 37. On-device time accuracy and charging detection still require validation on the target ROM/kernel.
+
+## v4.0.6
+- UI: make **Monitor** the default startup page and reorder the dock to Monitor, CPU & GPU, Home, Kernel, Settings. Redesign the bottom navigation as a compact floating, rounded dock with clear active-state styling and safe-area spacing.
+- UI: move battery information and Active/Idle Drain to the top of Monitor, then show CPU and GPU hardware cards in a compact two-column layout, followed by the existing status and kernel information. The drain cards show only the latest valid rate and timestamp; no min/max/average statistics are added.
+- Feature (monitor): add Battery Monitor preferences for background sampling, a 15/30/60-second screen-on sampling interval (30 seconds by default), reset data on charging (enabled by default), and a confirmed manual Reset data action.
+- Feature (monitor): run a read-only battery-drain collector independently of WebUI visibility. It keeps screen-on active drain separate from screen-off idle drain, excludes charging windows, and discards unfinished windows at restart. Latest valid rates and timestamps persist across WebUI reopening, reboots and module updates in a stable Kprofiles Control data directory.
+- Safety (monitor): auto-reset and manual reset clear only Kprofiles Control's drain cache, generation-tag outstanding writes so old readings cannot return, preserve monitor settings, and never reset Android's system battery statistics. Invalid/missing readings remain “Collecting data”.
+- Tests: cover startup/navigation order, settings persistence and controls, cache reset semantics and generation guards, charging-triggered reset, and background daemon startup/read-only measurement inputs.
+- Version: v4.0.6, versionCode 36. The background monitor and charging/reset behavior still require on-device validation on the target ROM/kernel.
+
+## v4.0.5
+- Fix (monitor): persist last valid active and idle drain estimates in a small module-side cache as well as WebView localStorage, so a fresh KernelSU WebUI process can restore real values even when its localStorage is empty or unavailable.
+- Fix (monitor): render cached values immediately on Monitor entry, label cached active drain as “Last measured · refreshing”, and continue collecting fresh screen-on samples without bridging hidden/screen-off gaps.
+- Safety: cache writes are rate-limited for active samples, serialize through one queue, validate numeric rate/timestamp fields, and use restrictive file permissions. No value is invented; missing, stale, or invalid data remains “Collecting data”.
+- Tests: add shell-level persistence/validation tests and WebUI regression coverage for reopening separate WebUI instances with empty localStorage.
+- Version: v4.0.5, versionCode 35.
+
+## v4.0.4
+- Fix (monitor): consume a screen-off baseline exactly once when returning to a confirmed screen-on state; never let ordinary Monitor snapshots pair a stale baseline with active use.
+- Fix (monitor): discard the baseline if the return probe fails or cannot confirm screen-on, and ignore late screen-off probes that resolve after the WebView is visible again.
+- Accuracy (monitor): require a full two-minute idle sample window and a measurable positive battery drop before storing an idle-drain rate; zero/unchanged readings remain unavailable rather than masquerading as a measured rate.
+- Efficiency (tuning): keep the background watcher only when an enabled profile actually holds on-screen limits or enabled screen-off limits. Custom profiles with no active caps no longer poll needlessly.
+- Tests: cover unconfirmed/late idle probes, Monitor snapshots not consuming idle baselines, and empty Custom profiles not starting a watcher.
+- Version: v4.0.4, versionCode 34.
+
 ## v4.0.3
 - Efficiency (tuning): configurations that hold no limits at all (Performance, or Custom with nothing set and screen-off caps off) stop the background watcher instead of waking periodically with nothing to switch or re-assert.
 - Fix (audit): the watcher is kept whenever any limit is held, including Custom with screen-on caps and screen-off caps turned off. The watcher also re-asserts held limits and hands them back when the module is disabled or removed in the manager, so stopping it for such a profile would have left the caps in place until reboot. `tune.sh status` now reports `watcher_needed`, and the WebUI shows Not needed only when that is 0.

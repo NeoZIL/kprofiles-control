@@ -7,6 +7,9 @@ mkdir -p "$D" 2>/dev/null
 [ -f "$D/skip" ] && exit 0
 until [ "$(getprop sys.boot_completed)" = "1" ]; do sleep 2; done
 sleep 25
+# Battery monitoring starts independently of WebUI visibility and uses the same verified,
+# detached-start path as the WebUI recovery check. The helper avoids duplicate monitor processes.
+sh "$MODDIR/monitor-daemon.sh" ensure "$MODDIR" >> "$D/monitor.log" 2>&1
 {
   echo "boot: initializing exclusive controller source"
   ctl_out=$(sh "$MODDIR/control.sh" init 2>&1); ctl_rc=$?

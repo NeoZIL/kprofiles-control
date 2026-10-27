@@ -73,8 +73,16 @@ async function load(opts) {
   doc.visibilityState = "visible"; const visListeners = [];
   doc.addEventListener = (t, f) => { if (t === "visibilitychange") visListeners.push(f); };
   const calls = []; let clock = opts.now === undefined ? 1000000 : opts.now; const intervals = []; const timeouts = [];
+  const confirms = [];
   const win = { localStorage: {
-    getItem: (k) => (store.has(k) ? store.get(k) : null), setItem: (k, v) => { store.set(k, String(v)); }, removeItem: (k) => { store.delete(k); } } };
+    getItem: (k) => (store.has(k) ? store.get(k) : null), setItem: (k, v) => { store.set(k, String(v)); }, removeItem: (k) => { store.delete(k); }
+  }, confirm: (message) => { confirms.push(String(message)); return opts.confirm === undefined ? true : !!opts.confirm; } };
+  const NativeDate = Date;
+  const FakeDate = function (value) { return new NativeDate(value === undefined ? clock : value); };
+  FakeDate.now = () => clock;
+  FakeDate.parse = NativeDate.parse;
+  FakeDate.UTC = NativeDate.UTC;
+  FakeDate.prototype = NativeDate.prototype;
   const def = (cmd) => {
     if (/module\.prop/.test(cmd)) return ok("v3.1.0\n");
     if (/tune\.sh lists/.test(cmd)) return ok(LISTS);
@@ -89,14 +97,14 @@ async function load(opts) {
   const ctx = vm.createContext({
     window: win, document: doc, console,
     ksu: { exec(cmd, o, cb) { calls.push(cmd); Promise.resolve((opts.handler || def)(cmd, def)).then((r) => win[cb](r.errno, r.stdout, r.stderr)); } },
-    Date: { now: () => clock },
+    Date: FakeDate,
     setInterval: (f, ms) => { intervals.push(f); return intervals.length; }, clearInterval: (id) => { intervals[id - 1] = null; },
     setTimeout: (f, ms) => { timeouts.push({ f, at: clock + ms }); return timeouts.length; }, clearTimeout: (id) => { if (timeouts[id - 1]) timeouts[id - 1].f = null; },
   });
   vm.runInContext(script, ctx);
   const flush = async () => { for (let i = 0; i < 6; i++) await new Promise((r) => setImmediate(r)); };
   const c = {
-    doc, store, calls, flush,
+    doc, store, calls, confirms, flush,
     el: (id) => doc.getElementById(id),
     usable: () => doc.querySelectorAll(".opt, input, select").filter((e) => !e.disabled && e.id !== "resetAll" && !e.hasClass("retry")),
     msg: () => doc.getElementById("msg").textContent,
@@ -394,17 +402,23 @@ const deferred = () => { let res; const p = new Promise((r) => { res = r; }); re
     check("successful conflict resolution selects Module presets", c.el("sourceModuleBtn").getAttribute("aria-pressed") === "true", c.el("sourceModuleBtn").getAttribute("aria-pressed"));
     check("successful conflict resolution unlocks module presets", c.doc.all.filter((e) => e.hasAttribute("data-preset")).every((e) => !e.disabled), "a preset remains disabled");
   }
-  // 12. navigation is local; opening Monitor starts the read-only sampler
+  // 12. navigation is local; Monitor is the default route and the dock keeps all destinations accessible.
   {
     const c = await load();
     const before = c.calls.length;
-    check("navigation starts on Home", c.el("pageHome").style.display === "block" && c.el("navHome").getAttribute("aria-current") === "page", "Home not active");
+    check("navigation starts on Monitor", c.el("pageMonitor").style.display === "block" && c.el("navMonitor").getAttribute("aria-current") === "page", "Monitor not active");
+    check("dock is a floating rounded navigation surface", /\.bottom-nav-inner\{[^}]*border-radius:23px/.test(src) && /backdrop-filter:blur\(18px\)/.test(src), "modern dock styling not found");
+    check("dock order is Monitor, CPU & GPU, Home, Kernel, Settings", src.indexOf('id="navMonitor"') < src.indexOf('id="navCpu"') && src.indexOf('id="navCpu"') < src.indexOf('id="navHome"') && src.indexOf('id="navHome"') < src.indexOf('id="navKernel"') && src.indexOf('id="navKernel"') < src.indexOf('id="navSettings"'), "navigation order does not match proposal");
+    check("battery appears before CPU and GPU telemetry", src.indexOf('id="hwBatteryCard"') < src.indexOf('id="hwCpuCards"') && src.indexOf('id="hwCpuCards"') < src.indexOf('id="hwGpuCard"'), "hardware card order is wrong");
+    check("active and idle drain cards use latest rate only", /id="hwBatteryActiveDrain"/.test(src) && /id="hwBatteryIdleDrain"/.test(src) && !/Active Drain[\s\S]{0,300}(?:min|max|average)/i.test(src), "drain cards contain old statistics");
+    check("screen-on and screen-off time cards are present", /id="hwBatteryScreenOnTime"/.test(src) && /id="hwBatteryScreenOffTime"/.test(src), "screen time cards are missing");
+    check("screen time is described as battery-discharge-only", /screen-on\/off time[\s\S]{0,180}while discharging/i.test(src), "screen time collection scope is unclear");
     const routes = [
       ["navCpu", "pageCpu", "cpu"],
+      ["navHome", "pageHome", "home"],
       ["navKernel", "pageKernel", "kernel"],
-      ["navMonitor", "pageMonitor", "monitor"],
       ["navSettings", "pageSettings", "settings"],
-      ["navHome", "pageHome", "home"]
+      ["navMonitor", "pageMonitor", "monitor"]
     ];
     for (const [navId, pageId, key] of routes) {
       c.el(navId).fire("click");
@@ -413,12 +427,13 @@ const deferred = () => { let res; const p = new Promise((r) => { res = r; }); re
       check("navigation leaves exactly one page visible after " + key, visible.length === 1 && visible[0] === pageId, visible.join(","));
       await c.flush();
     }
-    check("only entering Monitor starts one read-only hardware sample", c.calls.length === before + 1 && c.sent(/monitor\.sh snapshot/) === 1, "before=" + before + " after=" + c.calls.length + " calls=" + c.calls.join(" | "));
+    check("entering Monitor starts one additional read-only hardware sample", c.calls.length === before + 1 && c.sent(/monitor\.sh snapshot/) === 2, "before=" + before + " after=" + c.calls.length + " calls=" + c.calls.join(" | "));
     check("live monitor shows all three POCO F6 CPU policies", c.el("hwCpuCards").children.length === 3, "cards=" + c.el("hwCpuCards").children.length);
     check("live monitor includes GPU and battery cards", !!c.el("hwGpuCard") && !!c.el("hwBatteryCard"), "missing card");
-    const monitorPageSource = src.slice(src.indexOf('<section class="page" id="pageMonitor"'), src.indexOf('<section class="page" id="pageSettings"'));
-    check("percentage calculation guide is at the end of Monitor", /How to read this/.test(monitorPageSource) && monitorPageSource.trim().endsWith('</section>') && /change in total CPU counters/.test(monitorPageSource), "missing detailed guide at bottom of Monitor");
-    check("CPU current frequency and utilization share the agreed format", c.el("hwCpuFrequency_0").textContent === "1018 MHz (—%)", c.el("hwCpuFrequency_0").textContent);
+    const monitorPageSource = src.slice(src.indexOf('id="pageMonitor"'), src.indexOf('id="pageSettings"', src.indexOf('id="pageMonitor"')));
+    check("How to read explainer is removed from Monitor", !/How to read this/.test(monitorPageSource), "explainer still appears");
+    check("CPU current frequency is displayed independently", c.el("hwCpuFrequency_0").textContent === "1018 MHz", c.el("hwCpuFrequency_0").textContent);
+    check("CPU utilization always occupies a separate non-wrapping value", c.el("hwCpuUtilization_0").textContent === "—%" && /hw-usage/.test(src) && /white-space:nowrap;overflow-wrap:normal/.test(src), c.el("hwCpuUtilization_0").textContent);
     check("CPU active min/max limits, not hardware maxima, are displayed", c.el("hwCpuMin_0").textContent === "595.2 MHz" && c.el("hwCpuMax_0").textContent === "1017.6 MHz", c.el("hwCpuMin_0").textContent + " / " + c.el("hwCpuMax_0").textContent);
     check("temperature badge uses blue Normal below 38C", c.el("hwCpuStatus_0").textContent === "Normal" && c.el("hwCpuStatus_0").className.indexOf("hw-temp-normal") >= 0, c.el("hwCpuStatus_0").className);
     check("temperature badge uses yellow Warm at 50C SoC temperature", c.el("hwCpuStatus_1").textContent === "Warm" && c.el("hwCpuStatus_1").className.indexOf("hw-temp-warm") >= 0, c.el("hwCpuStatus_1").className);
@@ -426,7 +441,9 @@ const deferred = () => { let res; const p = new Promise((r) => { res = r; }); re
     const warmSoc45 = await load({ handler: (cmd, def) => { const r = def(cmd); return /monitor\.sh snapshot/.test(cmd) ? ok(r.stdout.replace("thermal_3_raw=75000", "thermal_3_raw=45000")) : r; } });
     warmSoc45.el("navMonitor").fire("click"); await warmSoc45.flush();
     check("45C SoC temperature is Warm rather than a false Hot alert", warmSoc45.el("hwCpuStatus_2").textContent === "Warm", warmSoc45.el("hwCpuStatus_2").textContent);
-    check("GPU frequency, activity and allowed range are displayed", c.el("hwGpuFrequency").textContent === "684 MHz (27%)" && c.el("hwGpuMin").textContent === "255 MHz" && c.el("hwGpuMax").textContent === "736 MHz", c.el("hwGpuFrequency").textContent);
+    check("GPU frequency and utilization are displayed in separately labelled values", c.el("hwGpuFrequency").textContent === "684 MHz" && c.el("hwGpuUtilization").textContent === "27%" && c.el("hwGpuMin").textContent === "255 MHz" && c.el("hwGpuMax").textContent === "736 MHz", c.el("hwGpuFrequency").textContent + " / " + c.el("hwGpuUtilization").textContent);
+    check("GPU frequency, utilization and temperature labels match their value fields", /<div class="hw-label">Frequency<\/div><div class="hw-value" id="hwGpuFrequency">/.test(src) && /<div class="hw-label">Utilization<\/div><div class="hw-value" id="hwGpuUtilization">/.test(src) && /<div class="hw-label">Temperature<\/div><div class="hw-value hw-temperature-value" id="hwGpuTemperature">/.test(src), "GPU metric label mismatch");
+    check("compact card sizing applies equally to nested CPU cards and the GPU card", /\.hw-hardware-grid \.hw-card\{min-width:0;margin:0;padding:12px;border-radius:15px\}/.test(src) && !/\.hw-hardware-grid>\.hw-card\{/.test(src), "GPU-only sizing selector remains");
     check("battery charge uses its own state and color class", c.el("hwBatteryStatus").textContent === "Normal" && c.el("hwBatteryStatus").className.indexOf("hw-charge-normal") >= 0, c.el("hwBatteryStatus").className);
     check("battery temperature has its own temperature badge", c.el("hwBatteryTempStatus").textContent === "Normal" && c.el("hwBatteryTemperature").textContent === "30.6°C", c.el("hwBatteryTempStatus").textContent + " / " + c.el("hwBatteryTemperature").textContent);
     const warmBattery = await load({ handler: (cmd, def) => { const r = def(cmd); return /monitor\.sh snapshot/.test(cmd) ? ok(r.stdout.replace("battery_temp=306", "battery_temp=400")) : r; } });
@@ -442,11 +459,11 @@ const deferred = () => { let res; const p = new Promise((r) => { res = r; }); re
     check("header gear opens Settings", c.el("pageSettings").style.display === "block", c.el("pageSettings").style.display);
     c.el("homeMonitor").fire("click"); await c.flush();
     check("Home Live Monitoring card opens Monitor", c.el("pageMonitor").style.display === "block", c.el("pageMonitor").style.display);
-    check("Home Live Monitoring card starts the same sampler", c.sent(/monitor\.sh snapshot/) === 2, "samples=" + c.sent(/monitor\.sh snapshot/));
+    check("Home Live Monitoring card starts the same sampler", c.sent(/monitor\.sh snapshot/) === 3, "samples=" + c.sent(/monitor\.sh snapshot/));
     c.el("navHome").fire("click");
     c.el("homeOpenMonitor").fire("click"); await c.flush();
     check("Home Details shortcut still opens Monitor", c.el("pageMonitor").style.display === "block", c.el("pageMonitor").style.display);
-    check("Monitor sampling stops when navigating away", c.sent(/monitor\.sh snapshot/) === 3, "samples=" + c.sent(/monitor\.sh snapshot/));
+    check("Monitor navigation starts a fresh sample after Home shortcuts", c.sent(/monitor\.sh snapshot/) === 4, "samples=" + c.sent(/monitor\.sh snapshot/));
   }
   // 12. vendor-independent GPU counter fallback and battery charge thresholds
   {
@@ -461,9 +478,9 @@ const deferred = () => { let res; const p = new Promise((r) => { res = r; }); re
       return result;
     }});
     g.el("navMonitor").fire("click"); await g.flush();
-    check("GPU busy counter fallback waits for a second sample", g.el("hwGpuFrequency").textContent === "684 MHz (—%)", g.el("hwGpuFrequency").textContent);
+    check("GPU busy counter fallback waits for a second sample", g.el("hwGpuFrequency").textContent === "684 MHz" && g.el("hwGpuUtilization").textContent === "—%", g.el("hwGpuFrequency").textContent + " / " + g.el("hwGpuUtilization").textContent);
     await g.advance(5000);
-    check("GPU busy counter fallback calculates utilization from delta", g.el("hwGpuFrequency").textContent === "684 MHz (50%)", g.el("hwGpuFrequency").textContent);
+    check("GPU busy counter fallback calculates utilization from delta", g.el("hwGpuFrequency").textContent === "684 MHz" && g.el("hwGpuUtilization").textContent === "50%", g.el("hwGpuFrequency").textContent + " / " + g.el("hwGpuUtilization").textContent);
     g.el("navHome").fire("click");
 
     const powerFallback = await load({ handler: (cmd, def) => {
@@ -498,24 +515,21 @@ const deferred = () => { let res; const p = new Promise((r) => { res = r; }); re
       b.el("navHome").fire("click");
     }
   }
-  // 13. Audit fixes: drain across a screen-off gap, and an unreadable controller status
+  // Drain rates are now generated by the persistent daemon; the WebUI only displays durable cache results.
   {
-    let n = 0;
-    const d = await load({ handler: (cmd, def) => {
-      const r = def(cmd);
-      if (/monitor\.sh snapshot/.test(cmd)) { n++; return ok(r.stdout.replace("battery_charge_counter=2891000", "battery_charge_counter=" + (2891000 - n * 1000))); }
-      return r;
-    }});
-    d.el("navMonitor").fire("click"); await d.flush();
-    for (let i = 0; i < 52; i++) await d.advance(2500);
-    check("active drain shows a rate once two screen-on samples are 2+ minutes apart", /%\/h$/.test(d.el("hwBatteryActiveDrain").textContent), d.el("hwBatteryActiveDrain").textContent);
-    check("active drain saves the last measured rate across a WebUI reopen", d.store.has("kprofiles-ui-monitor-active-rate-v1"), Array.from(d.store.keys()).join(","));
-    await d.setVisible(false);          // screen off / page hidden for 20 minutes
-    await d.advance(1200000);
-    await d.setVisible(true);
-    check("after a hidden gap the last active rate remains visible while refreshing", /%\/h$/.test(d.el("hwBatteryActiveDrain").textContent) && /Last measured/.test(d.el("hwBatteryActiveSub").textContent), d.el("hwBatteryActiveDrain").textContent + " / " + d.el("hwBatteryActiveSub").textContent);
-    for (let i = 0; i < 52; i++) await d.advance(2500);
-    check("active drain returns to live screen-on samples after a new window", /%\/h$/.test(d.el("hwBatteryActiveDrain").textContent) && d.el("hwBatteryActiveSub").textContent === "Screen-on samples", d.el("hwBatteryActiveDrain").textContent + " / " + d.el("hwBatteryActiveSub").textContent);
+    const disk = { active_rate: "4.2", active_time: "1700000000000", idle_rate: "1.8", idle_time: "1700000000000", screen_on_ms: "3600000", screen_off_ms: "5400000", monitor_enabled: "1", sampling_interval: "30", reset_on_charging: "1", generation: "0", reset_time: "0", last_charger: "disconnected" };
+    const handler = (cmd, def) => {
+      if (/monitor-cache\.sh get/.test(cmd)) return ok(Object.keys(disk).map((k) => k + "=" + disk[k]).join("\n") + "\n");
+      return def(cmd);
+    };
+    const c = await load({ now: 1700000005000, handler });
+    await c.flush();
+    check("background daemon cache restores active rate without foreground sampling", c.el("hwBatteryActiveDrain").textContent === "4.2%/h", c.el("hwBatteryActiveDrain").textContent);
+    check("background daemon cache restores idle rate separately", c.el("hwBatteryIdleDrain").textContent === "1.8%/h", c.el("hwBatteryIdleDrain").textContent);
+    check("saved screen-on time is restored from the persistent cache", c.el("hwBatteryScreenOnTime").textContent === "1h 0m", c.el("hwBatteryScreenOnTime").textContent);
+    check("saved screen-off time is restored independently", c.el("hwBatteryScreenOffTime").textContent === "1h 30m", c.el("hwBatteryScreenOffTime").textContent);
+    check("saved drain readings include a separate timestamp", /Last saved/.test(c.el("hwBatteryActiveSub").textContent) && /Last saved/.test(c.el("hwBatteryIdleSub").textContent), c.el("hwBatteryActiveSub").textContent + " / " + c.el("hwBatteryIdleSub").textContent);
+    check("WebUI does not create screen-off sampling baselines", !c.store.has("kprofiles-ui-monitor-idle-baseline-v1"), Array.from(c.store.keys()).join(","));
   }
   {
     const c = await load({ handler: (cmd, def) => (/control\.sh status/.test(cmd) ? { errno: 1, stdout: "", stderr: "sh: control.sh: not found" } : def(cmd)) });
@@ -529,32 +543,6 @@ const deferred = () => { let res; const p = new Promise((r) => { res = r; }); re
     check("legacy controller state is a choice conflict, not Module presets", legacy.el("controlSourcePill").textContent === "Choose one" && legacy.el("controlSourceConflict").style.display === "block", legacy.el("controlSourcePill").textContent);
     check("legacy conflict leaves controller choices available for explicit resolution", !legacy.el("sourceModuleBtn").disabled && !legacy.el("sourceKernelBtn").disabled, "controller choice buttons are disabled");
   }
-  // Screen-off baseline capture and completion must work from Home, independently of Monitor sampling.
-  {
-    const c = await load();
-    c.el("navHome").fire("click");
-    await c.setVisible(false);
-    check("screen-off battery sample is attempted from Home too", c.sent(/monitor\.sh screen/) === 1, c.calls.join(" | "));
-    check("confirmed screen-off battery baseline is saved from Home", c.store.has("kprofiles-ui-monitor-idle-baseline-v1"), Array.from(c.store.keys()).join(","));
-  }
-  {
-    let screenCalls = 0;
-    const c = await load({ now: 1000000, handler: (cmd, def) => {
-      if (/monitor\.sh screen/.test(cmd)) {
-        screenCalls++;
-        if (screenCalls === 1) return ok("screen_state=off\nbattery_status=Discharging\nbattery_capacity=68\nbattery_charge_counter=2891000\nbattery_charge_full=4425000\n");
-        return ok("screen_state=on\nbattery_status=Discharging\nbattery_capacity=68\nbattery_charge_counter=2871000\nbattery_charge_full=4425000\n");
-      }
-      return def(cmd);
-    }});
-    await c.setVisible(false);
-    await c.advance(130000);
-    await c.setVisible(true);
-    check("idle rate is finalized on return even while Home is selected", c.store.has("kprofiles-ui-monitor-idle-rate-v1"), Array.from(c.store.keys()).join(","));
-    check("a successful idle sample consumes the baseline", !c.store.has("kprofiles-ui-monitor-idle-baseline-v1"), Array.from(c.store.keys()).join(","));
-    c.el("navMonitor").fire("click"); await c.flush();
-    check("Monitor displays the saved idle rate on entry", /%\/h$/.test(c.el("hwBatteryIdleDrain").textContent), c.el("hwBatteryIdleDrain").textContent);
-  }
   {
     const now = 1005000;
     const c = await load({ now, storage: {
@@ -563,27 +551,145 @@ const deferred = () => { let res; const p = new Promise((r) => { res = r; }); re
     }});
     c.el("navMonitor").fire("click"); await c.flush();
     check("cached active rate is shown immediately after reopening the WebUI", c.el("hwBatteryActiveDrain").textContent === "4.2%/h", c.el("hwBatteryActiveDrain").textContent);
-    check("cached active rate is labelled as the last measurement", /Last measured/.test(c.el("hwBatteryActiveSub").textContent), c.el("hwBatteryActiveSub").textContent);
+    check("cached active rate is labelled as the last measurement", /Last saved/.test(c.el("hwBatteryActiveSub").textContent), c.el("hwBatteryActiveSub").textContent);
     check("cached idle rate is shown immediately after reopening the WebUI", c.el("hwBatteryIdleDrain").textContent === "1.8%/h", c.el("hwBatteryIdleDrain").textContent);
   }
-  // A screen-off window that cannot be measured when the screen returns (too short, or no battery change) must be
-  // discarded, not kept: otherwise ordinary screen-on use is later paired with it and stored as an idle drain rate.
-  for (const [label, offMs, onCounter] of [["a 30 s screen toggle", 30000, 2890000], ["a 130 s window with no battery change", 130000, 2891000]]) {
-    let screenCalls = 0, n = 0;
-    const c = await load({ now: 1000000, handler: (cmd, def) => {
-      if (/monitor\.sh screen/.test(cmd)) {
-        screenCalls++;
-        if (screenCalls === 1) return ok("screen_state=off\nbattery_status=Discharging\nbattery_capacity=68\nbattery_charge_counter=2891000\nbattery_charge_full=4425000\n");
-        return ok("screen_state=on\nbattery_status=Discharging\nbattery_capacity=68\nbattery_charge_counter=" + onCounter + "\nbattery_charge_full=4425000\n");
+  // Durable cache must restore the last real rates even when a manager WebView starts with empty localStorage.
+  {
+    const disk = { active_rate: "4.2", active_time: "1000000", idle_rate: "1.8", idle_time: "1000000" };
+    const handler = (cmd, def) => {
+      if (/monitor-cache\.sh get/.test(cmd)) return ok(Object.keys(disk).map((k) => k + "=" + disk[k]).join("\n") + "\n");
+      if (/monitor-cache\.sh set-(active|idle)/.test(cmd)) {
+        const m = cmd.match(/set-(active|idle) ([0-9.]+) ([0-9]+)/);
+        if (m) { disk[m[1] + "_rate"] = m[2]; disk[m[1] + "_time"] = m[3]; }
+        return ok("");
       }
-      if (/monitor\.sh snapshot/.test(cmd)) { n++; const r = def(cmd); return ok(r.stdout.replace("battery_charge_counter=2891000", "battery_charge_counter=" + (2890000 - n * 1000))); }
       return def(cmd);
-    }});
-    await c.setVisible(false); await c.advance(offMs); await c.setVisible(true);
-    check("unmeasurable idle window (" + label + ") is discarded on return", !c.store.has("kprofiles-ui-monitor-idle-baseline-v1"), Array.from(c.store.keys()).join(","));
-    c.el("navMonitor").fire("click"); await c.flush();
-    for (let i = 0; i < 80; i++) await c.advance(2500);   // ~200 s of ordinary screen-on use
-    check("screen-on use after " + label + " is not recorded as an idle rate", !c.store.has("kprofiles-ui-monitor-idle-rate-v1"), c.store.get("kprofiles-ui-monitor-idle-rate-v1"));
+    };
+    const first = await load({ now: 1005000, handler });
+    await first.flush();
+    first.el("navMonitor").fire("click"); await first.flush();
+    check("durable cache restores active drain when localStorage is empty", first.el("hwBatteryActiveDrain").textContent === "4.2%/h", first.el("hwBatteryActiveDrain").textContent);
+    check("durable cache restores idle drain when localStorage is empty", first.el("hwBatteryIdleDrain").textContent === "1.8%/h", first.el("hwBatteryIdleDrain").textContent);
+    const reopened = await load({ now: 1006000, handler });
+    await reopened.flush();
+    reopened.el("navMonitor").fire("click"); await reopened.flush();
+    check("active drain survives a second WebUI process with empty localStorage", reopened.el("hwBatteryActiveDrain").textContent === "4.2%/h", reopened.el("hwBatteryActiveDrain").textContent);
+    check("idle drain survives a second WebUI process with empty localStorage", reopened.el("hwBatteryIdleDrain").textContent === "1.8%/h", reopened.el("hwBatteryIdleDrain").textContent);
+  }
+  // A failed durable-cache read must not look like fresh zero totals or silently imply a reset.
+  {
+    const c = await load({ handler: (cmd, def) => (/monitor-cache\.sh get/.test(cmd) ? { errno: 1, stdout: "", stderr: "cache read failed" } : def(cmd) ) });
+    await c.flush();
+    check("failed cache read shows screen-on time as Unavailable, not 0m", c.el("hwBatteryScreenOnTime").textContent === "Unavailable", c.el("hwBatteryScreenOnTime").textContent);
+    check("failed cache read shows screen-off time as Unavailable, not 0m", c.el("hwBatteryScreenOffTime").textContent === "Unavailable", c.el("hwBatteryScreenOffTime").textContent);
+    check("failed cache read does not claim the drain data is still collecting", c.el("hwBatteryActiveDrain").textContent === "Unavailable" && c.el("hwBatteryIdleDrain").textContent === "Unavailable", c.el("hwBatteryActiveDrain").textContent + " / " + c.el("hwBatteryIdleDrain").textContent);
+  }
+  // Settings are stored in the durable cache and manual reset clears only drain data.
+  {
+    const disk = { active_rate: "4.2", active_time: "1700000000000", idle_rate: "1.8", idle_time: "1700000000000", screen_on_ms: "3600000", screen_off_ms: "5400000", monitor_enabled: "1", sampling_interval: "30", reset_on_charging: "1", generation: "0", reset_time: "0", last_charger: "disconnected" };
+    const serialize = () => Object.keys(disk).map((k) => k + "=" + disk[k]).join("\n") + "\n";
+    const handler = (cmd, def) => {
+      if (/monitor-cache\.sh get/.test(cmd)) return ok(serialize());
+      let m;
+      if ((m = cmd.match(/monitor-cache\.sh set-enabled ([01])/))) { disk.monitor_enabled = m[1]; return ok(""); }
+      if ((m = cmd.match(/monitor-cache\.sh set-interval (15|30|60)/))) { disk.sampling_interval = m[1]; return ok(""); }
+      if ((m = cmd.match(/monitor-cache\.sh set-reset-on-charging ([01])/))) { disk.reset_on_charging = m[1]; return ok(""); }
+      if (/monitor-cache\.sh reset-screen-on-time/.test(cmd)) {
+        disk.screen_on_ms = "0";
+        disk.generation = String(Number(disk.generation) + 1); disk.reset_time = "1700000006000"; return ok("");
+      }
+      if (/monitor-cache\.sh reset-data/.test(cmd)) {
+        disk.active_rate = ""; disk.active_time = ""; disk.idle_rate = ""; disk.idle_time = "";
+        disk.screen_on_ms = "0"; disk.screen_off_ms = "0";
+        disk.generation = String(Number(disk.generation) + 1); disk.reset_time = "1700000006000"; return ok("");
+      }
+      return def(cmd);
+    };
+    const c = await load({ now: 1700000005000, handler });
+    await c.flush();
+    check("Battery Monitor settings default to 30 seconds", c.el("bmInterval30").getAttribute("aria-pressed") === "true" && c.el("bmIntervalLabel").textContent === "Current: 30 seconds", c.el("bmIntervalLabel").textContent);
+    check("reset-on-charging defaults ON", c.el("bmResetChargeToggle").checked === true, String(c.el("bmResetChargeToggle").checked));
+    c.el("bmInterval60").fire("click"); await c.flush();
+    check("60-second interval is persisted", disk.sampling_interval === "60" && c.el("bmInterval60").getAttribute("aria-pressed") === "true", serialize());
+    c.el("bmMonitorToggle").checked = false; c.el("bmMonitorToggle").fire("change"); await c.flush();
+    check("background monitoring toggle persists OFF", disk.monitor_enabled === "0", serialize());
+    c.el("bmResetChargeToggle").checked = false; c.el("bmResetChargeToggle").fire("change"); await c.flush();
+    check("reset-on-charging toggle persists OFF", disk.reset_on_charging === "0", serialize());
+    check("SOT reset button exists in Settings and on the SOT card", !!c.el("bmResetSot") && !!c.el("hwResetSotMini"), "one or both SOT reset buttons missing");
+    c.el("bmResetSot").fire("click"); await c.flush();
+    check("SOT-only reset asks for confirmation", c.confirms.length === 1 && /Only the saved screen-on time/.test(c.confirms[0]), c.confirms.join(" | "));
+    check("SOT-only reset clears the on-time display", disk.screen_on_ms === "0" && c.el("hwBatteryScreenOnTime").textContent === "0m", disk.screen_on_ms + "/" + c.el("hwBatteryScreenOnTime").textContent);
+    check("SOT-only reset preserves screen-off time and drain rates", disk.screen_off_ms === "5400000" && disk.active_rate === "4.2" && disk.idle_rate === "1.8", serialize());
+    check("SOT-only reset uses the generation guard", disk.generation === "1", disk.generation);
+    c.el("bmResetData").fire("click"); await c.flush();
+    check("manual Reset data asks for confirmation", c.confirms.length === 2 && /Android battery statistics/.test(c.confirms[1]), c.confirms.join(" | "));
+    check("manual Reset clears both saved drain rates and timestamps", !disk.active_rate && !disk.active_time && !disk.idle_rate && !disk.idle_time && c.el("hwBatteryActiveDrain").textContent === "Collecting data" && c.el("hwBatteryIdleDrain").textContent === "Collecting data", serialize());
+    check("manual Reset also clears both screen-time totals", disk.screen_on_ms === "0" && disk.screen_off_ms === "0" && c.el("hwBatteryScreenOnTime").textContent === "0m" && c.el("hwBatteryScreenOffTime").textContent === "0m", serialize());
+    check("manual Reset increments cache generation to prevent stale writes", disk.generation === "2", disk.generation);
+    check("manual Reset preserves monitor preferences", disk.monitor_enabled === "0" && disk.sampling_interval === "60" && disk.reset_on_charging === "0", serialize());
+  }
+  {
+    const disk = { active_rate: "4.2", active_time: "1700000000000", idle_rate: "1.8", idle_time: "1700000000000", screen_on_ms: "3600000", screen_off_ms: "5400000", monitor_enabled: "1", sampling_interval: "30", reset_on_charging: "1", generation: "0", reset_time: "0", last_charger: "disconnected" };
+    const handler = (cmd, def) => {
+      if (/monitor-cache\.sh get/.test(cmd)) return ok(Object.keys(disk).map((k) => k + "=" + disk[k]).join("\n") + "\n");
+      if (/monitor-cache\.sh reset-data/.test(cmd)) return { errno: 1, stdout: "", stderr: "write denied" };
+      return def(cmd);
+    };
+    const c = await load({ now: 1700000005000, confirm: false, handler });
+    await c.flush();
+    c.el("bmResetData").fire("click"); await c.flush();
+    check("cancelled manual Reset sends no reset command", c.sent(/monitor-cache\.sh reset-data/) === 0, c.calls.join(" | "));
+    c.el("hwResetSotMini").fire("click"); await c.flush();
+    check("cancelled SOT-card Reset sends no reset command", c.sent(/monitor-cache\.sh reset-screen-on-time/) === 0, c.calls.join(" | "));
+    check("cancelled manual Reset leaves the saved rate visible", c.el("hwBatteryActiveDrain").textContent === "4.2%/h", c.el("hwBatteryActiveDrain").textContent);
+  }
+  // The compact SOT-card reset button uses the same isolated reset path as Settings.
+  {
+    const disk = { active_rate: "4.2", active_time: "1700000000000", idle_rate: "1.8", idle_time: "1700000000000", screen_on_ms: "3600000", screen_off_ms: "5400000", monitor_enabled: "1", sampling_interval: "30", reset_on_charging: "1", generation: "0", reset_time: "0", last_charger: "disconnected" };
+    const serialize = () => Object.keys(disk).map((k) => k + "=" + disk[k]).join("\n") + "\n";
+    const handler = (cmd, def) => {
+      if (/monitor-cache\.sh get/.test(cmd)) return ok(serialize());
+      if (/monitor-cache\.sh reset-screen-on-time/.test(cmd)) {
+        disk.screen_on_ms = "0"; disk.generation = String(Number(disk.generation) + 1); return ok("");
+      }
+      return def(cmd);
+    };
+    const c = await load({ now: 1700000005000, handler }); await c.flush();
+    c.el("hwResetSotMini").fire("click"); await c.flush();
+    check("SOT-card Reset successfully invokes the isolated reset command", c.sent(/monitor-cache\.sh reset-screen-on-time/) === 1, c.calls.join(" | "));
+    check("SOT-card Reset clears only screen-on total", disk.screen_on_ms === "0" && c.el("hwBatteryScreenOnTime").textContent === "0m" && disk.screen_off_ms === "5400000", serialize());
+    check("SOT-card Reset leaves valid active/idle rates intact", disk.active_rate === "4.2" && disk.idle_rate === "1.8", serialize());
+  }
+  // Frequency selectors are read-only for built-in profiles; Custom stages edits and submits one batch.
+  {
+    const ph = livePhone("tilt");
+    const c = await load({ handler: ph.handler }); await c.flush();
+    const pickerIds = ["sel-on-little-min", "sel-on-little-max", "sel-off-gpu-max"];
+    check("built-in preset locks frequency selectors", pickerIds.every((id) => c.el(id).disabled), pickerIds.map((id) => id + "=" + c.el(id).disabled).join(","));
+    check("Save & Apply stays disabled under built-in presets", c.el("saveApplyCustom").disabled === true, String(c.el("saveApplyCustom").disabled));
+    clickPreset(c, "custom"); await c.flush(); await c.advance(9000);
+    check("Custom unlocks frequency selectors after the profile cooldown", pickerIds.every((id) => !c.el(id).disabled), pickerIds.map((id) => id + "=" + c.el(id).disabled).join(","));
+    const cfgBefore = c.sent(/tune\.sh cfg /);
+    c.el("sel-on-little-max").value = "787200"; c.el("sel-on-little-max").fire("change"); await c.flush();
+    check("editing a selector does not apply it immediately", c.sent(/tune\.sh cfg /) === cfgBefore && c.sent(/tune\.sh custom-save/) === 0, c.calls.filter((x) => /tune\.sh (cfg|custom-save)/.test(x)).join(" | "));
+    check("pending edits enable Save & Apply", c.el("saveApplyCustom").disabled === false && /Unsaved custom changes/.test(c.el("customDraftStatus").textContent), c.el("customDraftStatus").textContent);
+    c.el("saveApplyCustom").fire("click"); await c.flush();
+    const batch = c.calls.find((x) => /tune\.sh custom-save /.test(x)) || "";
+    const batchArgs = batch.replace(/^.*tune\.sh custom-save /, "").trim().split(/\s+/);
+    check("Save & Apply sends one batch containing all 16 key/value pairs", !!batch && batchArgs.length === 32, "arg count=" + batchArgs.length + " command=" + batch);
+    check("Save & Apply submits the staged value and Default values", /ON_LITTLE_MAX 787200/.test(batch) && /OFF_GPU_MAX -/.test(batch), batch);
+    check("successful batch clears the unsaved state", c.el("saveApplyCustom").disabled === true && !/Unsaved custom changes/.test(c.el("customDraftStatus").textContent), c.el("customDraftStatus").textContent);
+  }
+  {
+    const ph = livePhone("tilt");
+    const c = await load({ handler: ph.handler, confirm: false }); await c.flush();
+    clickPreset(c, "custom"); await c.flush(); await c.advance(9000);
+    c.el("sel-on-big-max").value = "2188800"; c.el("sel-on-big-max").fire("change"); await c.flush();
+    const before = c.sent(/tune\.sh preset performance/);
+    clickPreset(c, "performance"); await c.flush();
+    check("switching profile asks before discarding unsaved custom edits", c.confirms.some((m) => /Discard unsaved Custom frequency edits/.test(m)), c.confirms.join(" | "));
+    check("cancelled profile switch preserves Custom and its draft", ph.s.preset === "custom" && c.sent(/tune\.sh preset performance/) === before && /Unsaved custom changes/.test(c.el("customDraftStatus").textContent), ph.s.preset + "/" + c.calls.join(" | "));
   }
   process.exit(fail);
 })().catch((e) => { console.log("FAIL the test itself crashed: " + (e && e.stack || e)); process.exit(1); });

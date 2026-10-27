@@ -46,10 +46,32 @@ battery_fields() {
     case "$BTYPE" in [Bb]attery) BATT_DIR=$d; break ;; esac
     [ "${d##*/}" = battery ] && BATT_DIR=$d
   done
-  [ -n "$BATT_DIR" ] || return 0
-  for a in status capacity current_now current_avg voltage_now power_now temp charge_counter charge_full charge_full_design energy_now energy_full time_to_empty_now time_to_full_now; do
-    emit_file "battery_$a" "$BATT_DIR/$a"
+  if [ -n "$BATT_DIR" ]; then
+    for a in status capacity current_now current_avg voltage_now power_now temp charge_counter charge_full charge_full_design energy_now energy_full time_to_empty_now time_to_full_now; do
+      emit_file "battery_$a" "$BATT_DIR/$a"
+    done
+  fi
+  # Detect a connected charger even when the battery status reports "Full" or "Not charging".
+  # This only reads standard power_supply online nodes and never writes hardware state.
+  charger_online=unknown
+  charger_seen=0
+  for d in "$SYS_ROOT"/class/power_supply/*; do
+    [ -d "$d" ] || continue
+    [ "$d" != "$BATT_DIR" ] || continue
+    supply_type=
+    read_value "$d/type" && supply_type=$VALUE
+    supply_name=${d##*/}
+    case "$supply_type:$supply_name" in
+      Mains:*|USB:*|USB_C:*|Wireless:*|Usb*:*|*usb*:*|*USB*:*|*mains*:*|*wireless*:*|*typec*:*|*AC:*)
+        if read_value "$d/online"; then
+          charger_seen=1
+          if [ "$VALUE" = 1 ]; then charger_online=1; break; fi
+        fi
+        ;;
+    esac
   done
+  if [ "$charger_online" != 1 ] && [ "$charger_seen" = 1 ]; then charger_online=0; fi
+  printf 'charger_online=%s\n' "$charger_online"
 }
 
 screen_state() {

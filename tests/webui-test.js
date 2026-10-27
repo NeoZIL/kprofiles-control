@@ -18,10 +18,19 @@ check("latest reset failure persists recovery details", /recoveryLatest = resetD
 check("request exception persists recovery details", /request failed before recovery could be confirmed[\s\S]{0,120}persistRecoveryLock\(\);/.test(src), "request failure details are not persisted");
 check("CPU current frequency formatter includes MHz", /function hwFormatCpuCurrent\(khz\)[\s\S]{0,180}\+ \" MHz\"/.test(src), "CPU current frequency unit is missing");
 check("GPU current frequency formatter includes MHz", /function hwFormatGpuCurrent\(hz\)[\s\S]{0,180}\+ \" MHz\"/.test(src), "GPU current frequency unit is missing");
-check("Monitor explains CPU utilization math at the bottom", /change in total CPU counters[\s\S]{0,140}idle and I\/O-wait counters/.test(src), "CPU utilization formula is missing");
-check("Monitor distinguishes utilization from frequency/max percentage", /percentage in brackets is utilization, not frequency as a percentage of maximum/.test(src), "percentage explanation is ambiguous");
+check("Monitor removes the How to read explainer card", !/id="pageMonitor"[\s\S]*?How to read this/.test(src), "the guide still appears on Monitor");
+check("Monitor removes the drain and screen-time explanatory notes", !/Drain rates are estimates from measured battery change\./.test(src) && !/Screen-on\/off time is accumulated conservatively/.test(src) && !/Live hardware readings first, then tuning-engine and kernel status\./.test(src), "monitor explainer note still appears");
+check("CPU/GPU and status cards share one width-safe grid", /\.hw-hardware-grid \.hw-status-card\{grid-column:1\/-1;min-width:0;width:100%;box-sizing:border-box;justify-self:stretch;align-self:stretch\}/.test(src) && /\.hw-hardware-grid #hwCpuCards>\.hw-card\{width:100%;min-width:0;box-sizing:border-box\}/.test(src), "hardware/status grid alignment guard is missing");
+check("cache read failure is shown as Unavailable instead of a false zero", /hwDiskCacheLoaded = false, hwDiskCacheReadFailed = false/.test(src) && /if \(!hwDiskCacheLoaded\)[\s\S]{0,120}Unavailable/.test(src), "first cache read failure can masquerade as a reset");
+check("CPU frequency and utilization are rendered into separate value fields", /hwMetric\(grid, "Frequency", "hwCpuFrequency_" \+ index\)[\s\S]{0,160}hwCpuUtilization_/.test(src) && /hwSet\("hwCpuUtilization_" \+ index, usage === null \? "—%" : usage \+ "%"\)/.test(src), "CPU percentage remains attached to the frequency value");
+check("CPU and GPU utilization always appear on their own row below frequency", /hw-hardware-grid \.hw-usage\{grid-column:1 \/ -1\}/.test(src) && /hw-hardware-grid \.hw-usage \.hw-value\{white-space:nowrap;overflow-wrap:normal\}/.test(src) && /class="hw-metric hw-usage"[^>]*>[\s\S]{0,180}id="hwGpuUtilization"/.test(src), "percentage row placement or wrap guard is missing");
+check("SOT reset controls and cache command are wired", /id="bmResetSot"/.test(src) && /id="hwResetSotMini"/.test(src) && /monitor-cache\.sh reset-screen-on-time/.test(src), "one or more SOT reset controls are missing");
 check("Home banner uses the actual kernel mode when Kernel profile owns tuning", /controllerSource === \"kernel\"[\s\S]{0,700}kernelModeLabel\(\)/.test(src), "current profile banner remains tied to the module preset");
 
+check("frequency selectors are locked unless Custom is active", /var presetLocked = isFrequencyPicker && \(!st \|\| st\.preset !== "custom"\)/.test(src) && /Select Custom to unlock them/.test(src), "preset frequency locking is missing");
+check("Custom frequency edits are staged instead of applied on each change", /customDraft\[key\] = value;[\s\S]{0,160}customDraftDirty = true;/.test(src) && !/act\("cfg " \+ sel\.getAttribute/.test(src), "frequency selector still writes immediately");
+check("Save & Apply calls a single custom-save transaction", /act\("custom-save " \+ args\.join\(" "\)/.test(src) && /id="saveApplyCustom"/.test(src), "batch save/apply is missing");
+check("unsaved Custom edits prompt before switching profiles", /Discard unsaved Custom frequency edits/.test(src), "profile switch can silently discard pending edits");
 // every inline script must at least parse
 const scripts = [...src.matchAll(/<script[^>]*>([\s\S]*?)<\/script>/g)];
 check("the page has an inline script", scripts.length > 0, "none found");

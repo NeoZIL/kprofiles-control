@@ -95,6 +95,18 @@ check "battery temperature unit source exposed" 'battery_temp=306' "$(grep '^bat
 MONITOR_SYS_ROOT="$SYS" MONITOR_PROC_ROOT="$PROC" MONITOR_SCREEN_STATE=off sh "$MON" screen > "$T/screen"
 check "screen probe accepts confirmed off state" 'screen_state=off' "$(grep '^screen_state=' "$T/screen")"
 check "screen probe returns battery readings too" 'battery_charge_counter=2891000' "$(grep '^battery_charge_counter=' "$T/screen")"
+check "screen probe says charger state is unknown when no online node is exposed" 'charger_online=unknown' "$(grep '^charger_online=' "$T/screen")"
+
+# Standard USB online nodes distinguish connected from disconnected charging state.
+mkdir -p "$SYS/class/power_supply/usb"
+put "$SYS/class/power_supply/usb/type" USB
+put "$SYS/class/power_supply/usb/online" 0
+MONITOR_SYS_ROOT="$SYS" MONITOR_PROC_ROOT="$PROC" MONITOR_SCREEN_STATE=off sh "$MON" screen > "$T/charger"
+check "charger online=0 reports disconnected" 'charger_online=0' "$(grep '^charger_online=' "$T/charger")"
+put "$SYS/class/power_supply/usb/online" 1
+MONITOR_SYS_ROOT="$SYS" MONITOR_PROC_ROOT="$PROC" MONITOR_SCREEN_STATE=off sh "$MON" screen > "$T/charger"
+check "charger online=1 reports connected" 'charger_online=1' "$(grep '^charger_online=' "$T/charger")"
+rm -rf "$SYS/class/power_supply/usb"
 
 # Per-CPU cpufreq fallback works on kernels without policy directories.
 SYS2="$T/sys2"; mkdir -p "$SYS2/devices/system/cpu/cpu0/cpufreq" "$SYS2/devices/system/cpu/cpu1/cpufreq" "$SYS2/devices/system/cpu/cpu2/cpufreq"

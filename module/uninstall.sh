@@ -10,6 +10,11 @@ case "$0" in */*) MODDIR="${0%/*}" ;; *) MODDIR="." ;; esac
 # The watcher also hands the limits back itself once the module's folder is marked for removal.
 done_ok=0
 
+# Stop the read-only battery collector before removing its persistent PID/cache directory.
+if [ -f "$MODDIR/monitor-daemon.sh" ]; then
+  sh "$MODDIR/monitor-daemon.sh" stop "$MODDIR" >/dev/null 2>&1 || :
+fi
+
 if [ -f "$MODDIR/tune.sh" ] &&
    sh "$MODDIR/tune.sh" resetall >/dev/null 2>&1; then
   done_ok=1
