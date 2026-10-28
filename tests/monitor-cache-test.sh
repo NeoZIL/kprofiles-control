@@ -122,6 +122,7 @@ check "the cache lock folder is released after the identity-based takeover" no "
 race_dir=$(mktemp -d); mkdir -p "$race_dir/bin"
 sleep 300 & race_p1=$!; sleep 300 & race_p2=$!
 real_awk=$(command -v awk)
+case "$real_awk" in /*) ;; *) real_awk=awk; for _d in /usr/bin /bin /usr/local/bin; do [ -x "$_d/awk" ] && { real_awk="$_d/awk"; break; }; done ;; esac
 race_start2=$("$real_awk" '{ sub(/^.*\) /, ""); print $20 }' "/proc/$race_p2/stat")
 race_boot=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null || echo unknown)
 race_lock="$race_dir/cache.lock"
@@ -137,7 +138,8 @@ case "\$*" in *"NF < 20"*)
 printf '%s\n' "\$out"; exit \$rc
 HOOK
 chmod +x "$race_dir/bin/awk"
-PATH="$race_dir/bin:$PATH" MONITOR_CACHE_FILE="$race_dir/cache" sh "$CACHE" set-active 4.25 1700000000000 0 >/dev/null 2>&1; race_rc=$?
+MONITOR_AWK_CMD="$race_dir/bin/awk" MONITOR_CACHE_FILE="$race_dir/cache" sh "$CACHE" set-active 4.25 1700000000000 0 >/dev/null 2>&1; race_rc=$?
+check "race: the hook ran, so the race really happened (it is not a PATH lookup, which busybox ash ignores)" yes "$([ -f "$race_dir/hooked" ] && echo yes || echo no)"
 check "race: the waiter that read an old 'stale' does not take a lock that is live now" 1 "$race_rc"
 check "race: the live owner's lock is untouched" "$race_p2" "$(sed -n 1p "$race_lock/pid" 2>/dev/null)"
 check "race: nothing was written by the waiter that lost" no "$([ -e "$race_dir/cache" ] && echo yes || echo no)"

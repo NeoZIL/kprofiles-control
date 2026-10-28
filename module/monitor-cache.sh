@@ -10,6 +10,9 @@ MODE=${1:-get}
 LEGACY_CACHE_FILE=/data/adb/modules/kprofiles_ui/.monitor-cache
 LOCK_DIR="$CACHE_FILE.lock"
 PROC_DIR=${MONITOR_PROC_DIR:-/proc}
+# Named explicitly so tests can supply a hooked awk by path: a shell that prefers its own built-in applets over
+# PATH (busybox ash on Debian/Ubuntu) would never run a fake awk placed in PATH.
+AWK_CMD=${MONITOR_AWK_CMD:-awk}
 BOOT_ID_FILE=${MONITOR_BOOT_ID_FILE:-/proc/sys/kernel/random/boot_id}
 
 valid_rate() {
@@ -111,7 +114,7 @@ proc_start_time() {
   _stat=$(cat "$PROC_DIR/$1/stat" 2>/dev/null) || return 1
   # Strip pid and parenthesized comm (which itself can contain spaces or parentheses). The remaining
   # first field is stat field 3 (state), so field 20 in this list is process start time (stat field 22).
-  _start=$(printf '%s\n' "$_stat" | awk '{ sub(/^.*\) /, ""); if (NF < 20) exit 1; if ($1 == "Z" || $1 == "X") { print "dead"; exit }; print $20; exit }') || return 1
+  _start=$(printf '%s\n' "$_stat" | "$AWK_CMD" '{ sub(/^.*\) /, ""); if (NF < 20) exit 1; if ($1 == "Z" || $1 == "X") { print "dead"; exit }; print $20; exit }') || return 1
   # A zombie still answers kill -0 but can no longer own a lock.
   case "$_start" in dead) printf 'dead\n'; return 0 ;; esac
   case "$_start" in ''|*[!0-9]*) return 1 ;; esac

@@ -322,6 +322,7 @@ CACHE_FILE="$T/race-cache"; MOD="$T/race-mod"; setup_mod "$MOD"
 race_data="$T/race-data"; mkdir -p "$race_data" "$T/race-bin"
 sleep 300 & race_p1=$!; sleep 300 & race_p2=$!
 real_awk=$(command -v awk)
+case "$real_awk" in /*) ;; *) real_awk=awk; for _d in /usr/bin /bin /usr/local/bin; do [ -x "$_d/awk" ] && { real_awk="$_d/awk"; break; }; done ;; esac
 race_start2=$("$real_awk" '{ sub(/^.*\) /, ""); print $20 }' "/proc/$race_p2/stat")
 race_boot=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null || echo unknown)
 race_lock="$race_data/monitor-start.lock"
@@ -337,7 +338,8 @@ case "\$*" in *"NF < 20"*)
 printf '%s\n' "\$out"; exit \$rc
 HOOK
 chmod +x "$T/race-bin/awk"
-env PATH="$T/race-bin:$PATH" MONITOR_DATE_CMD="$T/tools/date" MONITOR_SLEEP_CMD="$T/tools/sleep" MONITOR_CACHE_FILE="$CACHE_FILE" MONITOR_DATA_DIR="$race_data" MONITOR_DAEMON_MAX_SAMPLES=1 sh "$MOD/monitor-daemon.sh" ensure "$MOD" >"$T/race-output.log" 2>&1; race_rc=$?
+env MONITOR_AWK_CMD="$T/race-bin/awk" MONITOR_DATE_CMD="$T/tools/date" MONITOR_SLEEP_CMD="$T/tools/sleep" MONITOR_CACHE_FILE="$CACHE_FILE" MONITOR_DATA_DIR="$race_data" MONITOR_DAEMON_MAX_SAMPLES=1 sh "$MOD/monitor-daemon.sh" ensure "$MOD" >"$T/race-output.log" 2>&1; race_rc=$?
+check "race: the hook ran, so the race really happened (it is not a PATH lookup, which busybox ash ignores)" yes "$([ -f "$T/race-hooked" ] && echo yes || echo no)"
 check "race: ensure does not take a start lock that is live now" 1 "$race_rc"
 check "race: the live starter's lock is untouched" "$race_p2" "$(sed -n 1p "$race_lock/pid" 2>/dev/null)"
 check "race: no second collector was launched" no "$(grep -q 'monitor-daemon: started' "$race_data/monitor.log" 2>/dev/null && echo yes || echo no)"

@@ -17,13 +17,17 @@
 - Tests (audit): a deterministic reproduction of the race for the cache and for `ensure` (a hook makes waiter A reclaim and
   take the lock between waiter B's reading and removal), no reclaim guard left after a normal reclaim, and an abandoned guard
   that does not block an abandoned lock. Each race test fails on the previous scripts.
-- Validation: `monitor-cache-test.sh`, `monitor-daemon-test.sh`, `build-test.sh`, `tune-test.sh`, `kp-test.sh`, `control-test.sh`, `monitor-test.sh`, and `release-test.sh` passed under BusyBox ash; cache and daemon suites also passed under `/bin/sh`. Both WebUI suites passed under Node, and shell syntax checks passed under `/bin/sh` and BusyBox ash. Two consecutive builds produced byte-identical installable ZIPs. ShellCheck and mksh were unavailable in this environment; device behavior still needs on-device verification.
+- Validation: the shell suites (kp, control, tune, monitor, monitor-cache, monitor-daemon, build, release) and both WebUI suites pass under dash and Node. mksh, BusyBox ash and ShellCheck run in CI (an earlier BusyBox ash failure of the race tests was a test-hook problem, fixed above). Device behavior still needs on-device verification.
 - Fix (audit): **an abandoned `<lock>.reclaim` guard next to a stale lock blocked every write for ever.** The guard was only
   cleared when the lock itself had no identity; if the lock had a real but dead owner (the common case) and a reclaimer had
   been killed while holding the guard, every `reclaim_lock` backed off at the guard: each cache write failed with status 1 after
   5 s and `monitor-daemon.sh ensure` could not start the collector (status 1 after 3 s). The guard lives in the data folder, so
   this survived a reboot (reproduced for both scripts). The guard is now cleared after about 2.5 s (cache) / 1.5 s (start lock)
   whether the lock looks stale or unidentified, never while a verified live owner holds the lock.
+- Tests (audit): the race tests no longer rely on a fake `awk` found through `PATH`. busybox ash on Debian/Ubuntu runs its own
+  built-in `awk` instead, so the simulated race never happened there and the three race checks failed in CI. The scripts now read
+  the awk used for the process start time from `MONITOR_AWK_CMD` (default `awk`, so nothing changes in normal use) and the tests pass
+  the hook by path; each race test also checks that the hook really ran.
 - Tests (audit): a stale lock with a dead owner behind an abandoned guard, for the cache and for `ensure` (the write succeeds / the
   collector starts, the guard and the lock are gone afterwards); they fail on the previous v4.0.16 scripts.
 

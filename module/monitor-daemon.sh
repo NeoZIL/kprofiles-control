@@ -17,6 +17,8 @@ DATE_CMD=${MONITOR_DATE_CMD:-date}
 SLEEP_CMD=${MONITOR_SLEEP_CMD:-sleep}
 PID_FILE="$DATA_DIR/monitor.pid"
 PROC_DIR=${MONITOR_PROC_DIR:-/proc}
+# Named explicitly so tests can supply a hooked awk by path (see MONITOR_DATE_CMD above).
+AWK_CMD=${MONITOR_AWK_CMD:-awk}
 BOOT_ID_FILE=${MONITOR_BOOT_ID_FILE:-/proc/sys/kernel/random/boot_id}
 DAEMON_VERSION=unknown
 if [ -r "$MODDIR/module.prop" ]; then
@@ -87,7 +89,7 @@ is_monitor_process() {
 proc_start_time() {
   [ "$#" -eq 1 ] || return 1
   _stat=$(cat "$PROC_DIR/$1/stat" 2>/dev/null) || return 1
-  _start=$(printf '%s\n' "$_stat" | awk '{ sub(/^.*\) /, ""); if (NF < 20) exit 1; if ($1 == "Z" || $1 == "X") { print "dead"; exit }; print $20; exit }') || return 1
+  _start=$(printf '%s\n' "$_stat" | "$AWK_CMD" '{ sub(/^.*\) /, ""); if (NF < 20) exit 1; if ($1 == "Z" || $1 == "X") { print "dead"; exit }; print $20; exit }') || return 1
   # A zombie still answers kill -0 but can no longer own a lock.
   case "$_start" in dead) printf 'dead\n'; return 0 ;; esac
   case "$_start" in ''|*[!0-9]*) return 1 ;; esac
