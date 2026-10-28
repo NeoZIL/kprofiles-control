@@ -52,7 +52,10 @@ if [ "$1" = +%s ]; then
   n=0; [ -r "$DATE_SEQUENCE_COUNT" ] && IFS= read -r n < "$DATE_SEQUENCE_COUNT"
   case "$n" in ''|*[!0-9]*) n=0 ;; esac
   n=$((n + 1)); printf '%s\n' "$n" > "$DATE_SEQUENCE_COUNT"
+  # Never let a runner-level DATE_STEP (for example 0) collapse the clock.
+  # The run helper below also supplies a deterministic default; this is a second guard.
   step=${DATE_STEP:-120}
+  case "$step" in ''|*[!0-9]*|0) step=120 ;; esac
   echo $((1700000000 + (n - 1) * step))
 else
   exec /bin/date "$@"
@@ -68,8 +71,8 @@ SLEEP
 run_daemon_limited() {
   MOD=$1; CACHE_FILE=$2; MAX=$3
   shift 3
-  env PATH="$T/tools:$PATH" DATE_SEQUENCE_COUNT="$T/date-count-$$" MONITOR_CACHE_FILE="$CACHE_FILE" \
-    MONITOR_DATA_DIR="$T/data-loop-$$" MONITOR_DAEMON_MAX_SAMPLES="$MAX" "$@" \
+  env PATH="$T/tools:$PATH" DATE_SEQUENCE_COUNT="$T/date-count-$$" DATE_STEP=120 MONITOR_CACHE_FILE="$CACHE_FILE" \
+    MONITOR_DATA_DIR="$T/data-loop-${CACHE_FILE##*/}-$$" MONITOR_DAEMON_MAX_SAMPLES="$MAX" "$@" \
     sh "$MOD/monitor-daemon.sh" run "$MOD"
 }
 init_cache() {
@@ -137,6 +140,7 @@ check "first screen-on sample is not stored as a timestamp" '' "$(field "$out" a
 check "daemon does not persist an unfinished active window" 0 "$(find "$T" -type f -name '*.active-window' -o -name '*.pending' | wc -l | tr -d ' ')"
 
 # Verify the live run loop computes rates after a full window, independently of any WebUI.
+# GitHub Actions environments may carry unrelated DATE_STEP values; the helper must remain deterministic.
 setup_fast_tools
 CACHE_FILE="$T/active-loop-cache"
 printf '68|2891000|Discharging|0\n68|2890000|Discharging|0\n' > "$T/active-sequence"

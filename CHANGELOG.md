@@ -1,5 +1,9 @@
 # Changelog
 
+## v4.0.13
+- Fix monitor-daemon CI tests that inherited a runner-level DATE_STEP and could receive identical timestamps.
+- Explicitly give deterministic daemon tests a 120-second default clock step; per-test overrides remain supported.
+- Reject zero or malformed fake-clock steps and fall back to the deterministic default.
 
 ## v4.0.12
 - Fix the percentage-only drain estimator: preserve measurement baselines while battery percentage is unchanged, so low idle drain is not inflated by recurring 10-minute rebases. Use bounded windows of up to 90 minutes for active drain and 12 hours for idle drain, still breaking windows on screen-state and charging transitions.
