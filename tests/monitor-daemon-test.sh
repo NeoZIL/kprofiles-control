@@ -243,6 +243,49 @@ check "ensure starts the background collector when the PID file is stale" yes "$
 check "ensure never kills an unrelated process whose PID was reused" yes "$(kill -0 "$unrelated_pid" 2>/dev/null && echo yes || echo no)"
 kill "$unrelated_pid" 2>/dev/null || :
 
+# A verified live starter may hold the start lock longer than the old 2-second cutoff. Ensure must wait,
+# not steal the lock and launch a duplicate collector while the owner is still alive.
+CACHE_FILE="$T/ensure-live-lock-cache"
+MOD="$T/ensure-live-lock-mod"
+setup_mod "$MOD"
+mkdir -p "$T/ensure-live-lock-data"
+cat > "$T/hold-start-lock.sh" <<'HOLDER'
+#!/bin/sh
+lock=$1
+mkdir "$lock" || exit 1
+pid=$$
+start=$(awk '{ sub(/^.*\) /, ""); if (NF < 20) exit 1; print $20; exit }' "/proc/$pid/stat") || exit 1
+boot=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null)
+[ -n "$boot" ] || boot=unknown
+printf '%s\n%s\n%s\n' "$pid" "$start" "$boot" > "$lock/pid"
+sleep 2.7
+rm -f "$lock/pid"
+rmdir "$lock" 2>/dev/null || :
+HOLDER
+chmod +x "$T/hold-start-lock.sh"
+sh "$T/hold-start-lock.sh" "$T/ensure-live-lock-data/monitor-start.lock" & lock_holder=$!
+_i=0
+while [ "$_i" -lt 40 ] && { [ ! -r "$T/ensure-live-lock-data/monitor-start.lock/pid" ] || [ "$(sed -n '1p' "$T/ensure-live-lock-data/monitor-start.lock/pid")" != "$lock_holder" ]; }; do /bin/sleep 0.05; _i=$((_i + 1)); done
+env MONITOR_DATE_CMD="$T/tools/date" MONITOR_SLEEP_CMD="$T/tools/sleep" DATE_SEQUENCE_COUNT="$T/ensure-live-date-count" DATE_STEP=120 MONITOR_CACHE_FILE="$CACHE_FILE" MONITOR_DATA_DIR="$T/ensure-live-lock-data" MONITOR_DAEMON_MAX_SAMPLES=1 sh "$MOD/monitor-daemon.sh" ensure "$MOD" >"$T/ensure-live-lock-output.log" 2>&1 & ensure_waiter=$!
+/bin/sleep 2.2
+check "ensure does not steal a verified live start lock after the old cutoff" "$lock_holder" "$(sed -n '1p' "$T/ensure-live-lock-data/monitor-start.lock/pid" 2>/dev/null)"
+check "ensure waits while the verified live start-lock owner exists" yes "$(kill -0 "$ensure_waiter" 2>/dev/null && echo yes || echo no)"
+wait "$lock_holder" 2>/dev/null
+wait "$ensure_waiter" 2>/dev/null; ensure_rc=$?
+check "ensure proceeds successfully after the live start lock is released" 0 "$ensure_rc"
+check "ensure starts a collector after obtaining the released start lock" yes "$(grep -q 'monitor-daemon: started' "$T/ensure-live-lock-data/monitor.log" 2>/dev/null && echo yes || echo no)"
+
+# A live but unrelated PID from an old start-lock format can be reused; the new recorded start token
+# lets ensure reclaim it immediately instead of waiting for the legacy timeout.
+CACHE_FILE="$T/ensure-reused-lock-cache"
+MOD="$T/ensure-reused-lock-mod"
+setup_mod "$MOD"
+mkdir -p "$T/ensure-reused-lock-data/monitor-start.lock"
+printf '%s\n0\n%s\n' "$$" "$(cat /proc/sys/kernel/random/boot_id 2>/dev/null)" > "$T/ensure-reused-lock-data/monitor-start.lock/pid"
+env MONITOR_DATE_CMD="$T/tools/date" MONITOR_SLEEP_CMD="$T/tools/sleep" DATE_SEQUENCE_COUNT="$T/ensure-reused-date-count" DATE_STEP=120 MONITOR_CACHE_FILE="$CACHE_FILE" MONITOR_DATA_DIR="$T/ensure-reused-lock-data" MONITOR_DAEMON_MAX_SAMPLES=1 sh "$MOD/monitor-daemon.sh" ensure "$MOD" >"$T/ensure-reused-lock-output.log" 2>&1
+check "ensure reclaims a start lock whose live PID has a stale process-start token" yes "$(grep -q 'monitor-daemon: started' "$T/ensure-reused-lock-data/monitor.log" 2>/dev/null && echo yes || echo no)"
+check "ensure removes the stale start-lock directory after starting" no "$([ -d "$T/ensure-reused-lock-data/monitor-start.lock" ] && echo yes || echo no)"
+
 CACHE_FILE="$T/full-unplugged-screen-time-cache"
 rm -f "$T/date-count-$$" "$T/full-unplugged-count"
 printf '68|2891000|Full|0|on\n68|2891000|Full|0|on\n' > "$T/full-unplugged-sequence"
@@ -271,5 +314,54 @@ PATH="$T/poison:$PATH" run_daemon_limited "$MOD" "$CACHE_FILE" 2 MONITOR_TEST_SE
 out=$(MONITOR_CACHE_FILE="$CACHE_FILE" sh "$ROOT/module/monitor-cache.sh" get)
 check "daemon never runs a date or sleep found through PATH when it was given its own" no "$([ -e "$T/poison-called" ] && echo yes || echo no)"
 check "daemon uses the clock it was given even when PATH holds other date/sleep programs" 1700000120000 "$(field "$out" active_time)"
+
+# --- Two starters must never both reclaim the same abandoned start lock ---------------------------------
+# Same race as in the cache: B read "stale", then A reclaimed the lock and took it with a live identity.
+# B must neither delete A's lock nor launch a second collector.
+CACHE_FILE="$T/race-cache"; MOD="$T/race-mod"; setup_mod "$MOD"
+race_data="$T/race-data"; mkdir -p "$race_data" "$T/race-bin"
+sleep 300 & race_p1=$!; sleep 300 & race_p2=$!
+real_awk=$(command -v awk)
+race_start2=$("$real_awk" '{ sub(/^.*\) /, ""); print $20 }' "/proc/$race_p2/stat")
+race_boot=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null || echo unknown)
+race_lock="$race_data/monitor-start.lock"
+mkdir "$race_lock"; printf '%s\n%s\n%s\n' "$race_p1" 1 "$race_boot" > "$race_lock/pid"
+cat > "$T/race-bin/awk" <<HOOK
+#!/bin/sh
+out=\$("$real_awk" "\$@"); rc=\$?
+case "\$*" in *"NF < 20"*)
+  if [ ! -f "$T/race-hooked" ]; then : > "$T/race-hooked"
+    rm -f "$race_lock/pid"; rmdir "$race_lock"; mkdir "$race_lock"
+    printf '%s\n%s\n%s\n' "$race_p2" "$race_start2" "$race_boot" > "$race_lock/pid"
+  fi ;; esac
+printf '%s\n' "\$out"; exit \$rc
+HOOK
+chmod +x "$T/race-bin/awk"
+env PATH="$T/race-bin:$PATH" MONITOR_DATE_CMD="$T/tools/date" MONITOR_SLEEP_CMD="$T/tools/sleep" MONITOR_CACHE_FILE="$CACHE_FILE" MONITOR_DATA_DIR="$race_data" MONITOR_DAEMON_MAX_SAMPLES=1 sh "$MOD/monitor-daemon.sh" ensure "$MOD" >"$T/race-output.log" 2>&1; race_rc=$?
+check "race: ensure does not take a start lock that is live now" 1 "$race_rc"
+check "race: the live starter's lock is untouched" "$race_p2" "$(sed -n 1p "$race_lock/pid" 2>/dev/null)"
+check "race: no second collector was launched" no "$(grep -q 'monitor-daemon: started' "$race_data/monitor.log" 2>/dev/null && echo yes || echo no)"
+kill "$race_p1" "$race_p2" 2>/dev/null; wait "$race_p1" "$race_p2" 2>/dev/null
+
+# The start lock is released only by its owner, and no guard is left after a normal stale reclaim
+CACHE_FILE="$T/guard-cache"; MOD="$T/guard-mod"; setup_mod "$MOD"
+guard_data="$T/guard-data"; mkdir -p "$guard_data/monitor-start.lock"
+sleep 300 & guard_p=$!
+printf '%s\n%s\n%s\n' "$guard_p" 1 "$(cat /proc/sys/kernel/random/boot_id 2>/dev/null || echo unknown)" > "$guard_data/monitor-start.lock/pid"
+env MONITOR_DATE_CMD="$T/tools/date" MONITOR_SLEEP_CMD="$T/tools/sleep" MONITOR_CACHE_FILE="$CACHE_FILE" MONITOR_DATA_DIR="$guard_data" MONITOR_DAEMON_MAX_SAMPLES=1 sh "$MOD/monitor-daemon.sh" ensure "$MOD" >/dev/null 2>&1
+check "stale start lock (reused PID) is reclaimed by ensure" 0 "$?"
+check "no start-lock reclaim guard is left behind" no "$([ -e "$guard_data/monitor-start.lock.reclaim" ] && echo yes || echo no)"
+check "the start lock is released after ensure" no "$([ -e "$guard_data/monitor-start.lock" ] && echo yes || echo no)"
+kill "$guard_p" 2>/dev/null; wait "$guard_p" 2>/dev/null
+# A start lock with a dead owner behind a guard left by a reclaimer that died must not stop the collector for ever
+CACHE_FILE="$T/guard2-cache"; MOD="$T/guard2-mod"; setup_mod "$MOD"
+guard2_data="$T/guard2-data"; mkdir -p "$guard2_data/monitor-start.lock" "$guard2_data/monitor-start.lock.reclaim"
+sleep 0.1 & guard2_p=$!; wait "$guard2_p" 2>/dev/null
+printf '%s\n%s\n%s\n' "$guard2_p" 12345 "$(cat /proc/sys/kernel/random/boot_id 2>/dev/null || echo unknown)" > "$guard2_data/monitor-start.lock/pid"
+env MONITOR_DATE_CMD="$T/tools/date" MONITOR_SLEEP_CMD="$T/tools/sleep" MONITOR_CACHE_FILE="$CACHE_FILE" MONITOR_DATA_DIR="$guard2_data" MONITOR_DAEMON_MAX_SAMPLES=1 sh "$MOD/monitor-daemon.sh" ensure "$MOD" >/dev/null 2>&1
+check "ensure clears a stale start lock that sits behind an abandoned guard" 0 "$?"
+check "the abandoned start-lock guard is gone afterwards" no "$([ -e "$guard2_data/monitor-start.lock.reclaim" ] && echo yes || echo no)"
+check "the start lock is released after that ensure" no "$([ -e "$guard2_data/monitor-start.lock" ] && echo yes || echo no)"
+
 
 [ "$fail" -eq 0 ] && echo "all monitor-daemon tests passed" || exit 1

@@ -1,5 +1,38 @@
 # Changelog
 
+## v4.0.16
+- Harden cache and collector-start locks: record the owner PID, Linux process start-time token, and boot ID.
+- Reclaim locks immediately when their recorded process is dead, the PID has been reused, or the lock belongs to a previous boot; retain the grace timeout only for legacy/incomplete locks with no verifiable identity.
+- Do not forcibly steal a lock from a verified live owner merely because a slow device takes longer than the prior 2–3 second timeout.
+- Add regression tests for live owners that hold cache/start locks beyond the grace period, stale/reused PIDs, missing PID metadata, and normal release.
+- Fix (audit): **two waiters could still both reclaim the same abandoned lock, and the second one deleted the first one's live lock.**
+  Deciding "stale" and removing the lock were two separate steps, so a waiter acting on an old reading could remove a lock
+  that another waiter had meanwhile reclaimed and taken (reproduced: the second waiter exited 0, the live owner's lock was
+  gone, and in `monitor-daemon.sh ensure` a second collector was launched). Removal now goes through `reclaim_lock`: a short
+  `<lock>.reclaim` guard (mkdir) is taken, the owner state is read again under the guard, and the lock is removed only if it
+  is still stale (or, for an identity-less legacy lock, still identity-less after a short pause). A guard left by a reclaimer
+  that died is cleared after about 2.5 s (cache) / 1.5 s (start lock). Same change in `monitor-cache.sh` and `monitor-daemon.sh`.
+- Fix (audit): `monitor-daemon.sh ensure` released its start lock unconditionally; it now removes the lock only if it still
+  names this process (`release_start_lock`), like the cache's `release_lock`.
+- Tests (audit): a deterministic reproduction of the race for the cache and for `ensure` (a hook makes waiter A reclaim and
+  take the lock between waiter B's reading and removal), no reclaim guard left after a normal reclaim, and an abandoned guard
+  that does not block an abandoned lock. Each race test fails on the previous scripts.
+- Validation: `monitor-cache-test.sh`, `monitor-daemon-test.sh`, `build-test.sh`, `tune-test.sh`, `kp-test.sh`, `control-test.sh`, `monitor-test.sh`, and `release-test.sh` passed under BusyBox ash; cache and daemon suites also passed under `/bin/sh`. Both WebUI suites passed under Node, and shell syntax checks passed under `/bin/sh` and BusyBox ash. Two consecutive builds produced byte-identical installable ZIPs. ShellCheck and mksh were unavailable in this environment; device behavior still needs on-device verification.
+- Fix (audit): **an abandoned `<lock>.reclaim` guard next to a stale lock blocked every write for ever.** The guard was only
+  cleared when the lock itself had no identity; if the lock had a real but dead owner (the common case) and a reclaimer had
+  been killed while holding the guard, every `reclaim_lock` backed off at the guard: each cache write failed with status 1 after
+  5 s and `monitor-daemon.sh ensure` could not start the collector (status 1 after 3 s). The guard lives in the data folder, so
+  this survived a reboot (reproduced for both scripts). The guard is now cleared after about 2.5 s (cache) / 1.5 s (start lock)
+  whether the lock looks stale or unidentified, never while a verified live owner holds the lock.
+- Tests (audit): a stale lock with a dead owner behind an abandoned guard, for the cache and for `ensure` (the write succeeds / the
+  collector starts, the guard and the lock are gone afterwards); they fail on the previous v4.0.16 scripts.
+
+## v4.0.15
+- Fix (collector start): a stale start lock could stop the battery collector from ever starting again. The lock folder lives in /data and survives a reboot, and a lock whose owner was killed (or whose recorded pid now belongs to an unrelated process) was never cleared, so `monitor-daemon.sh ensure` failed on every call. A lock still present after about 2 seconds is now cleared once.
+- Fix (cache writes): the same stale-lock problem in `monitor-cache.sh`. A leftover lock made every later write (drain rates, screen-on/off time, settings, resets) fail with status 1 until the folder was deleted by hand. A lock still present after about 3 seconds is now cleared once. Locks are only held for milliseconds, so this cannot cut a healthy writer short.
+- Tests: new regression tests for a lock left by a reused pid and for a lock with no pid. Everything else is unchanged.
+- Validation: dash suites (kp, control, tune, monitor, monitor-cache, monitor-daemon, build, release) and both WebUI suites pass. ShellCheck and mksh/busybox were not available in the build environment, so those CI steps are unconfirmed here.
+
 ## v4.0.14
 - Fix the CI failure in the monitor-daemon tests under busybox ash ("screen-on collector persists a numeric active drain rate", "... a millisecond timestamp", "screen-off collector persists a numeric idle drain rate"). Debian and Ubuntu's busybox is built to prefer its own applets over anything in PATH, so the fake `date` and `sleep` that the tests put first in PATH were never run: the daemon read the real clock and really slept 30 to 60 seconds between samples, so no two samples were ever 120 seconds apart. dash and mksh honour PATH, which is why only the busybox step failed (and why that step took minutes).
 - The daemon now takes its clock and its sampling pause from `MONITOR_DATE_CMD` and `MONITOR_SLEEP_CMD` (default `date` and `sleep`, so nothing changes on the phone). The tests hand the fake clock and sleep to the daemon by path instead of through PATH.

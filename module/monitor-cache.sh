@@ -9,6 +9,8 @@ CACHE_DIR=${CACHE_FILE%/*}
 MODE=${1:-get}
 LEGACY_CACHE_FILE=/data/adb/modules/kprofiles_ui/.monitor-cache
 LOCK_DIR="$CACHE_FILE.lock"
+PROC_DIR=${MONITOR_PROC_DIR:-/proc}
+BOOT_ID_FILE=${MONITOR_BOOT_ID_FILE:-/proc/sys/kernel/random/boot_id}
 
 valid_rate() {
   [ "$#" -eq 1 ] || return 1
@@ -104,20 +106,91 @@ write_cache() {
   chmod 600 "$tmp" 2>/dev/null || { rm -f "$tmp"; return 1; }
   mv -f "$tmp" "$CACHE_FILE" || { rm -f "$tmp"; return 1; }
 }
+proc_start_time() {
+  [ "$#" -eq 1 ] || return 1
+  _stat=$(cat "$PROC_DIR/$1/stat" 2>/dev/null) || return 1
+  # Strip pid and parenthesized comm (which itself can contain spaces or parentheses). The remaining
+  # first field is stat field 3 (state), so field 20 in this list is process start time (stat field 22).
+  _start=$(printf '%s\n' "$_stat" | awk '{ sub(/^.*\) /, ""); if (NF < 20) exit 1; if ($1 == "Z" || $1 == "X") { print "dead"; exit }; print $20; exit }') || return 1
+  # A zombie still answers kill -0 but can no longer own a lock.
+  case "$_start" in dead) printf 'dead\n'; return 0 ;; esac
+  case "$_start" in ''|*[!0-9]*) return 1 ;; esac
+  printf '%s\n' "$_start"
+}
+current_boot_id() {
+  _boot=
+  if IFS= read -r _boot 2>/dev/null < "$BOOT_ID_FILE"; then
+    case "$_boot" in ''|*[!0-9a-fA-F-]*) printf 'unknown\n' ;; *) printf '%s\n' "$_boot" ;; esac
+  else
+    printf 'unknown\n'
+  fi
+}
+lock_owner_state() {
+  _lock_dir=$1
+  _owner=; _owner_start=; _owner_boot=
+  [ -r "$_lock_dir/pid" ] || { printf 'unknown\n'; return; }
+  IFS= read -r _owner < "$_lock_dir/pid" || { printf 'unknown\n'; return; }
+  case "$_owner" in ''|*[!0-9]*) printf 'unknown\n'; return ;; esac
+  kill -0 "$_owner" 2>/dev/null || { printf 'stale\n'; return; }
+  _owner_start=$(sed -n '2p' "$_lock_dir/pid" 2>/dev/null)
+  _owner_boot=$(sed -n '3p' "$_lock_dir/pid" 2>/dev/null)
+  case "$_owner_start" in ''|*[!0-9]*) printf 'unknown\n'; return ;; esac
+  _actual_start=$(proc_start_time "$_owner") || { printf 'unknown\n'; return; }
+  [ "$_actual_start" = "$_owner_start" ] || { printf 'stale\n'; return; }
+  _actual_boot=$(current_boot_id)
+  if [ "$_owner_boot" != unknown ] && [ "$_actual_boot" != unknown ] && [ "$_owner_boot" != "$_actual_boot" ]; then
+    printf 'stale\n'
+  else
+    printf 'live\n'
+  fi
+}
+write_lock_owner() {
+  _self_start=$(proc_start_time "$$") || _self_start=unknown
+  _self_boot=$(current_boot_id)
+  printf '%s\n%s\n%s\n' "$$" "$_self_start" "$_self_boot" > "$1/pid"
+}
+# Remove a lock directory ONLY if it is still abandoned when looked at again under a short guard
+# (<lock>.reclaim, taken with mkdir). Deciding "stale" and removing the lock are two steps; without the
+# guard a second waiter could decide on an old reading, after another waiter had already reclaimed the lock
+# and taken it, and then delete that live lock. Under the guard nobody else can remove the lock, and a lock
+# can only be replaced after it is gone, so the second reading is exact. $2 is the state the caller saw.
+reclaim_lock() {
+  _rc_dir=$1; _rc_want=$2
+  mkdir "$_rc_dir.reclaim" 2>/dev/null || return 0     # another waiter is reclaiming right now
+  # A lock whose owner never wrote its identity may be a brand-new lock between mkdir and the write:
+  # give its creator a moment, then look again.
+  if [ "$_rc_want" = unknown ]; then sleep 0.2; fi
+  _rc_now=$(lock_owner_state "$_rc_dir")
+  if [ "$_rc_now" = stale ] || { [ "$_rc_want" = unknown ] && [ "$_rc_now" = unknown ]; }; then
+    rm -f "$_rc_dir/pid"
+    rmdir "$_rc_dir" 2>/dev/null || :
+  fi
+  rmdir "$_rc_dir.reclaim" 2>/dev/null || :
+}
 acquire_lock() {
   _tries=0
   while ! mkdir "$LOCK_DIR" 2>/dev/null; do
-    _owner=
-    [ -r "$LOCK_DIR/pid" ] && IFS= read -r _owner < "$LOCK_DIR/pid"
-    case "$_owner" in
-      ''|*[!0-9]*) ;;
-      *) if ! kill -0 "$_owner" 2>/dev/null; then rm -f "$LOCK_DIR/pid"; rmdir "$LOCK_DIR" 2>/dev/null; fi ;;
+    _state=$(lock_owner_state "$LOCK_DIR")
+    # A reclaim guard is held for a fraction of a second. One still present after 2.5 seconds was left by a
+    # reclaimer that died, and it must be cleared whether the lock looks stale or unidentified: otherwise every
+    # reclaim attempt backs off at the guard and the lock can never be cleared (the guard lives in the data
+    # folder, so this would also survive a reboot).
+    if [ "$_tries" -eq 25 ] && [ "$_state" != live ]; then rmdir "$LOCK_DIR.reclaim" 2>/dev/null || :; fi
+    case "$_state" in
+      stale) reclaim_lock "$LOCK_DIR" stale ;;
+      unknown)
+        # Legacy/incomplete locks have no trustworthy identity. Give their creator time to finish
+        # writing metadata; after about 3 seconds treat the lock as abandoned. A verified live owner
+        # is never evicted merely because a slow device took longer than expected.
+        if [ "$_tries" -eq 30 ]; then reclaim_lock "$LOCK_DIR" unknown; fi
+        ;;
+      live) ;;
     esac
     _tries=$((_tries + 1))
     [ "$_tries" -lt 50 ] || return 1
     sleep 0.1
   done
-  printf '%s\n' "$$" > "$LOCK_DIR/pid"
+  write_lock_owner "$LOCK_DIR" || { rm -f "$LOCK_DIR/pid"; rmdir "$LOCK_DIR" 2>/dev/null || :; return 1; }
 }
 release_lock() {
   [ -n "${LOCK_DIR:-}" ] || return 0
