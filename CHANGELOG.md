@@ -1,5 +1,11 @@
 # Changelog
 
+## v4.0.14
+- Fix the CI failure in the monitor-daemon tests under busybox ash ("screen-on collector persists a numeric active drain rate", "... a millisecond timestamp", "screen-off collector persists a numeric idle drain rate"). Debian and Ubuntu's busybox is built to prefer its own applets over anything in PATH, so the fake `date` and `sleep` that the tests put first in PATH were never run: the daemon read the real clock and really slept 30 to 60 seconds between samples, so no two samples were ever 120 seconds apart. dash and mksh honour PATH, which is why only the busybox step failed (and why that step took minutes).
+- The daemon now takes its clock and its sampling pause from `MONITOR_DATE_CMD` and `MONITOR_SLEEP_CMD` (default `date` and `sleep`, so nothing changes on the phone). The tests hand the fake clock and sleep to the daemon by path instead of through PATH.
+- New regression test: with poisoned `date` and `sleep` first in PATH, the daemon must not run them and must still use the clock it was given.
+- v4.0.13's DATE_STEP guard stays (harmless), but it was not the cause.
+
 ## v4.0.13
 - Fix monitor-daemon CI tests that inherited a runner-level DATE_STEP and could receive identical timestamps.
 - Explicitly give deterministic daemon tests a 120-second default clock step; per-test overrides remain supported.

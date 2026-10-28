@@ -10,6 +10,11 @@ case "$0" in */*) SELF_DIR=${0%/*} ;; *) SELF_DIR=. ;; esac
 MODDIR=${2:-$SELF_DIR}
 CACHE="$MODDIR/monitor-cache.sh"
 DATA_DIR=${MONITOR_DATA_DIR:-/data/adb/kprofiles_ui}
+# The clock and the sampling pause are named explicitly so that tests can supply a fake clock by path.
+# A shell that prefers its own built-in applets over PATH (busybox ash on Debian/Ubuntu does) would
+# otherwise never run a fake "date" or "sleep" placed in PATH, and the test would use the real clock.
+DATE_CMD=${MONITOR_DATE_CMD:-date}
+SLEEP_CMD=${MONITOR_SLEEP_CMD:-sleep}
 PID_FILE="$DATA_DIR/monitor.pid"
 DAEMON_VERSION=unknown
 if [ -r "$MODDIR/module.prop" ]; then
@@ -293,7 +298,7 @@ sample_once() {
   fi
   _out=$(sh "$MODDIR/monitor.sh" screen 2>/dev/null) || _out='screen_state=unknown'
   record_from_output "$_out"
-  now_s=$(date +%s 2>/dev/null)
+  now_s=$("$DATE_CMD" +%s 2>/dev/null)
   case "$now_s" in ''|*[!0-9]*) return 1 ;; esac
   now="${now_s}000"
 
@@ -419,13 +424,13 @@ case "$MODE" in
       sample_once || :
       sample_count=$((sample_count + 1))
       if [ "$max_samples" -gt 0 ] && [ "$sample_count" -ge "$max_samples" ]; then exit 0; fi
-      read_settings || { sleep 60; continue; }
+      read_settings || { "$SLEEP_CMD" 60; continue; }
       if [ "$monitor_enabled" = 1 ] && [ "$screen_state" = on ] && [ "$charger_online" != 1 ] && { [ "$battery_status" = Discharging ] || [ "$charger_online" = 0 ]; }; then
         sleep_for=$sampling_interval
       else
         sleep_for=60
       fi
-      sleep "$sleep_for"
+      "$SLEEP_CMD" "$sleep_for"
     done
     ;;
   *)

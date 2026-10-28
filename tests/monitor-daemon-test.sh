@@ -68,10 +68,13 @@ exit 0
 SLEEP
   chmod +x "$T/tools/date" "$T/tools/sleep"
 }
+# The fake clock and sleep are handed to the daemon BY PATH (MONITOR_DATE_CMD / MONITOR_SLEEP_CMD), never
+# found through PATH: busybox ash on Debian/Ubuntu runs its own date and sleep applets in preference to any
+# file in PATH, which made these tests read the real clock and really sleep on the CI runner.
 run_daemon_limited() {
   MOD=$1; CACHE_FILE=$2; MAX=$3
   shift 3
-  env PATH="$T/tools:$PATH" DATE_SEQUENCE_COUNT="$T/date-count-$$" DATE_STEP=120 MONITOR_CACHE_FILE="$CACHE_FILE" \
+  env MONITOR_DATE_CMD="$T/tools/date" MONITOR_SLEEP_CMD="$T/tools/sleep" DATE_SEQUENCE_COUNT="$T/date-count-$$" DATE_STEP=120 MONITOR_CACHE_FILE="$CACHE_FILE" \
     MONITOR_DATA_DIR="$T/data-loop-${CACHE_FILE##*/}-$$" MONITOR_DAEMON_MAX_SAMPLES="$MAX" "$@" \
     sh "$MOD/monitor-daemon.sh" run "$MOD"
 }
@@ -233,7 +236,7 @@ mkdir -p "$T/ensure-data"
 setup_fast_tools
 /bin/sleep 30 & unrelated_pid=$!
 printf '%s\n%s\n%s\n' "$unrelated_pid" "$(sed -n 's/^version=//p' "$MOD/module.prop" | head -n 1)" "$MOD" > "$T/ensure-data/monitor.pid"
-env PATH="$T/tools:$PATH" MONITOR_CACHE_FILE="$CACHE_FILE" MONITOR_DATA_DIR="$T/ensure-data" MONITOR_DAEMON_MAX_SAMPLES=1 sh "$MOD/monitor-daemon.sh" ensure "$MOD"
+env MONITOR_DATE_CMD="$T/tools/date" MONITOR_SLEEP_CMD="$T/tools/sleep" MONITOR_CACHE_FILE="$CACHE_FILE" MONITOR_DATA_DIR="$T/ensure-data" MONITOR_DAEMON_MAX_SAMPLES=1 sh "$MOD/monitor-daemon.sh" ensure "$MOD"
 _i=0
 while [ "$_i" -lt 40 ] && ! grep -q 'monitor-daemon: started' "$T/ensure-data/monitor.log" 2>/dev/null; do _i=$((_i + 1)); /bin/sleep 0.05; done
 check "ensure starts the background collector when the PID file is stale" yes "$(grep -q 'monitor-daemon: started' "$T/ensure-data/monitor.log" 2>/dev/null && echo yes || echo no)"
@@ -253,5 +256,20 @@ printf '68|2891000|Full|unknown|on\n68|2891000|Full|unknown|on\n' > "$T/ambiguou
 run_daemon_limited "$MOD" "$CACHE_FILE" 2 DATE_STEP=30 MONITOR_TEST_SEQUENCE_FILE="$T/ambiguous-full-sequence" MONITOR_TEST_SEQUENCE_COUNT="$T/ambiguous-full-count" MONITOR_TEST_SCREEN=on
 out=$(MONITOR_CACHE_FILE="$CACHE_FILE" sh "$ROOT/module/monitor-cache.sh" get)
 check "ambiguous Full state is not falsely counted as on-battery time" 0 "$(field "$out" screen_on_ms)"
+
+# A shell that prefers its own applets ignores a date or sleep found through PATH. Put poisoned ones first in PATH:
+# the daemon must not run them, and must still use the fake clock it was given by path.
+mkdir -p "$T/poison"
+for tool in date sleep; do
+  printf '#!/bin/sh\necho %s >> "%s/poison-called"\nexit 1\n' "$tool" "$T" > "$T/poison/$tool"
+  chmod +x "$T/poison/$tool"
+done
+CACHE_FILE="$T/poisoned-path-cache"
+rm -f "$T/date-count-$$" "$T/poison-count" "$T/poison-called"
+printf '68|2891000|Discharging|0\n68|2890000|Discharging|0\n' > "$T/poison-sequence"
+PATH="$T/poison:$PATH" run_daemon_limited "$MOD" "$CACHE_FILE" 2 MONITOR_TEST_SEQUENCE_FILE="$T/poison-sequence" MONITOR_TEST_SEQUENCE_COUNT="$T/poison-count" MONITOR_TEST_SCREEN=on
+out=$(MONITOR_CACHE_FILE="$CACHE_FILE" sh "$ROOT/module/monitor-cache.sh" get)
+check "daemon never runs a date or sleep found through PATH when it was given its own" no "$([ -e "$T/poison-called" ] && echo yes || echo no)"
+check "daemon uses the clock it was given even when PATH holds other date/sleep programs" 1700000120000 "$(field "$out" active_time)"
 
 [ "$fail" -eq 0 ] && echo "all monitor-daemon tests passed" || exit 1
