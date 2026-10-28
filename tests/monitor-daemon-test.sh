@@ -322,7 +322,7 @@ CACHE_FILE="$T/race-cache"; MOD="$T/race-mod"; setup_mod "$MOD"
 race_data="$T/race-data"; mkdir -p "$race_data" "$T/race-bin"
 sleep 300 & race_p1=$!; sleep 300 & race_p2=$!
 real_awk=$(command -v awk)
-case "$real_awk" in /*) ;; *) real_awk=awk; for _d in /usr/bin /bin /usr/local/bin; do [ -x "$_d/awk" ] && { real_awk="$_d/awk"; break; }; done ;; esac
+case "$real_awk" in /*) ;; *) real_awk="awk"; for _d in /usr/bin /bin /usr/local/bin; do [ -x "$_d/awk" ] && { real_awk="$_d/awk"; break; }; done ;; esac
 race_start2=$("$real_awk" '{ sub(/^.*\) /, ""); print $20 }' "/proc/$race_p2/stat")
 race_boot=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null || echo unknown)
 race_lock="$race_data/monitor-start.lock"

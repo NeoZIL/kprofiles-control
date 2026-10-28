@@ -30,6 +30,7 @@
   the hook by path; each race test also checks that the hook really ran.
 - Tests (audit): a stale lock with a dead owner behind an abandoned guard, for the cache and for `ensure` (the write succeeds / the
   collector starts, the guard and the lock are gone afterwards); they fail on the previous v4.0.16 scripts.
+- Fix (CI): ShellCheck failed with SC2209 on `real_awk=awk` in `tests/monitor-cache-test.sh` and `tests/monitor-daemon-test.sh` (an unquoted assignment of a command name). The fallback value is now quoted. A scan of every shell file found no other unquoted assignment of a command name.
 
 ## v4.0.15
 - Fix (collector start): a stale start lock could stop the battery collector from ever starting again. The lock folder lives in /data and survives a reboot, and a lock whose owner was killed (or whose recorded pid now belongs to an unrelated process) was never cleared, so `monitor-daemon.sh ensure` failed on every call. A lock still present after about 2 seconds is now cleared once.

@@ -122,7 +122,7 @@ check "the cache lock folder is released after the identity-based takeover" no "
 race_dir=$(mktemp -d); mkdir -p "$race_dir/bin"
 sleep 300 & race_p1=$!; sleep 300 & race_p2=$!
 real_awk=$(command -v awk)
-case "$real_awk" in /*) ;; *) real_awk=awk; for _d in /usr/bin /bin /usr/local/bin; do [ -x "$_d/awk" ] && { real_awk="$_d/awk"; break; }; done ;; esac
+case "$real_awk" in /*) ;; *) real_awk="awk"; for _d in /usr/bin /bin /usr/local/bin; do [ -x "$_d/awk" ] && { real_awk="$_d/awk"; break; }; done ;; esac
 race_start2=$("$real_awk" '{ sub(/^.*\) /, ""); print $20 }' "/proc/$race_p2/stat")
 race_boot=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null || echo unknown)
 race_lock="$race_dir/cache.lock"

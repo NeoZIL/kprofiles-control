@@ -232,16 +232,24 @@ release notes. Tap it, let it install, then reboot. Your settings are kept.
 ## Build and test
 
 ```
-sh tests/kp-test.sh     # kernel profile script, fake sysfs
-sh tests/tune-test.sh   # frequency script and screen watcher, fake sysfs
-sh tests/build-test.sh  # zip, update manifest and release notes
-sh tests/release-test.sh  # release.sh rules against a fake gh (no network)
-sh build.sh             # writes dist/Kprofiles-Control-<version>.zip, update.json, changelog.md
+sh tests/kp-test.sh              # kernel profile script, fake sysfs
+sh tests/control-test.sh         # controller source: legacy migration, exclusive writes, verified handoff, recovery
+sh tests/tune-test.sh            # frequency script and screen watcher, fake sysfs (the slow one)
+sh tests/monitor-test.sh         # read-only hardware monitor discovery, fake sysfs/procfs
+sh tests/monitor-cache-test.sh   # persistent battery-rate cache and its lock handling
+sh tests/monitor-daemon-test.sh  # background battery collector and its start lock
+sh tests/build-test.sh           # zip, update manifest and release notes (also runs the two monitor suites above)
+sh tests/release-test.sh         # release.sh rules against a fake gh (no network)
+node tests/webui-test.js module/webroot/index.html       # WebUI failure detection
+node tests/webui-dom-test.js module/webroot/index.html   # WebUI behaviour against a fake DOM
+sh build.sh                      # writes dist/Kprofiles-Control-<version>.zip, update.json, changelog.md
 ```
 
-GitHub Actions runs ShellCheck, then all six test suites under dash, **mksh** (the shell Android
-uses) and busybox ash, and checks that a pushed tag matches the `version` in
-`module.prop`. The controller-source suite validates legacy migration, exclusive writes, verified handoffs and recovery behavior. Push a tag such as `v4.0.0` to publish a release.
+GitHub Actions runs ShellCheck (`shellcheck -s sh -S warning -e SC1090,SC2154,SC2034 module/*.sh tests/*.sh build.sh release.sh`),
+both Node suites, then the shell suites under dash, **mksh** (the shell Android uses) and busybox ash
+(`build-test.sh` runs the cache and daemon suites under the same shell), and checks that a pushed tag
+matches the `version` in `module.prop`. The controller-source suite validates legacy migration,
+exclusive writes, verified handoffs and recovery behavior. Push a tag such as `v4.0.16` to publish a release.
 
 ## Status
 
