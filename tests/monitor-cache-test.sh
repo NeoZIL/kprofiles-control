@@ -16,6 +16,8 @@ check "monitoring defaults enabled" 1 "$(field "$out" monitor_enabled)"
 check "screen-on sampling defaults to 30 seconds" 30 "$(field "$out" sampling_interval)"
 check "reset-on-charging defaults enabled" 1 "$(field "$out" reset_on_charging)"
 check "data generation begins at zero" 0 "$(field "$out" generation)"
+check "active current charge defaults to zero" 0 "$(field "$out" active_charge_uah)"
+check "idle current duration defaults to zero" 0 "$(field "$out" idle_current_ms)"
 
 run set-active 4.25 1700000000000 0
 out=$(run get)
@@ -76,6 +78,50 @@ run set-active 2.4 1700000007000 2
 out=$(run get)
 check "current-generation rate write succeeds" 2.4 "$(field "$out" active_rate)"
 check "cache file is not world-readable" 600 "$(stat -c %a "$T/cache" 2>/dev/null || stat -f %Lp "$T/cache" 2>/dev/null)"
+
+# Active and idle current contributions use separate cumulative charge/time fields and averages.
+CURRENT_CACHE="$T/current-cache"
+MONITOR_CACHE_FILE="$CURRENT_CACHE" sh "$CACHE" add-current active 111.111111 1000 4425000 0
+MONITOR_CACHE_FILE="$CURRENT_CACHE" sh "$CACHE" add-current idle 22.222222 1000 4425000 0
+out=$(MONITOR_CACHE_FILE="$CURRENT_CACHE" sh "$CACHE" get)
+check "active current average is independently 400 mA" 400.000 "$(field "$out" active_avg_ma)"
+check "idle current average is independently 80 mA" 80.000 "$(field "$out" idle_avg_ma)"
+check "active current charge remains separate" 111.111111 "$(field "$out" active_charge_uah)"
+check "idle current charge remains separate" 22.222222 "$(field "$out" idle_charge_uah)"
+check "active current duration remains separate" 1000 "$(field "$out" active_current_ms)"
+check "idle current duration remains separate" 1000 "$(field "$out" idle_current_ms)"
+check "active capacity conversion is independent" 9.040 "$(field "$out" active_avg_pct_h)"
+check "idle capacity conversion is independent" 1.808 "$(field "$out" idle_avg_pct_h)"
+if MONITOR_CACHE_FILE="$CURRENT_CACHE" sh "$CACHE" add-current other 1 1000 4425000 0 >/dev/null 2>&1; then check "unknown current bucket is rejected" no yes; else check "unknown current bucket is rejected" yes yes; fi
+if MONITOR_CACHE_FILE="$CURRENT_CACHE" sh "$CACHE" add-current active -1 1000 4425000 0 >/dev/null 2>&1; then check "negative current charge is rejected" no yes; else check "negative current charge is rejected" yes yes; fi
+if MONITOR_CACHE_FILE="$CURRENT_CACHE" sh "$CACHE" add-current active 10000 1000 4425000 0 >/dev/null 2>&1; then check "current beyond 20 A is rejected" no yes; else check "current beyond 20 A is rejected" yes yes; fi
+if MONITOR_CACHE_FILE="$CURRENT_CACHE" sh "$CACHE" add-current active 1 0 4425000 0 >/dev/null 2>&1; then check "zero current duration is rejected" no yes; else check "zero current duration is rejected" yes yes; fi
+if MONITOR_CACHE_FILE="$CURRENT_CACHE" sh "$CACHE" add-current active 1 1000 50 0 >/dev/null 2>&1; then check "implausible effective battery capacity is rejected" no yes; else check "implausible effective battery capacity is rejected" yes yes; fi
+if MONITOR_CACHE_FILE="$CURRENT_CACHE" sh "$CACHE" add-current active 1 1000 4425000 9 >/dev/null 2>&1; then check "stale generation current write is rejected" no yes; else check "stale generation current write is rejected" yes yes; fi
+MONITOR_CACHE_FILE="$CURRENT_CACHE" sh "$CACHE" set-active 4.2 1700000006000 0
+MONITOR_CACHE_FILE="$CURRENT_CACHE" sh "$CACHE" reset-cycle keep-rates
+out=$(MONITOR_CACHE_FILE="$CURRENT_CACHE" sh "$CACHE" get)
+check "new cycle resets active current charge" 0 "$(field "$out" active_charge_uah)"
+check "new cycle resets idle current charge" 0 "$(field "$out" idle_charge_uah)"
+check "new cycle resets active duration" 0 "$(field "$out" active_current_ms)"
+check "new cycle resets idle duration" 0 "$(field "$out" idle_current_ms)"
+check "new cycle preserves the explicitly retained legacy rate" 4.2 "$(field "$out" active_rate)"
+
+# A malformed/inconsistent active current bucket must not poison the independent idle bucket.
+cat > "$CURRENT_CACHE" <<'BAD_CACHE'
+active_charge_uah=999999999999
+active_current_ms=1
+idle_charge_uah=22.222222
+idle_current_ms=1000
+effective_capacity_uah=4425000
+generation=0
+BAD_CACHE
+out=$(MONITOR_CACHE_FILE="$CURRENT_CACHE" sh "$CACHE" get)
+check "corrupt active charge/time pair is safely discarded" 0 "$(field "$out" active_charge_uah)"
+check "corrupt active duration is safely discarded" 0 "$(field "$out" active_current_ms)"
+check "corrupt active average is unavailable" '' "$(field "$out" active_avg_ma)"
+check "valid idle charge survives corrupt active bucket" 22.222222 "$(field "$out" idle_charge_uah)"
+check "valid idle average remains independent after active repair" 80.000 "$(field "$out" idle_avg_ma)"
 # A stale lock must not block cache writes forever. The lock lives in /data, so it survives a reboot, and the
 # pid recorded in it can then belong to an unrelated live process (here: this test shell).
 mkdir -p "$T/cache.lock" && printf '%s\n' "$$" > "$T/cache.lock/pid"

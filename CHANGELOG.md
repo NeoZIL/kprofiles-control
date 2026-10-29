@@ -1,5 +1,14 @@
 # Changelog
 
+## v4.0.17
+- Add independent, time-weighted Active Drain and Idle Drain average-current measurements (mA), using the existing battery-current source rather than a duplicate collector. Screen-ON current and confirmed screen-OFF current use separate charge/time totals and are never mixed.
+- Require a screen-OFF candidate to last at least 10 seconds; qualify it from its original OFF boundary, discard shorter sessions, and maintain separate Screen-On Time and confirmed Screen-Off Time.
+- Bound current integration by state-specific sampling gaps, normalize signed current to a non-negative magnitude, validate charge-counter fallback, and reject malformed/out-of-range readings instead of extending stale measurements across unbounded gaps. Never assign a charge-counter interval spanning a screen-state transition to either bucket; use the counter only for longer gaps wholly inside one observed state.
+- Keep bounded active/idle rolling histories independent of whole-cycle totals; batch screen-time cache writes rather than writing on every polling sample. Persisted cycle totals survive daemon restart; transient sample anchors are rebased conservatively, which can undercount an unflushed gap but avoids double-counting or integrating stale current.
+- Update the WebUI to show independent whole-cycle active/idle average current, with optional clearly estimated capacity-based %/h. Legacy percentage-only values are not presented as measured mA.
+- Add deterministic math/cache/daemon/WebUI regression coverage for separate averages, under-10-second exclusion, the 10-second boundary, long gaps, invalid inputs, corrupt cache pairs, resets, process restart and cross-shell CI.
+- Validation: current-math, cache, default-shell daemon, and Node WebUI suites pass; the KP/control/monitor/release regression suites and default/BusyBox shell syntax checks pass. BusyBox ash current/cache suites pass. The BusyBox daemon assertions reached the suite's final all-passed line, but its runner did not exit before timeout, so its exit status remains inconclusive. ShellCheck and mksh are unavailable here; no module build or POCO F6 on-device validation was performed.
+
 ## v4.0.16
 - Harden cache and collector-start locks: record the owner PID, Linux process start-time token, and boot ID.
 - Reclaim locks immediately when their recorded process is dead, the PID has been reused, or the lock belongs to a previous boot; retain the grace timeout only for legacy/incomplete locks with no verifiable identity.

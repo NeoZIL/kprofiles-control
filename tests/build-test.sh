@@ -54,6 +54,7 @@ check "zip has module.prop" 1 "$(unzip -l "$T/r/dist/"*.zip | grep -c ' module.p
 check "zip includes the universal monitoring helper" 1 "$(unzip -l "$T/r/dist/"*.zip | grep -c ' monitor.sh$')"
 check "zip includes durable WebUI drain cache helper" 1 "$(unzip -l "$T/r/dist/"*.zip | grep -c ' monitor-cache.sh$')"
 check "zip includes background battery monitor daemon" 1 "$(unzip -l "$T/r/dist/"*.zip | grep -c ' monitor-daemon.sh$')"
+check "zip includes time-weighted battery current helper" 1 "$(unzip -l "$T/r/dist/"*.zip | grep -c ' monitor-current.sh$')"
 check "zip includes the controller switch engine" 1 "$(unzip -l "$T/r/dist/"*.zip | grep -c ' control.sh$')"
 check "zip includes the shared controller state library" 1 "$(unzip -l "$T/r/dist/"*.zip | grep -c ' control-lib.sh$')"
 

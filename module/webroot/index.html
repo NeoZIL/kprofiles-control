@@ -215,15 +215,15 @@
       <label class="sw"><span class="txt"><span class="t">Battery monitoring</span><span class="d">Background sampling, even when this page is closed</span></span><input type="checkbox" role="switch" id="bmMonitorToggle" checked></label>
       <label class="sw"><span class="txt"><span class="t">Reset data on charging</span><span class="d">Clear all monitor statistics when plugged in</span></span><input type="checkbox" role="switch" id="bmResetChargeToggle" checked></label>
       <div class="bm-separator"></div>
-      <div class="bm-interval-head"><strong>Refresh interval</strong><span id="bmIntervalLabel">Current: 30 seconds</span></div>
-      <div class="bm-intervals" role="group" aria-label="Screen-on battery sampling interval">
+      <div class="bm-interval-head"><strong>Percentage-rate update interval</strong><span id="bmIntervalLabel">Current: 30 seconds</span></div>
+      <div class="bm-intervals" role="group" aria-label="Percentage drain-rate estimate update interval">
         <button type="button" class="bm-interval" id="bmInterval15" data-monitor-interval="15" aria-pressed="false">15s</button>
         <button type="button" class="bm-interval" id="bmInterval30" data-monitor-interval="30" aria-pressed="true">30s</button>
         <button type="button" class="bm-interval" id="bmInterval60" data-monitor-interval="60" aria-pressed="false">60s</button>
       </div>
       <div class="bm-separator"></div>
       <div class="bm-stats-head">Monitoring statistics</div>
-      <div class="bm-stats-desc">Active/idle drain rates and screen-on/off time while discharging</div>
+      <div class="bm-stats-desc">Independent active/idle average-current estimates and screen-on/off time while discharging</div>
       <div class="bm-sot-row"><div class="bm-sot-copy"><strong>Screen-on time (SOT)</strong><span>Automatically resets when each charging cycle starts</span></div><button type="button" class="bm-reset bm-reset-sot" id="bmResetSot"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg><span>Reset SOT</span></button></div>
       <div class="bm-reset-row"><button type="button" class="bm-reset" id="bmResetData">Reset data</button></div>
     </section>
@@ -287,6 +287,7 @@
   var hwTimer = null, hwInFlight = false, hwPrevious = null, hwPolicySignature = null;
   var hwDaemonEnsureAt = 0, hwDaemonEnsureInFlight = false;
   var hwLastIdleRate = null, hwLastActiveRate = null;
+  var hwLastIdleCurrent = null, hwLastActiveCurrent = null;
   var hwDiskWriteQueue = Promise.resolve();
   var hwDiskGeneration = null, hwLastCacheReadAt = 0, hwCacheInFlight = false, hwDataResetEpoch = 0;
   var hwDiskCacheLoaded = false, hwDiskCacheReadFailed = false;
@@ -945,6 +946,8 @@
     hwStorageRemove(HW_IDLE_BASELINE_KEY);
     hwLastActiveRate = null;
     hwLastIdleRate = null;
+    hwLastActiveCurrent = null;
+    hwLastIdleCurrent = null;
   }
   function hwLoadStoredRate(key) {
     var raw = hwStorageGet(key);
@@ -1012,20 +1015,25 @@
       hwRenderScreenTimes();
       return;
     }
-    if (hwLastActiveRate && isFinite(hwLastActiveRate.rate)) {
-      hwSet("hwBatteryActiveDrain", hwFormatNumber(hwLastActiveRate.rate, 1) + "%/h");
-      hwSet("hwBatteryActiveSub", "Last saved · " + hwFormatSavedTime(hwLastActiveRate.t));
-    } else {
-      hwSet("hwBatteryActiveDrain", "Collecting data");
-      hwSet("hwBatteryActiveSub", "Waiting for a valid measurement");
+    function renderCurrent(mainId, subId, current, previousRate) {
+      if (current && isFinite(current.ma) && current.ma >= 0 && current.ma <= 20000 && current.durationMs > 0) {
+        hwSet(mainId, hwFormatNumber(current.ma, 1) + " mA");
+        var parts = ["Whole-cycle average"];
+        if (current.pct !== null && isFinite(current.pct) && current.pct >= 0 && current.pct <= 1000) {
+          parts.push("Estimated drain " + hwFormatNumber(current.pct, 1) + "%/h");
+        }
+        hwSet(subId, parts.join(" · "));
+        return;
+      }
+      hwSet(mainId, "Collecting data");
+      if (previousRate && isFinite(previousRate.rate) && previousRate.rate >= 0 && previousRate.rate < 100) {
+        hwSet(subId, "Waiting for valid current samples · previous rate " + hwFormatNumber(previousRate.rate, 1) + "%/h");
+      } else {
+        hwSet(subId, "Waiting for valid current samples");
+      }
     }
-    if (hwLastIdleRate && isFinite(hwLastIdleRate.rate)) {
-      hwSet("hwBatteryIdleDrain", hwFormatNumber(hwLastIdleRate.rate, 1) + "%/h");
-      hwSet("hwBatteryIdleSub", "Last saved · " + hwFormatSavedTime(hwLastIdleRate.t));
-    } else {
-      hwSet("hwBatteryIdleDrain", "Collecting data");
-      hwSet("hwBatteryIdleSub", "Waiting for a valid measurement");
-    }
+    renderCurrent("hwBatteryActiveDrain", "hwBatteryActiveSub", hwLastActiveCurrent, hwLastActiveRate);
+    renderCurrent("hwBatteryIdleDrain", "hwBatteryIdleSub", hwLastIdleCurrent, hwLastIdleRate);
     hwRenderScreenTimes();
   }
   function hwApplyMonitorSettings(saved) {
@@ -1074,6 +1082,25 @@
       }
       hwScreenOnMs = safeDuration(saved.screen_on_ms);
       hwScreenOffMs = safeDuration(saved.screen_off_ms);
+      function safeCurrentStats(chargeText, durationText, capacityText) {
+        if (!/^[0-9]{1,15}$/.test(String(durationText === undefined ? "" : durationText))) return null;
+        if (!/^[0-9]+(?:\.[0-9]+)?$/.test(String(chargeText === undefined ? "" : chargeText))) return null;
+        var duration = Number(durationText), charge = Number(chargeText);
+        if (!isFinite(duration) || duration <= 0 || !isFinite(charge) || charge < 0 || charge > 1000000000000) return null;
+        var ma = charge * 3600 / duration;
+        if (!isFinite(ma) || ma < 0 || ma > 20000.001) return null;
+        var pct = null;
+        if (/^[0-9]{1,9}$/.test(String(capacityText === undefined ? "" : capacityText))) {
+          var capacity = Number(capacityText);
+          if (isFinite(capacity) && capacity >= 100000 && capacity <= 50000000) {
+            var converted = ma * 100000 / capacity;
+            if (isFinite(converted) && converted >= 0 && converted <= 1000) pct = converted;
+          }
+        }
+        return { ma: ma, pct: pct, durationMs: duration };
+      }
+      hwLastActiveCurrent = safeCurrentStats(saved.active_charge_uah, saved.active_current_ms, saved.effective_capacity_uah);
+      hwLastIdleCurrent = safeCurrentStats(saved.idle_charge_uah, saved.idle_current_ms, saved.effective_capacity_uah);
       hwApplyMonitorSettings(saved);
       var diskActive = hwRateObject(saved.active_rate, saved.active_time);
       var diskIdle = hwRateObject(saved.idle_rate, saved.idle_time);
