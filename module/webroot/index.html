@@ -180,10 +180,10 @@
         <div class="hw-metric"><div class="hw-label">Voltage</div><div class="hw-value" id="hwBatteryVoltage">Unavailable</div></div>
       </div>
       <div class="hw-drain-grid">
-        <div class="hw-drain-metric"><div class="hw-label">Active drain · screen ON</div><div class="hw-value" id="hwBatteryActiveDrain">Loading…</div><div class="hw-battery-sub" id="hwBatteryActiveSub">Reading saved monitor data…</div></div>
-        <div class="hw-drain-metric"><div class="hw-label">Idle drain · screen OFF</div><div class="hw-value" id="hwBatteryIdleDrain">Loading…</div><div class="hw-battery-sub" id="hwBatteryIdleSub">Reading saved monitor data…</div></div>
-        <div class="hw-drain-metric hw-sot-card"><div class="hw-label">Screen-on time (SOT)</div><div class="hw-value" id="hwBatteryScreenOnTime">Loading…</div><div class="hw-battery-sub" id="hwBatteryScreenOnSub">Since last reset · on battery</div><div class="hw-sot-reset-row"><button type="button" class="hw-sot-reset" id="hwResetSotMini" aria-label="Reset screen-on time"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg><span>Reset</span></button></div></div>
-        <div class="hw-drain-metric"><div class="hw-label">Screen-off time</div><div class="hw-value" id="hwBatteryScreenOffTime">Loading…</div><div class="hw-battery-sub" id="hwBatteryScreenOffSub">Since last reset · on battery</div></div>
+        <div class="hw-drain-metric"><div class="hw-label">Active drain · avg current, screen ON</div><div class="hw-value" id="hwBatteryActiveDrain">Loading…</div><div class="hw-battery-sub" id="hwBatteryActiveSub">Reading saved monitor data…</div></div>
+        <div class="hw-drain-metric"><div class="hw-label">Idle drain · avg current, screen OFF</div><div class="hw-value" id="hwBatteryIdleDrain">Loading…</div><div class="hw-battery-sub" id="hwBatteryIdleSub">Reading saved monitor data…</div></div>
+        <div class="hw-drain-metric hw-sot-card"><div class="hw-label">Screen-on time (SOT)</div><div class="hw-value" id="hwBatteryScreenOnTime">Loading…</div><div class="hw-battery-sub" id="hwBatteryScreenOnSub">This discharge cycle</div><div class="hw-sot-reset-row"><button type="button" class="hw-sot-reset" id="hwResetSotMini" aria-label="Reset screen-on time"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg><span>Reset</span></button></div></div>
+        <div class="hw-drain-metric"><div class="hw-label">Screen-off time</div><div class="hw-value" id="hwBatteryScreenOffTime">Loading…</div><div class="hw-battery-sub" id="hwBatteryScreenOffSub">Confirmed (10 s or longer), this cycle</div></div>
       </div>
     </section>
     <div class="hw-hardware-grid">
@@ -213,18 +213,10 @@
         <span class="bm-state" id="bmEnabledState">Enabled</span>
       </div>
       <label class="sw"><span class="txt"><span class="t">Battery monitoring</span><span class="d">Background sampling, even when this page is closed</span></span><input type="checkbox" role="switch" id="bmMonitorToggle" checked></label>
-      <label class="sw"><span class="txt"><span class="t">Reset data on charging</span><span class="d">Clear all monitor statistics when plugged in</span></span><input type="checkbox" role="switch" id="bmResetChargeToggle" checked></label>
-      <div class="bm-separator"></div>
-      <div class="bm-interval-head"><strong>Percentage-rate update interval</strong><span id="bmIntervalLabel">Current: 30 seconds</span></div>
-      <div class="bm-intervals" role="group" aria-label="Percentage drain-rate estimate update interval">
-        <button type="button" class="bm-interval" id="bmInterval15" data-monitor-interval="15" aria-pressed="false">15s</button>
-        <button type="button" class="bm-interval" id="bmInterval30" data-monitor-interval="30" aria-pressed="true">30s</button>
-        <button type="button" class="bm-interval" id="bmInterval60" data-monitor-interval="60" aria-pressed="false">60s</button>
-      </div>
       <div class="bm-separator"></div>
       <div class="bm-stats-head">Monitoring statistics</div>
-      <div class="bm-stats-desc">Independent active/idle average-current estimates and screen-on/off time while discharging</div>
-      <div class="bm-sot-row"><div class="bm-sot-copy"><strong>Screen-on time (SOT)</strong><span>Automatically resets when each charging cycle starts</span></div><button type="button" class="bm-reset bm-reset-sot" id="bmResetSot"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg><span>Reset SOT</span></button></div>
+      <div class="bm-stats-desc">Average current and screen time for the current discharge cycle (a new cycle starts each time you unplug)</div>
+      <div class="bm-sot-row"><div class="bm-sot-copy"><strong>Screen-on time (SOT)</strong><span>Restarts with Active Drain; a new discharge cycle starts when you unplug</span></div><button type="button" class="bm-reset bm-reset-sot" id="bmResetSot"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg><span>Reset SOT</span></button></div>
       <div class="bm-reset-row"><button type="button" class="bm-reset" id="bmResetData">Reset data</button></div>
     </section>
     <section class="card"><h2>Tuning behavior</h2>
@@ -286,19 +278,13 @@
   var currentPage = "monitor"
   var hwTimer = null, hwInFlight = false, hwPrevious = null, hwPolicySignature = null;
   var hwDaemonEnsureAt = 0, hwDaemonEnsureInFlight = false;
-  var hwLastIdleRate = null, hwLastActiveRate = null;
-  var hwLastIdleCurrent = null, hwLastActiveCurrent = null;
-  var hwDiskWriteQueue = Promise.resolve();
-  var hwDiskGeneration = null, hwLastCacheReadAt = 0, hwCacheInFlight = false, hwDataResetEpoch = 0;
+  var hwLastCacheReadAt = 0, hwCacheInFlight = false, hwDataResetEpoch = 0;
   var hwDiskCacheLoaded = false, hwDiskCacheReadFailed = false;
-  var hwDrainCurrentStatus = "";
-  var HW_IDLE_BASELINE_KEY = "kprofiles-ui-monitor-idle-baseline-v1";
-  var HW_IDLE_RATE_KEY = "kprofiles-ui-monitor-idle-rate-v1";
-  var HW_ACTIVE_SAMPLES_KEY = "kprofiles-ui-monitor-active-samples-v1";
-  var HW_ACTIVE_RATE_KEY = "kprofiles-ui-monitor-active-rate-v1";
-  var HW_LOCAL_GENERATION_KEY = "kprofiles-ui-monitor-data-generation-v1";
+  var hwCycle = null;             /* the collector's cycle record, parsed from monitor-cache.sh get */
+  var hwCapacityMah = null;       /* reported full-charge capacity in mAh (for the estimated %/h line) */
   var HW_SAMPLE_INTERVAL_MS = 5000;
-  var hwMonitorPrefs = { enabled: true, interval: 30, resetOnCharging: true };
+  var HW_PRELIMINARY_MS = 300000; /* below 5 minutes of eligible time an average is only preliminary */
+  var hwMonitorPrefs = { enabled: true };
   function showPage(key) {
     var valid = false;
     for (var i = 0; i < PAGE_ITEMS.length; i++) if (PAGE_ITEMS[i].key === key) valid = true;
@@ -936,55 +922,6 @@
     if (capacity < 80) return { label: "Normal", cls: "hw-charge-normal", color: "#00d878" };
     return { label: "Nearly full", cls: "hw-charge-full", color: "#60a5fa" };
   }
-  function hwStorageGet(key) { try { return window.localStorage.getItem(key); } catch (e) { return null; } }
-  function hwStorageSet(key, value) { try { window.localStorage.setItem(key, value); } catch (e) { /* storage may be disabled */ } }
-  function hwStorageRemove(key) { try { window.localStorage.removeItem(key); } catch (e) { /* storage may be disabled */ } }
-  function hwClearLocalDrainData() {
-    hwStorageRemove(HW_ACTIVE_RATE_KEY);
-    hwStorageRemove(HW_IDLE_RATE_KEY);
-    hwStorageRemove(HW_ACTIVE_SAMPLES_KEY);
-    hwStorageRemove(HW_IDLE_BASELINE_KEY);
-    hwLastActiveRate = null;
-    hwLastIdleRate = null;
-    hwLastActiveCurrent = null;
-    hwLastIdleCurrent = null;
-  }
-  function hwLoadStoredRate(key) {
-    var raw = hwStorageGet(key);
-    if (!raw) return null;
-    try {
-      var value = JSON.parse(raw), now = Date.now();
-      if (!value || typeof value.t !== "number" || !isFinite(value.t) || value.t <= 0 || value.t > now ||
-          Math.floor(value.t) !== value.t || typeof value.rate !== "number" || !isFinite(value.rate) || value.rate <= 0 || value.rate >= 100) {
-        hwStorageRemove(key);
-        return null;
-      }
-      return value;
-    } catch (e) { hwStorageRemove(key); return null; }
-  }
-  function hwLoadIdleRate() { return hwLoadStoredRate(HW_IDLE_RATE_KEY); }
-  function hwLoadActiveRate() { return hwLoadStoredRate(HW_ACTIVE_RATE_KEY); }
-  function hwRateObject(rateText, timeText) {
-    var rate = hwNumber(rateText), time = hwNumber(timeText), now = Date.now();
-    if (rate === null || time === null || rate <= 0 || rate >= 100 || time <= 0 ||
-        Math.floor(time) !== time || time > now) return null;
-    return { rate: rate, t: time };
-  }
-  function hwPersistRateToDisk(kind, value, generation, resetEpoch) {
-    if (!value || (kind !== "active" && kind !== "idle")) return;
-    var rate = Number(value.rate), timestamp = Math.floor(Number(value.t));
-    if (!isFinite(rate) || rate <= 0 || rate >= 100 || !isFinite(timestamp) || timestamp <= 0) return;
-    var command = "sh " + BASE + "monitor-cache.sh set-" + kind + " " + rate.toFixed(6) + " " + timestamp + " " + generation;
-    hwDiskWriteQueue = hwDiskWriteQueue.then(function () {
-      if (resetEpoch !== hwDataResetEpoch) return;
-      return exec(command).then(function () { /* A generation mismatch means a reset won the race. */ });
-    }).catch(function () { /* Disk cache remains authoritative; localStorage is only a fallback. */ });
-  }
-  function hwFormatSavedTime(timestamp) {
-    try { return new Date(timestamp).toLocaleString([], { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }); }
-    catch (e) { return new Date(timestamp).toLocaleString(); }
-  }
-  var hwScreenOnMs = 0, hwScreenOffMs = 0;
   function hwFormatDuration(milliseconds) {
     var totalMinutes = Math.floor(Math.max(0, Number(milliseconds) || 0) / 60000);
     var days = Math.floor(totalMinutes / 1440);
@@ -995,65 +932,68 @@
     if (totalMinutes === 0 && Number(milliseconds) > 0) return "<1m";
     return totalMinutes + "m";
   }
-  function hwRenderScreenTimes() {
-    if (!hwDiskCacheLoaded) {
-      var cacheLabel = hwDiskCacheReadFailed ? "Unavailable" : "Loading…";
-      hwSet("hwBatteryScreenOnTime", cacheLabel);
-      hwSet("hwBatteryScreenOffTime", cacheLabel);
+  function hwBigNumber(text) {
+    if (!/^[0-9]{1,17}$/.test(String(text === undefined ? "" : text))) return 0;
+    var value = Number(text);
+    return isFinite(value) && value >= 0 ? value : 0;
+  }
+  function hwParseCycle(saved) {
+    function side(prefix) {
+      var ms = hwBigNumber(saved[prefix + "_ms"]), unmeasured = Math.min(ms, hwBigNumber(saved[prefix + "_unmeasured"]));
+      return { charge: hwBigNumber(saved[prefix + "_charge"]), ms: ms, unmeasured: unmeasured, provisional: saved[prefix + "_prov"] === "1" };
+    }
+    return { enabled: saved.monitor_enabled !== "0", state: saved.cycle_state || "none", active: side("active"), idle: side("idle") };
+  }
+  /* Average current in mA = charge (uA*ms) / measured time (ms) / 1000. Unmeasured time is left out of the divisor. */
+  function hwAverageMa(side) {
+    var measured = side.ms - side.unmeasured;
+    if (!(measured > 0) || !(side.charge > 0)) return null;
+    return side.charge / measured / 1000;
+  }
+  function hwRenderDrain(valueId, subId, side, emptyHint) {
+    var avg = hwAverageMa(side), parts = [];
+    if (side.ms <= 0) {
+      hwSet(valueId, "Collecting data");
+      hwSet(subId, emptyHint);
       return;
     }
-    hwSet("hwBatteryScreenOnTime", hwFormatDuration(hwScreenOnMs));
-    hwSet("hwBatteryScreenOffTime", hwFormatDuration(hwScreenOffMs));
+    if (avg === null) {
+      hwSet(valueId, "Unavailable");
+      hwSet(subId, "No valid current readings yet");
+      return;
+    }
+    hwSet(valueId, hwFormatNumber(avg, avg >= 100 ? 0 : 1) + " mA");
+    if (hwCapacityMah !== null) parts.push("\u2248 " + hwFormatNumber(avg * 100 / hwCapacityMah, 1) + " %/h est.");
+    if (side.ms - side.unmeasured < HW_PRELIMINARY_MS) parts.push("Preliminary estimate");
+    else if (side.provisional) parts.push("Includes sleep gaps");
+    if (hwCycle && hwCycle.state === "charging") parts.push("Last discharge cycle");
+    hwSet(subId, parts.length ? parts.join(" \u00b7 ") : "Current discharge cycle");
   }
   function hwRenderSavedDrainRates() {
     if (!hwDiskCacheLoaded) {
-      var cacheLabel = hwDiskCacheReadFailed ? "Unavailable" : "Loading…";
-      ["hwBatteryActiveDrain", "hwBatteryIdleDrain"].forEach(function (id) { hwSet(id, cacheLabel); });
+      var cacheLabel = hwDiskCacheReadFailed ? "Unavailable" : "Loading\u2026";
+      ["hwBatteryActiveDrain", "hwBatteryIdleDrain", "hwBatteryScreenOnTime", "hwBatteryScreenOffTime"].forEach(function (id) { hwSet(id, cacheLabel); });
       ["hwBatteryActiveSub", "hwBatteryIdleSub"].forEach(function (id) {
-        hwSet(id, hwDiskCacheReadFailed ? "Saved monitor data could not be read; retrying" : "Reading saved monitor data…");
+        hwSet(id, hwDiskCacheReadFailed ? "Saved monitor data could not be read; retrying" : "Reading saved monitor data\u2026");
       });
-      hwRenderScreenTimes();
       return;
     }
-    function renderCurrent(mainId, subId, current, previousRate) {
-      if (current && isFinite(current.ma) && current.ma >= 0 && current.ma <= 20000 && current.durationMs > 0) {
-        hwSet(mainId, hwFormatNumber(current.ma, 1) + " mA");
-        var parts = ["Whole-cycle average"];
-        if (current.pct !== null && isFinite(current.pct) && current.pct >= 0 && current.pct <= 1000) {
-          parts.push("Estimated drain " + hwFormatNumber(current.pct, 1) + "%/h");
-        }
-        hwSet(subId, parts.join(" · "));
-        return;
-      }
-      hwSet(mainId, "Collecting data");
-      if (previousRate && isFinite(previousRate.rate) && previousRate.rate >= 0 && previousRate.rate < 100) {
-        hwSet(subId, "Waiting for valid current samples · previous rate " + hwFormatNumber(previousRate.rate, 1) + "%/h");
-      } else {
-        hwSet(subId, "Waiting for valid current samples");
-      }
-    }
-    renderCurrent("hwBatteryActiveDrain", "hwBatteryActiveSub", hwLastActiveCurrent, hwLastActiveRate);
-    renderCurrent("hwBatteryIdleDrain", "hwBatteryIdleSub", hwLastIdleCurrent, hwLastIdleRate);
-    hwRenderScreenTimes();
+    var cycle = hwCycle;
+    hwRenderDrain("hwBatteryActiveDrain", "hwBatteryActiveSub", cycle.active, cycle.enabled ? "Needs screen-on time" : "Monitoring is off");
+    hwRenderDrain("hwBatteryIdleDrain", "hwBatteryIdleSub", cycle.idle, cycle.enabled ? "Needs 10 s of confirmed screen-off" : "Monitoring is off");
+    hwSet("hwBatteryScreenOnTime", hwFormatDuration(cycle.active.ms));
+    hwSet("hwBatteryScreenOffTime", hwFormatDuration(cycle.idle.ms));
   }
-  function hwApplyMonitorSettings(saved) {
-    hwMonitorPrefs.enabled = saved.monitor_enabled !== "0";
-    hwMonitorPrefs.interval = Number(saved.sampling_interval) === 15 || Number(saved.sampling_interval) === 60 ? Number(saved.sampling_interval) : 30;
-    hwMonitorPrefs.resetOnCharging = saved.reset_on_charging !== "0";
-    var monitorToggle = $("bmMonitorToggle"), chargeToggle = $("bmResetChargeToggle"), state = $("bmEnabledState"), intervalLabel = $("bmIntervalLabel");
-    if (monitorToggle) monitorToggle.checked = hwMonitorPrefs.enabled;
-    if (chargeToggle) chargeToggle.checked = hwMonitorPrefs.resetOnCharging;
+  function hwApplyMonitorSettings(enabled) {
+    hwMonitorPrefs.enabled = enabled;
+    var monitorToggle = $("bmMonitorToggle"), state = $("bmEnabledState");
+    if (monitorToggle) monitorToggle.checked = enabled;
     if (state) {
-      state.textContent = hwMonitorPrefs.enabled ? "Enabled" : "Disabled";
-      state.className = hwMonitorPrefs.enabled ? "bm-state" : "bm-state disabled";
+      state.textContent = enabled ? "Enabled" : "Disabled";
+      state.className = enabled ? "bm-state" : "bm-state disabled";
     }
-    if (intervalLabel) intervalLabel.textContent = "Current: " + hwMonitorPrefs.interval + " seconds";
-    [15, 30, 60].forEach(function (seconds) {
-      var button = $("bmInterval" + seconds);
-      if (button) button.setAttribute("aria-pressed", seconds === hwMonitorPrefs.interval ? "true" : "false");
-    });
   }
-  function hwLoadDiskDrainCache(allowLegacyMigration) {
+  function hwLoadDiskDrainCache() {
     if (hwCacheInFlight) return;
     hwCacheInFlight = true;
     var resetEpoch = hwDataResetEpoch;
@@ -1066,67 +1006,8 @@
       }
       hwDiskCacheLoaded = true;
       hwDiskCacheReadFailed = false;
-      var saved = kv(r.stdout || ""), generation = Number(saved.generation);
-      if (!isFinite(generation) || generation < 0 || Math.floor(generation) !== generation) generation = 0;
-      var localGenerationText = hwStorageGet(HW_LOCAL_GENERATION_KEY);
-      var localGeneration = localGenerationText === null ? null : Number(localGenerationText);
-      var generationMismatch = localGeneration !== null && (!isFinite(localGeneration) || localGeneration !== generation);
-      var staleLegacyData = generation > 0 && localGeneration === null;
-      if (generationMismatch || staleLegacyData) hwClearLocalDrainData();
-      hwDiskGeneration = generation;
-      hwStorageSet(HW_LOCAL_GENERATION_KEY, String(generation));
-      function safeDuration(text) {
-        if (!/^[0-9]{1,15}$/.test(String(text === undefined ? "" : text))) return 0;
-        var value = Number(text);
-        return isFinite(value) && value >= 0 ? value : 0;
-      }
-      hwScreenOnMs = safeDuration(saved.screen_on_ms);
-      hwScreenOffMs = safeDuration(saved.screen_off_ms);
-      function safeCurrentStats(chargeText, durationText, capacityText) {
-        if (!/^[0-9]{1,15}$/.test(String(durationText === undefined ? "" : durationText))) return null;
-        if (!/^[0-9]+(?:\.[0-9]+)?$/.test(String(chargeText === undefined ? "" : chargeText))) return null;
-        var duration = Number(durationText), charge = Number(chargeText);
-        if (!isFinite(duration) || duration <= 0 || !isFinite(charge) || charge < 0 || charge > 1000000000000) return null;
-        var ma = charge * 3600 / duration;
-        if (!isFinite(ma) || ma < 0 || ma > 20000.001) return null;
-        var pct = null;
-        if (/^[0-9]{1,9}$/.test(String(capacityText === undefined ? "" : capacityText))) {
-          var capacity = Number(capacityText);
-          if (isFinite(capacity) && capacity >= 100000 && capacity <= 50000000) {
-            var converted = ma * 100000 / capacity;
-            if (isFinite(converted) && converted >= 0 && converted <= 1000) pct = converted;
-          }
-        }
-        return { ma: ma, pct: pct, durationMs: duration };
-      }
-      hwLastActiveCurrent = safeCurrentStats(saved.active_charge_uah, saved.active_current_ms, saved.effective_capacity_uah);
-      hwLastIdleCurrent = safeCurrentStats(saved.idle_charge_uah, saved.idle_current_ms, saved.effective_capacity_uah);
-      hwApplyMonitorSettings(saved);
-      var diskActive = hwRateObject(saved.active_rate, saved.active_time);
-      var diskIdle = hwRateObject(saved.idle_rate, saved.idle_time);
-      if (diskActive) {
-        hwLastActiveRate = diskActive;
-        hwStorageSet(HW_ACTIVE_RATE_KEY, JSON.stringify(diskActive));
-      } else if (generationMismatch || staleLegacyData || generation > 0) {
-        hwLastActiveRate = null;
-        hwStorageRemove(HW_ACTIVE_RATE_KEY);
-      } else {
-        hwLastActiveRate = hwLoadActiveRate();
-      }
-      if (diskIdle) {
-        hwLastIdleRate = diskIdle;
-        hwStorageSet(HW_IDLE_RATE_KEY, JSON.stringify(diskIdle));
-      } else if (generationMismatch || staleLegacyData || generation > 0) {
-        hwLastIdleRate = null;
-        hwStorageRemove(HW_IDLE_RATE_KEY);
-      } else {
-        hwLastIdleRate = hwLoadIdleRate();
-      }
-      /* Migrate v4.0.5 localStorage-only rates once, before any reset generation exists. */
-      if (allowLegacyMigration && generation === 0 && localGeneration === null) {
-        if (!diskActive && hwLastActiveRate) hwPersistRateToDisk("active", hwLastActiveRate, generation, resetEpoch);
-        if (!diskIdle && hwLastIdleRate) hwPersistRateToDisk("idle", hwLastIdleRate, generation, resetEpoch);
-      }
+      hwCycle = hwParseCycle(kv(r.stdout || ""));
+      hwApplyMonitorSettings(hwCycle.enabled);
       hwLastCacheReadAt = Date.now();
       hwRenderSavedDrainRates();
     }).catch(function () {
@@ -1136,10 +1017,16 @@
       hwCacheInFlight = false;
     });
   }
+  /* Reported full-charge capacity (uAh), used only for the estimated %/h line; implausible values are ignored. */
+  function hwCapacityFrom(data) {
+    var full = hwNumber(data.battery_charge_full), design = hwNumber(data.battery_charge_full_design);
+    var uah = full !== null && full >= 1000000 && full <= 20000000 ? full : (design !== null && design >= 1000000 && design <= 20000000 ? design : null);
+    return uah === null ? null : uah / 1000;
+  }
   function hwUpdateDrain(data) {
-    hwDrainCurrentStatus = String(data.battery_status || "Unknown");
+    hwCapacityMah = hwCapacityFrom(data);
     hwEnsureMonitorDaemon(false);
-    if (Date.now() - hwLastCacheReadAt >= 15000) hwLoadDiskDrainCache(false);
+    if (Date.now() - hwLastCacheReadAt >= 5000) hwLoadDiskDrainCache();
     hwRenderSavedDrainRates();
   }
   function hwSetMonitorPreference(command, value, update) {
@@ -1147,58 +1034,49 @@
     exec("sh " + BASE + "monitor-cache.sh " + command + " " + value).then(function (r) {
       if (r.errno !== 0) {
         setMsg("Could not save Battery Monitor setting. The previous setting is unchanged.", "err");
-        hwLoadDiskDrainCache(false);
+        hwLoadDiskDrainCache();
         return;
       }
       update();
-      hwApplyMonitorSettings({ monitor_enabled: hwMonitorPrefs.enabled ? "1" : "0", sampling_interval: String(hwMonitorPrefs.interval), reset_on_charging: hwMonitorPrefs.resetOnCharging ? "1" : "0" });
-      hwLoadDiskDrainCache(false);
+      hwApplyMonitorSettings(hwMonitorPrefs.enabled);
+      hwLoadDiskDrainCache();
       setMsg("Battery Monitor setting saved.", "ok");
     }).catch(function () {
       if (resetEpoch !== hwDataResetEpoch) return;
       setMsg("Could not save Battery Monitor setting.", "err");
-      hwLoadDiskDrainCache(false);
+      hwLoadDiskDrainCache();
     });
   }
   function hwResetScreenOnTime() {
-    if (typeof window.confirm === "function" && !window.confirm("Reset Screen-on Time (SOT)?\n\nOnly the saved screen-on time total will be cleared. Active/Idle Drain and screen-off time will be preserved.")) return;
+    if (typeof window.confirm === "function" && !window.confirm("Reset Screen-on Time (SOT)?\n\nScreen-on time and Active Drain restart together, because the average is charge divided by that time. Idle Drain and screen-off time are preserved.")) return;
     hwDataResetEpoch++;
     var resetEpoch = hwDataResetEpoch;
-    hwDiskWriteQueue = Promise.resolve();
     exec("sh " + BASE + "monitor-cache.sh reset-screen-on-time").then(function (r) {
       if (resetEpoch !== hwDataResetEpoch) return;
       if (r.errno !== 0) {
         setMsg("Could not reset Screen-on Time. No success was reported.", "err");
-        hwLoadDiskDrainCache(false);
+        hwLoadDiskDrainCache();
         return;
       }
-      hwScreenOnMs = 0;
-      hwRenderScreenTimes();
-      hwLoadDiskDrainCache(false);
-      setMsg("Screen-on Time reset. Active/Idle Drain and screen-off time were preserved.", "ok");
+      hwLoadDiskDrainCache();
+      setMsg("Screen-on Time and Active Drain restarted. Idle Drain and screen-off time were preserved.", "ok");
     }).catch(function () {
       if (resetEpoch !== hwDataResetEpoch) return;
       setMsg("Could not reset Screen-on Time.", "err");
     });
   }
   function hwResetMonitorData() {
-    if (typeof window.confirm === "function" && !window.confirm("Reset all Battery Monitor data?\n\nThis clears saved Active/Idle Drain rates, timestamps, screen-on/off time totals, baselines and pending measurements. It does not reset Android battery statistics or change monitoring settings.")) return;
+    if (typeof window.confirm === "function" && !window.confirm("Reset all Battery Monitor data?\n\nThis clears the current cycle's Active and Idle charge and time totals and any pending measurement. It does not reset Android battery statistics.")) return;
     hwDataResetEpoch++;
     var resetEpoch = hwDataResetEpoch;
-    hwDiskWriteQueue = Promise.resolve();
     exec("sh " + BASE + "monitor-cache.sh reset-data").then(function (r) {
       if (resetEpoch !== hwDataResetEpoch) return;
       if (r.errno !== 0) {
         setMsg("Could not reset Battery Monitor data. No success was reported.", "err");
-        hwLoadDiskDrainCache(false);
+        hwLoadDiskDrainCache();
         return;
       }
-      hwClearLocalDrainData();
-      hwStorageRemove(HW_LOCAL_GENERATION_KEY);
-      hwScreenOnMs = 0;
-      hwScreenOffMs = 0;
-      hwRenderSavedDrainRates();
-      hwLoadDiskDrainCache(false);
+      hwLoadDiskDrainCache();
       setMsg("Battery Monitor data reset. Fresh measurements will be collected.", "ok");
     }).catch(function () {
       if (resetEpoch !== hwDataResetEpoch) return;
@@ -1206,21 +1084,10 @@
     });
   }
   function hwWireMonitorSettings() {
-    var monitorToggle = $("bmMonitorToggle"), chargeToggle = $("bmResetChargeToggle");
+    var monitorToggle = $("bmMonitorToggle");
     if (monitorToggle) monitorToggle.addEventListener("change", function () {
       var wanted = monitorToggle.checked ? 1 : 0;
       hwSetMonitorPreference("set-enabled", wanted, function () { hwMonitorPrefs.enabled = !!wanted; });
-    });
-    if (chargeToggle) chargeToggle.addEventListener("change", function () {
-      var wanted = chargeToggle.checked ? 1 : 0;
-      hwSetMonitorPreference("set-reset-on-charging", wanted, function () { hwMonitorPrefs.resetOnCharging = !!wanted; });
-    });
-    [15, 30, 60].forEach(function (seconds) {
-      var button = $("bmInterval" + seconds);
-      if (!button) return;
-      button.addEventListener("click", function () {
-        hwSetMonitorPreference("set-interval", seconds, function () { hwMonitorPrefs.interval = seconds; });
-      });
     });
     var resetButton = $("bmResetData");
     if (resetButton) resetButton.addEventListener("click", hwResetMonitorData);
@@ -1248,10 +1115,8 @@
 
   /* The background daemon owns measurement windows; the WebUI only renders its durable results. */
   hwEnsureMonitorDaemon(true);
-  hwLastActiveRate = hwLoadActiveRate();
-  hwLastIdleRate = hwLoadIdleRate();
   hwRenderSavedDrainRates();
-  hwLoadDiskDrainCache(true);
+  hwLoadDiskDrainCache();
   function hwUpdate(data) {
     var policies = hwGetPolicies(data), previous = hwPrevious;
     hwBuildCpuCards(policies, data);

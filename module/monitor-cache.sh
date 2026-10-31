@@ -1,5 +1,5 @@
 #!/system/bin/sh
-# Persistent battery-monitor settings and latest valid drain rates.
+# Persistent battery-monitor settings and the current discharge cycle's active/idle charge and time totals.
 # All updates are validated and replaced atomically; settings survive data resets.
 set -f
 umask 077
@@ -15,10 +15,6 @@ PROC_DIR=${MONITOR_PROC_DIR:-/proc}
 AWK_CMD=${MONITOR_AWK_CMD:-awk}
 BOOT_ID_FILE=${MONITOR_BOOT_ID_FILE:-/proc/sys/kernel/random/boot_id}
 
-valid_rate() {
-  [ "$#" -eq 1 ] || return 1
-  awk -v n="$1" 'BEGIN { if (n ~ /^[0-9]+([.][0-9]+)?$/ && n + 0 >= 0 && n + 0 < 100) exit 0; exit 1 }'
-}
 valid_time() {
   [ "$#" -eq 1 ] || return 1
   case "$1" in ''|*[!0-9]*) return 1 ;; esac
@@ -37,57 +33,49 @@ valid_generation() {
   case "$1" in ''|*[!0-9]*) return 1 ;; esac
   [ "${#1}" -le 10 ] || return 1
 }
-valid_current_charge() {
-  [ "$#" -eq 1 ] || return 1
-  awk -v n="$1" 'BEGIN { if (n ~ /^[0-9]+([.][0-9]+)?$/ && n+0 >= 0 && n+0 <= 1000000000000) exit 0; exit 1 }'
-}
-valid_current_capacity() {
-  [ "$#" -eq 1 ] || return 1
-  case "$1" in ''|*[!0-9]*) return 1 ;; esac
-  [ "${#1}" -le 9 ] || return 1
-  awk -v n="$1" 'BEGIN { if (n ~ /^[0-9]+$/ && n+0 >= 100000 && n+0 <= 50000000) exit 0; exit 1 }'
-}
 
-active_rate=
-active_time=
-idle_rate=
-idle_time=
 monitor_enabled=1
-sampling_interval=30
-reset_on_charging=1
 generation=0
 reset_time=0
-last_charger=unknown
-screen_on_ms=0
-screen_off_ms=0
-active_charge_uah=0
-active_current_ms=0
-idle_charge_uah=0
-idle_current_ms=0
-effective_capacity_uah=
+cycle_id=0
+cycle_state=none
+cycle_boot=
+active_charge=0
+active_ms=0
+active_unmeasured=0
+active_prov=0
+idle_charge=0
+idle_ms=0
+idle_unmeasured=0
+idle_prov=0
+active_recent_ua=
+active_recent_ms=0
+idle_recent_ua=
+idle_recent_ms=0
 
 load_file() {
   _file=$1
   [ -f "$_file" ] && [ ! -L "$_file" ] || return 0
   while IFS='=' read -r key value; do
     case "$key" in
-      active_rate) active_rate=$value ;;
-      active_time) active_time=$value ;;
-      idle_rate) idle_rate=$value ;;
-      idle_time) idle_time=$value ;;
       monitor_enabled) monitor_enabled=$value ;;
-      sampling_interval) sampling_interval=$value ;;
-      reset_on_charging) reset_on_charging=$value ;;
       generation) generation=$value ;;
       reset_time) reset_time=$value ;;
-      last_charger) last_charger=$value ;;
-      screen_on_ms) screen_on_ms=$value ;;
-      screen_off_ms) screen_off_ms=$value ;;
-      active_charge_uah) active_charge_uah=$value ;;
-      active_current_ms) active_current_ms=$value ;;
-      idle_charge_uah) idle_charge_uah=$value ;;
-      idle_current_ms) idle_current_ms=$value ;;
-      effective_capacity_uah) effective_capacity_uah=$value ;;
+      cycle_id) cycle_id=$value ;;
+      cycle_state) cycle_state=$value ;;
+      cycle_boot) cycle_boot=$value ;;
+      active_charge) active_charge=$value ;;
+      active_ms) active_ms=$value ;;
+      active_unmeasured) active_unmeasured=$value ;;
+      active_prov) active_prov=$value ;;
+      idle_charge) idle_charge=$value ;;
+      idle_ms) idle_ms=$value ;;
+      idle_unmeasured) idle_unmeasured=$value ;;
+      idle_prov) idle_prov=$value ;;
+      active_recent_ua) active_recent_ua=$value ;;
+      active_recent_ms) active_recent_ms=$value ;;
+      idle_recent_ua) idle_recent_ua=$value ;;
+      idle_recent_ms) idle_recent_ms=$value ;;
     esac
   done < "$_file"
 }
@@ -98,52 +86,41 @@ load_cache() {
     # One-way migration from v4.0.5's cache in the replaceable module directory.
     load_file "$LEGACY_CACHE_FILE"
   fi
-  if ! valid_rate "$active_rate" || ! valid_time "$active_time"; then active_rate=; active_time=; fi
-  if ! valid_rate "$idle_rate" || ! valid_time "$idle_time"; then idle_rate=; idle_time=; fi
   valid_bool "$monitor_enabled" || monitor_enabled=1
-  case "$sampling_interval" in 15|30|60) ;; *) sampling_interval=30 ;; esac
-  valid_bool "$reset_on_charging" || reset_on_charging=1
   valid_generation "$generation" || generation=0
   valid_time "$reset_time" || reset_time=0
-  case "$last_charger" in connected|disconnected|unknown) ;; *) last_charger=unknown ;; esac
-  valid_duration "$screen_on_ms" || screen_on_ms=0
-  valid_duration "$screen_off_ms" || screen_off_ms=0
-  valid_current_charge "$active_charge_uah" || active_charge_uah=0
-  valid_duration "$active_current_ms" || active_current_ms=0
-  valid_current_charge "$idle_charge_uah" || idle_charge_uah=0
-  valid_duration "$idle_current_ms" || idle_current_ms=0
-  valid_current_capacity "$effective_capacity_uah" || effective_capacity_uah=
-  # Reject inconsistent/poisoned pairs rather than letting one malformed cache value make all future
-  # averages unavailable. A zero-duration bucket cannot contain accumulated charge.
-  if [ "$active_current_ms" -gt 0 ] 2>/dev/null; then
-    awk -v q="$active_charge_uah" -v ms="$active_current_ms" 'BEGIN { exit !(q*3600/ms <= 20000.001) }' || { active_charge_uah=0; active_current_ms=0; }
-  else
-    active_charge_uah=0; active_current_ms=0
-  fi
-  if [ "$idle_current_ms" -gt 0 ] 2>/dev/null; then
-    awk -v q="$idle_charge_uah" -v ms="$idle_current_ms" 'BEGIN { exit !(q*3600/ms <= 20000.001) }' || { idle_charge_uah=0; idle_current_ms=0; }
-  else
-    idle_charge_uah=0; idle_current_ms=0
-  fi
+  valid_duration "$cycle_id" || cycle_id=0
+  case "$cycle_state" in discharging|charging|none) ;; *) cycle_state=none ;; esac
+  case "$cycle_boot" in *[!0-9a-fA-F-]*) cycle_boot= ;; esac
+  [ "${#cycle_boot}" -le 64 ] || cycle_boot=
+  valid_duration "$active_charge" || active_charge=0
+  valid_duration "$active_ms" || active_ms=0
+  valid_duration "$active_unmeasured" || active_unmeasured=0
+  valid_duration "$idle_charge" || idle_charge=0
+  valid_duration "$idle_ms" || idle_ms=0
+  valid_duration "$idle_unmeasured" || idle_unmeasured=0
+  valid_duration "$active_recent_ms" || active_recent_ms=0
+  valid_duration "$idle_recent_ms" || idle_recent_ms=0
+  valid_bool "$active_prov" || active_prov=0
+  valid_bool "$idle_prov" || idle_prov=0
+  case "$active_recent_ua" in *[!0-9]*) active_recent_ua= ;; esac
+  case "$idle_recent_ua" in *[!0-9]*) idle_recent_ua= ;; esac
+  [ "${#active_recent_ua}" -le 12 ] || active_recent_ua=
+  [ "${#idle_recent_ua}" -le 12 ] || idle_recent_ua=
+  # Unmeasured time can never exceed the time it is part of.
+  [ "$active_unmeasured" -le "$active_ms" ] || active_unmeasured=$active_ms
+  [ "$idle_unmeasured" -le "$idle_ms" ] || idle_unmeasured=$idle_ms
 }
 write_cache() {
   [ ! -L "$CACHE_FILE" ] || return 1
   mkdir -p "$CACHE_DIR" 2>/dev/null || return 1
   tmp="$CACHE_FILE.tmp.$$"
   (umask 077; {
-    printf 'active_rate=%s\n' "$active_rate"
-    printf 'active_time=%s\n' "$active_time"
-    printf 'idle_rate=%s\n' "$idle_rate"
-    printf 'idle_time=%s\n' "$idle_time"
-    printf 'monitor_enabled=%s\n' "$monitor_enabled"
-    printf 'sampling_interval=%s\n' "$sampling_interval"
-    printf 'reset_on_charging=%s\n' "$reset_on_charging"
-    printf 'generation=%s\n' "$generation"
-    printf 'reset_time=%s\n' "$reset_time"
-    printf 'last_charger=%s\n' "$last_charger"
-    printf 'screen_on_ms=%s\nscreen_off_ms=%s\n' "$screen_on_ms" "$screen_off_ms"
-    printf 'active_charge_uah=%s\nactive_current_ms=%s\nidle_charge_uah=%s\nidle_current_ms=%s\neffective_capacity_uah=%s\n' \
-      "$active_charge_uah" "$active_current_ms" "$idle_charge_uah" "$idle_current_ms" "$effective_capacity_uah"
+    printf 'monitor_enabled=%s\ngeneration=%s\nreset_time=%s\n' "$monitor_enabled" "$generation" "$reset_time"
+    printf 'cycle_id=%s\ncycle_state=%s\ncycle_boot=%s\n' "$cycle_id" "$cycle_state" "$cycle_boot"
+    printf 'active_charge=%s\nactive_ms=%s\nactive_unmeasured=%s\nactive_prov=%s\n' "$active_charge" "$active_ms" "$active_unmeasured" "$active_prov"
+    printf 'idle_charge=%s\nidle_ms=%s\nidle_unmeasured=%s\nidle_prov=%s\n' "$idle_charge" "$idle_ms" "$idle_unmeasured" "$idle_prov"
+    printf 'active_recent_ua=%s\nactive_recent_ms=%s\nidle_recent_ua=%s\nidle_recent_ms=%s\n' "$active_recent_ua" "$active_recent_ms" "$idle_recent_ua" "$idle_recent_ms"
   } > "$tmp") || { rm -f "$tmp"; return 1; }
   chmod 600 "$tmp" 2>/dev/null || { rm -f "$tmp"; return 1; }
   mv -f "$tmp" "$CACHE_FILE" || { rm -f "$tmp"; return 1; }
@@ -243,152 +220,94 @@ release_lock() {
   rmdir "$LOCK_DIR" 2>/dev/null
 }
 
+zero_active() { active_charge=0; active_ms=0; active_unmeasured=0; active_prov=0; active_recent_ua=; active_recent_ms=0; }
+zero_idle() { idle_charge=0; idle_ms=0; idle_unmeasured=0; idle_prov=0; idle_recent_ua=; idle_recent_ms=0; }
+
 case "$MODE" in
   get)
     load_cache
-    active_avg_ma=; active_avg_pct_h=; idle_avg_ma=; idle_avg_pct_h=
-    if [ "$active_current_ms" -gt 0 ] 2>/dev/null; then
-      active_avg_ma=$(awk -v q="$active_charge_uah" -v ms="$active_current_ms" 'BEGIN { a=q*3600/ms; if (a >= 0 && a <= 20000) printf "%.3f", a }')
-      if [ -n "$active_avg_ma" ] && [ -n "$effective_capacity_uah" ]; then
-        active_avg_pct_h=$(awk -v a="$active_avg_ma" -v c="$effective_capacity_uah" 'BEGIN { p=a*100000/c; if (c > 0 && p >= 0 && p <= 1000) printf "%.3f", p }')
-      fi
-    fi
-    if [ "$idle_current_ms" -gt 0 ] 2>/dev/null; then
-      idle_avg_ma=$(awk -v q="$idle_charge_uah" -v ms="$idle_current_ms" 'BEGIN { a=q*3600/ms; if (a >= 0 && a <= 20000) printf "%.3f", a }')
-      if [ -n "$idle_avg_ma" ] && [ -n "$effective_capacity_uah" ]; then
-        idle_avg_pct_h=$(awk -v a="$idle_avg_ma" -v c="$effective_capacity_uah" 'BEGIN { p=a*100000/c; if (c > 0 && p >= 0 && p <= 1000) printf "%.3f", p }')
-      fi
-    fi
-    printf 'active_rate=%s\nactive_time=%s\nidle_rate=%s\nidle_time=%s\n' "$active_rate" "$active_time" "$idle_rate" "$idle_time"
-    printf 'monitor_enabled=%s\nsampling_interval=%s\nreset_on_charging=%s\ngeneration=%s\nreset_time=%s\nlast_charger=%s\nscreen_on_ms=%s\nscreen_off_ms=%s\n' \
-      "$monitor_enabled" "$sampling_interval" "$reset_on_charging" "$generation" "$reset_time" "$last_charger" "$screen_on_ms" "$screen_off_ms"
-    printf 'active_charge_uah=%s\nactive_current_ms=%s\nactive_avg_ma=%s\nactive_avg_pct_h=%s\nidle_charge_uah=%s\nidle_current_ms=%s\nidle_avg_ma=%s\nidle_avg_pct_h=%s\neffective_capacity_uah=%s\n' \
-      "$active_charge_uah" "$active_current_ms" "$active_avg_ma" "$active_avg_pct_h" \
-      "$idle_charge_uah" "$idle_current_ms" "$idle_avg_ma" "$idle_avg_pct_h" "$effective_capacity_uah"
-    ;;
-  add-current)
-    [ "$#" -eq 6 ] || exit 2
-    current_kind=$2; current_charge=$3; current_delta_ms=$4; current_capacity=$5; expected_generation=$6
-    case "$current_kind" in active|idle) ;; *) exit 2 ;; esac
-    valid_current_charge "$current_charge" && valid_duration "$current_delta_ms" && [ "$current_delta_ms" -gt 0 ] 2>/dev/null || exit 2
-    valid_generation "$expected_generation" || exit 2
-    [ -z "$current_capacity" ] || valid_current_capacity "$current_capacity" || exit 2
-    # Refuse out-of-range contributions before they can poison a cumulative average.
-    awk -v q="$current_charge" -v ms="$current_delta_ms" 'BEGIN { exit !(q*3600/ms <= 20000.001) }' || exit 2
-    acquire_lock || exit 1; trap release_lock EXIT
-    load_cache
-    [ "$expected_generation" = "$generation" ] || exit 3
-    if [ "$current_kind" = active ]; then
-      active_charge_uah=$(awk -v a="$active_charge_uah" -v b="$current_charge" 'BEGIN { printf "%.6f", a+b }')
-      active_current_ms=$((active_current_ms + current_delta_ms))
-      valid_current_charge "$active_charge_uah" && valid_duration "$active_current_ms" || exit 2
-    else
-      idle_charge_uah=$(awk -v a="$idle_charge_uah" -v b="$current_charge" 'BEGIN { printf "%.6f", a+b }')
-      idle_current_ms=$((idle_current_ms + current_delta_ms))
-      valid_current_charge "$idle_charge_uah" && valid_duration "$idle_current_ms" || exit 2
-    fi
-    if [ -n "$current_capacity" ]; then effective_capacity_uah=$current_capacity; fi
-    write_cache
-    ;;
-  set-active|set-idle)
-    [ "$#" -ge 3 ] && [ "$#" -le 4 ] || exit 2
-    new_rate=$2; new_time=$3; expected_generation=${4:-}
-    valid_rate "$new_rate" && valid_time "$new_time" || exit 2
-    acquire_lock || exit 1
-    trap release_lock EXIT
-    load_cache
-    if [ -n "$expected_generation" ] && { ! valid_generation "$expected_generation" || [ "$expected_generation" != "$generation" ]; }; then exit 3; fi
-    if [ "$MODE" = set-active ]; then active_rate=$new_rate; active_time=$new_time
-    else idle_rate=$new_rate; idle_time=$new_time
-    fi
-    write_cache
+    printf 'monitor_enabled=%s\ngeneration=%s\nreset_time=%s\n' "$monitor_enabled" "$generation" "$reset_time"
+    printf 'cycle_id=%s\ncycle_state=%s\ncycle_boot=%s\n' "$cycle_id" "$cycle_state" "$cycle_boot"
+    printf 'active_charge=%s\nactive_ms=%s\nactive_unmeasured=%s\nactive_prov=%s\n' "$active_charge" "$active_ms" "$active_unmeasured" "$active_prov"
+    printf 'idle_charge=%s\nidle_ms=%s\nidle_unmeasured=%s\nidle_prov=%s\n' "$idle_charge" "$idle_ms" "$idle_unmeasured" "$idle_prov"
+    printf 'active_recent_ua=%s\nactive_recent_ms=%s\nidle_recent_ua=%s\nidle_recent_ms=%s\n' "$active_recent_ua" "$active_recent_ms" "$idle_recent_ua" "$idle_recent_ms"
     ;;
   set-enabled)
     [ "$#" -eq 2 ] && valid_bool "$2" || exit 2
     acquire_lock || exit 1; trap release_lock EXIT
     load_cache; monitor_enabled=$2; write_cache
     ;;
-  set-interval)
-    [ "$#" -eq 2 ] || exit 2
-    case "$2" in 15|30|60) ;; *) exit 2 ;; esac
-    acquire_lock || exit 1; trap release_lock EXIT
-    load_cache; sampling_interval=$2; write_cache
-    ;;
-  set-reset-on-charging)
-    [ "$#" -eq 2 ] && valid_bool "$2" || exit 2
-    acquire_lock || exit 1; trap release_lock EXIT
-    load_cache; reset_on_charging=$2; write_cache
-    ;;
-  set-charger-state)
-    [ "$#" -eq 2 ] || exit 2
-    case "$2" in connected|disconnected|unknown) ;; *) exit 2 ;; esac
-    acquire_lock || exit 1; trap release_lock EXIT
-    load_cache; last_charger=$2; write_cache
-    ;;
-  add-screen-time)
-    [ "$#" -eq 4 ] || exit 2
-    time_state=$2; delta_ms=$3; expected_generation=$4
-    case "$time_state" in
-      on) max_delta_ms=120000 ;;
-      off) max_delta_ms=43200000 ;;
-      *) exit 2 ;;
-    esac
-    valid_duration "$delta_ms" && [ "$delta_ms" -gt 0 ] && [ "$delta_ms" -le "$max_delta_ms" ] || exit 2
+  set-cycle)
+    # set-cycle GENERATION key=value ... : the collector's whole cycle record in one atomic, validated write.
+    # A write made under an older generation (a reset happened meanwhile) is refused with status 3.
+    [ "$#" -ge 3 ] || exit 2
+    expected_generation=$2
     valid_generation "$expected_generation" || exit 2
-    acquire_lock || exit 1; trap release_lock EXIT
+    shift 2
+    # Validate every pair before touching the cache.
+    for _pair in "$@"; do
+      _k=${_pair%%=*}; _v=${_pair#*=}
+      case "$_k" in
+        cycle_id|active_charge|active_ms|active_unmeasured|idle_charge|idle_ms|idle_unmeasured|active_recent_ms|idle_recent_ms)
+          valid_duration "$_v" || exit 2 ;;
+        active_prov|idle_prov) valid_bool "$_v" || exit 2 ;;
+        cycle_state) case "$_v" in discharging|charging|none) ;; *) exit 2 ;; esac ;;
+        cycle_boot) case "$_v" in *[!0-9a-fA-F-]*) exit 2 ;; esac; [ "${#_v}" -le 64 ] || exit 2 ;;
+        active_recent_ua|idle_recent_ua) case "$_v" in *[!0-9]*) exit 2 ;; esac; [ "${#_v}" -le 12 ] || exit 2 ;;
+        *) exit 2 ;;
+      esac
+    done
+    acquire_lock || exit 1
+    trap release_lock EXIT
     load_cache
     [ "$expected_generation" = "$generation" ] || exit 3
-    if [ "$time_state" = on ]; then
-      screen_on_ms=$((screen_on_ms + delta_ms))
-      valid_duration "$screen_on_ms" || exit 2
-    else
-      screen_off_ms=$((screen_off_ms + delta_ms))
-      valid_duration "$screen_off_ms" || exit 2
-    fi
+    for _pair in "$@"; do
+      _k=${_pair%%=*}; _v=${_pair#*=}
+      case "$_k" in
+        cycle_id) cycle_id=$_v ;;
+        cycle_state) cycle_state=$_v ;;
+        cycle_boot) cycle_boot=$_v ;;
+        active_charge) active_charge=$_v ;;
+        active_ms) active_ms=$_v ;;
+        active_unmeasured) active_unmeasured=$_v ;;
+        active_prov) active_prov=$_v ;;
+        idle_charge) idle_charge=$_v ;;
+        idle_ms) idle_ms=$_v ;;
+        idle_unmeasured) idle_unmeasured=$_v ;;
+        idle_prov) idle_prov=$_v ;;
+        active_recent_ua) active_recent_ua=$_v ;;
+        active_recent_ms) active_recent_ms=$_v ;;
+        idle_recent_ua) idle_recent_ua=$_v ;;
+        idle_recent_ms) idle_recent_ms=$_v ;;
+      esac
+    done
+    # Re-apply the consistency rules (unmeasured time cannot exceed its state's time) before saving.
+    [ "$active_unmeasured" -le "$active_ms" ] || exit 2
+    [ "$idle_unmeasured" -le "$idle_ms" ] || exit 2
     write_cache
     ;;
   reset-screen-on-time)
     [ "$#" -eq 1 ] || exit 2
     acquire_lock || exit 1; trap release_lock EXIT
     load_cache
-    screen_on_ms=0
-    # Advance generation so a screen-time sample already in flight cannot restore the old total.
-    # Drain-rate values and screen-off time are deliberately preserved.
+    # Screen-on time and the active charge it divides restart together so Active Drain stays consistent.
+    # Idle (screen-off) totals are preserved. The new generation makes the collector drop any in-flight state.
+    zero_active
     generation=$((generation + 1))
     reset_time="$(date +%s)000"
     write_cache || exit 1
-    rm -f "$CACHE_FILE.active-window" "$CACHE_FILE.idle-window" "$CACHE_FILE.pending"
-    ;;
-  reset-cycle)
-    [ "$#" -eq 2 ] && [ "$2" = keep-rates ] || exit 2
-    acquire_lock || exit 1; trap release_lock EXIT
-    load_cache
-    # Cycle metrics always end on plug-in, even when the user's legacy %/h reset preference is off.
-    # Keep legacy percentage-rate snapshots only; never carry current averages or state time forward.
-    screen_on_ms=0; screen_off_ms=0
-    active_charge_uah=0; active_current_ms=0; idle_charge_uah=0; idle_current_ms=0
-    effective_capacity_uah=
-    generation=$((generation + 1))
-    reset_time="$(date +%s)000"
-    write_cache || exit 1
-    rm -f "$CACHE_FILE.active-window" "$CACHE_FILE.idle-window" "$CACHE_FILE.pending"
     ;;
   reset-data)
     [ "$#" -eq 1 ] || exit 2
     acquire_lock || exit 1; trap release_lock EXIT
     load_cache
-    active_rate=; active_time=; idle_rate=; idle_time=
-    screen_on_ms=0; screen_off_ms=0
-    active_charge_uah=0; active_current_ms=0; idle_charge_uah=0; idle_current_ms=0
-    effective_capacity_uah=
+    zero_active; zero_idle
     generation=$((generation + 1))
     reset_time="$(date +%s)000"
     write_cache || exit 1
-    # Daemon windows are memory-only, but remove any interrupted/older implementation's pending files too.
-    rm -f "$CACHE_FILE.active-window" "$CACHE_FILE.idle-window" "$CACHE_FILE.pending"
     ;;
   *)
-    echo 'usage: monitor-cache.sh get | set-active RATE TIMESTAMP [GENERATION] | set-idle RATE TIMESTAMP [GENERATION] | add-current active|idle CHARGE_UAH DURATION_MS CAPACITY_UAH GENERATION | reset-screen-on-time | reset-cycle keep-rates | reset-data | set-enabled 0|1 | set-interval 15|30|60 | set-reset-on-charging 0|1 | set-charger-state connected|disconnected|unknown | add-screen-time on|off DELTA_MS GENERATION' >&2
+    echo 'usage: monitor-cache.sh get | set-enabled 0|1 | set-cycle GENERATION key=value... | reset-screen-on-time | reset-data' >&2
     exit 2
     ;;
 esac

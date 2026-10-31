@@ -1,6 +1,10 @@
 #!/system/bin/sh
-# Background battery/current-rate collector. It only reads standard power interfaces and writes
-# Kprofiles Control's own cache. Unflushed recent samples are memory-only and are conservatively dropped on restart.
+# Background battery collector. It only READS standard power/display interfaces and writes Kprofiles Control's
+# own cache. For the current discharge cycle it keeps two independent sets of totals:
+#   active: time with the screen ON, and the charge drawn in that time
+#   idle:   time with the screen OFF for at least PENDING_MS (confirmed Screen-Off Time), and its charge
+# Average current = charge / measured time. Charge is integrated from current_now with time-weighted
+# trapezoids on a monotonic clock (/proc/uptime), never on wall-clock time.
 set -f
 LC_ALL=C
 export LC_ALL
@@ -9,6 +13,7 @@ MODE=${1:-run}
 case "$0" in */*) SELF_DIR=${0%/*} ;; *) SELF_DIR=. ;; esac
 MODDIR=${2:-$SELF_DIR}
 CACHE="$MODDIR/monitor-cache.sh"
+CACHE_FILE=${MONITOR_CACHE_FILE:-/data/adb/kprofiles_ui/monitor-cache}
 DATA_DIR=${MONITOR_DATA_DIR:-/data/adb/kprofiles_ui}
 # The clock and the sampling pause are named explicitly so that tests can supply a fake clock by path.
 # A shell that prefers its own built-in applets over PATH (busybox ash on Debian/Ubuntu does) would
@@ -20,139 +25,44 @@ PROC_DIR=${MONITOR_PROC_DIR:-/proc}
 # Named explicitly so tests can supply a hooked awk by path (see MONITOR_DATE_CMD above).
 AWK_CMD=${MONITOR_AWK_CMD:-awk}
 BOOT_ID_FILE=${MONITOR_BOOT_ID_FILE:-/proc/sys/kernel/random/boot_id}
+SYS_ROOT=${MONITOR_SYS_ROOT:-/sys}
 UPTIME_FILE=${MONITOR_UPTIME_FILE:-/proc/uptime}
-CLOCK_CMD=${MONITOR_CLOCK_CMD:-}
-[ -r "$MODDIR/monitor-current.sh" ] || { echo 'monitor-daemon: missing monitor-current.sh' >&2; exit 1; }
-. "$MODDIR/monitor-current.sh" || exit 1
+SCREEN_FILE=${MONITOR_SCREEN_STATE_FILE:-}
+LOGCAT_CMD=${MONITOR_LOGCAT_CMD:-logcat}
 DAEMON_VERSION=unknown
 if [ -r "$MODDIR/module.prop" ]; then
   DAEMON_VERSION=$(tr -d '\r' < "$MODDIR/module.prop" | sed -n 's/^version=//p' | head -n 1)
   [ -n "$DAEMON_VERSION" ] || DAEMON_VERSION=unknown
 fi
 
-last_screen_sample_t=
-last_screen_sample_state=
-last_screen_sample_charge=
-last_screen_sample_capacity=
-last_screen_sample_full=
-last_screen_sample_current_ua=
-last_screen_sample_valid=0
-pending_off_start_t=
-pending_off_wall_t=
-pending_off_start_charge=
-pending_off_start_capacity=
-pending_off_start_full=
-pending_off_charge_uah=0
-pending_off_current_ms=0
-screen_off_confirmed=0
-idle_session_completed=0
-pending_active_charge_uah=0
-pending_active_current_ms=0
-pending_idle_charge_uah=0
-pending_idle_current_ms=0
-last_current_flush_t=0
-pending_active_time_ms=0
-pending_idle_time_ms=0
-last_screen_time_flush_t=0
-current_capacity_uah=
-active_roll_history=
-idle_roll_history=
-active_roll_charge_uah=0
-active_roll_current_ms=0
-idle_roll_charge_uah=0
-idle_roll_current_ms=0
-active_roll_avg_ma=
-idle_roll_avg_ma=
-last_rate_check_t=
+# ---- tunables (the environment overrides exist for off-device tests and later on-device tuning) ----
+pos_int() { case "$1" in ''|*[!0-9]*) return 1 ;; esac; [ "$1" -gt 0 ]; }
+ACTIVE_INTERVAL=${MONITOR_ACTIVE_INTERVAL:-1}      # seconds between samples while the screen is on
+IDLE_INTERVAL=${MONITOR_IDLE_INTERVAL:-5}          # seconds between samples while the screen is off
+PENDING_MS=${MONITOR_PENDING_MS:-10000}            # a screen-off interval counts only after this long
+ROLL_MS=${MONITOR_ROLL_MS:-300000}                 # rolling window of recent eligible state time (internal)
+SMOOTH_MS=${MONITOR_SMOOTH_MS:-10000}              # current smoothing horizon (noise reduction only)
+GAP_MS=${MONITOR_GAP_MS:-30000}                    # longer gaps between samples are not trapezoid-integrated as exact
+MAX_GAP_MS=${MONITOR_MAX_GAP_MS:-43200000}         # longer gaps are discarded (nothing is counted)
+PERSIST_MS=${MONITOR_PERSIST_MS:-15000}            # at most one routine cache write per this long
+MAX_SANE_UA=${MONITOR_MAX_SANE_UA:-20000000}       # readings above 20 A are not battery current
+for _tn in ACTIVE_INTERVAL IDLE_INTERVAL PENDING_MS ROLL_MS SMOOTH_MS GAP_MS MAX_GAP_MS PERSIST_MS MAX_SANE_UA; do
+  case "$_tn" in
+    ACTIVE_INTERVAL) pos_int "$ACTIVE_INTERVAL" || ACTIVE_INTERVAL=1 ;;
+    IDLE_INTERVAL) pos_int "$IDLE_INTERVAL" || IDLE_INTERVAL=5 ;;
+    PENDING_MS) pos_int "$PENDING_MS" || PENDING_MS=10000 ;;
+    ROLL_MS) pos_int "$ROLL_MS" || ROLL_MS=300000 ;;
+    SMOOTH_MS) pos_int "$SMOOTH_MS" || SMOOTH_MS=10000 ;;
+    GAP_MS) pos_int "$GAP_MS" || GAP_MS=30000 ;;
+    MAX_GAP_MS) pos_int "$MAX_GAP_MS" || MAX_GAP_MS=43200000 ;;
+    PERSIST_MS) pos_int "$PERSIST_MS" || PERSIST_MS=15000 ;;
+    MAX_SANE_UA) pos_int "$MAX_SANE_UA" || MAX_SANE_UA=20000000 ;;
+  esac
+done
 
 if [ ! -x "$CACHE" ]; then
   [ -f "$CACHE" ] || exit 1
 fi
-
-read_settings() {
-  _out=$(sh "$CACHE" get 2>/dev/null) || return 1
-  monitor_enabled=1; sampling_interval=30; reset_on_charging=1; generation=0; last_charger=unknown
-  active_rate=; active_time=; idle_rate=; idle_time=
-  while IFS='=' read -r key value; do
-    case "$key" in
-      monitor_enabled) monitor_enabled=$value ;;
-      sampling_interval) sampling_interval=$value ;;
-      reset_on_charging) reset_on_charging=$value ;;
-      generation) generation=$value ;;
-      last_charger) last_charger=$value ;;
-      active_rate) active_rate=$value ;;
-      active_time) active_time=$value ;;
-      idle_rate) idle_rate=$value ;;
-    esac
-  done <<EOF_CACHE
-$_out
-EOF_CACHE
-  case "$monitor_enabled" in 0|1) ;; *) monitor_enabled=1 ;; esac
-  case "$sampling_interval" in 15|30|60) ;; *) sampling_interval=30 ;; esac
-  case "$reset_on_charging" in 0|1) ;; *) reset_on_charging=1 ;; esac
-  case "$last_charger" in connected|disconnected|unknown) ;; *) last_charger=unknown ;; esac
-  case "$generation" in ''|*[!0-9]*) generation=0 ;; esac
-  return 0
-}
-
-clear_windows() {
-  active_start_t=; active_start_charge=; active_start_capacity=; active_start_full=
-  idle_start_t=; idle_start_charge=; idle_start_capacity=; idle_start_full=
-}
-
-clear_screen_sample() {
-  last_screen_sample_t=
-  last_screen_sample_state=
-  last_screen_sample_charge=
-  last_screen_sample_capacity=
-  last_screen_sample_full=
-  last_screen_sample_current_ua=
-  last_screen_sample_valid=0
-  pending_off_start_t=
-  pending_off_wall_t=
-  pending_off_start_charge=
-  pending_off_start_capacity=
-  pending_off_start_full=
-  pending_off_charge_uah=0
-  pending_off_current_ms=0
-  screen_off_confirmed=0
-  idle_session_completed=0
-}
-clear_drain_tracking() {
-  clear_screen_sample
-  pending_active_charge_uah=0; pending_active_current_ms=0
-  pending_idle_charge_uah=0; pending_idle_current_ms=0
-  active_roll_history=; idle_roll_history=
-  active_roll_charge_uah=0; active_roll_current_ms=0
-  idle_roll_charge_uah=0; idle_roll_current_ms=0
-  active_roll_avg_ma=; idle_roll_avg_ma=
-  last_current_flush_t=0
-  pending_active_time_ms=0; pending_idle_time_ms=0
-  last_screen_time_flush_t=0
-  last_rate_check_t=
-}
-read_monotonic_ms() {
-  if [ -n "$CLOCK_CMD" ]; then
-    _clock_ms=$("$CLOCK_CMD" 2>/dev/null) || return 1
-    case "$_clock_ms" in ''|*[!0-9]*) return 1 ;; esac
-    [ "${#_clock_ms}" -le 15 ] || return 1
-    printf '%s\n' "$_clock_ms"
-    return 0
-  fi
-  [ -r "$UPTIME_FILE" ] || return 1
-  _uptime=$(awk 'NR == 1 { print $1; exit }' "$UPTIME_FILE" 2>/dev/null) || return 1
-  case "$_uptime" in ''|*[!0-9.]*) return 1 ;; esac
-  case "$_uptime" in *.*) _sec=${_uptime%%.*}; _frac=${_uptime#*.} ;; *) _sec=$_uptime; _frac=000 ;; esac
-  case "$_sec" in ''|*[!0-9]*) return 1 ;; esac
-  case "$_frac" in *.*|*[!0-9]*) return 1 ;; esac
-  _frac=$(printf '%s000' "$_frac" | cut -c1-3)
-  case "$_frac" in ''|*[!0-9]*) return 1 ;; esac
-  # /proc/uptime is boot-based and includes suspend time on Android/Linux; unlike wall time,
-  # it cannot jump because the user or network adjusted the clock. No anchors survive a reboot.
-  _mono=$((_sec * 1000 + _frac)) 2>/dev/null || return 1
-  case "$_mono" in ''|*[!0-9]*) return 1 ;; esac
-  printf '%s\n' "$_mono"
-}
 
 is_monitor_process() {
   _pid=$1
@@ -267,518 +177,516 @@ start_detached_daemon() {
   return 1
 }
 
-record_from_output() {
-  screen_state=unknown; battery_status=Unknown; capacity=; charge=; full=; current_ua=; _raw_current=; charger_online=unknown
-  while IFS='=' read -r key value; do
-    case "$key" in
-      screen_state) screen_state=$value ;;
-      battery_status) battery_status=$value ;;
-      battery_capacity) capacity=$value ;;
-      battery_charge_counter) charge=$value ;;
-      battery_charge_full) full=$value ;;
-      battery_charge_full_design) [ -n "$full" ] || full=$value ;;
-      battery_current_now) _raw_current=$value ;;
-      charger_online) charger_online=$value ;;
-    esac
-  done <<EOF_RECORD
-$1
-EOF_RECORD
-  case "$capacity" in ''|*[!0-9]*) capacity= ;; *) [ "$capacity" -le 100 ] 2>/dev/null || capacity= ;; esac
-  monitor_valid_counter_uah "$charge" || charge=
-  monitor_valid_counter_uah "$full" || full=
-  if monitor_valid_current_ua "${_raw_current:-}"; then
-    current_ua=$(monitor_normalize_current_ua "$_raw_current") || current_ua=
-  fi
-  case "$screen_state" in on|off) ;; *) screen_state=unknown ;; esac
-  case "$battery_status" in Charging|Discharging|Full|Not\ charging|Unknown) ;; *) battery_status=Unknown ;; esac
-  case "$charger_online" in 1|0|unknown) ;; *) charger_online=unknown ;; esac
+
+# =====================================================================================================
+# Measurement engine
+# =====================================================================================================
+
+read_first() {
+  _R=
+  [ -r "$1" ] || return 1
+  IFS= read -r _R < "$1" 2>/dev/null || [ -n "$_R" ]
 }
 
-is_charging() {
-  case "$charger_online" in
-    1) return 0 ;;
-    0|unknown) [ "$battery_status" = Charging ] && return 0; return 1 ;;
+# NOW = milliseconds on the monotonic boot clock (counts suspend time, unaffected by wall-clock changes).
+now_ms() {
+  NOW=
+  _up=
+  IFS=' ' read -r _up _ < "$UPTIME_FILE" 2>/dev/null || [ -n "$_up" ] || return 1
+  _int=${_up%%.*}
+  case "$_int" in ''|*[!0-9]*) return 1 ;; esac
+  _frac=0
+  case "$_up" in *.*) _frac=${_up#*.} ;; esac
+  case "$_frac" in
+    '') _f3=000 ;;
+    ?) _f3=${_frac}00 ;;
+    ??) _f3=${_frac}0 ;;
+    *) _f3=${_frac%"${_frac#???}"} ;;
   esac
-  return 1
+  case "$_f3" in *[!0-9]*) return 1 ;; esac
+  while [ "${#_f3}" -gt 1 ] && [ "${_f3#0}" != "$_f3" ]; do _f3=${_f3#0}; done
+  while [ "${#_int}" -gt 1 ] && [ "${_int#0}" != "$_int" ]; do _int=${_int#0}; done
+  [ "${#_int}" -le 13 ] || return 1
+  NOW=$((_int * 1000 + _f3))
 }
 
-valid_measurement() {
-  # Positive rates only: unchanged/quantized battery counters do not become fake 0%/h readings.
-  awk -v r="$1" 'BEGIN { if (r ~ /^[0-9]+([.][0-9]+)?$/ && r+0 > 0 && r+0 < 100) exit 0; exit 1 }'
-}
-
-compute_rate() {
-  _start_t=$1; _start_charge=$2; _start_capacity=$3; _start_full=$4
-  _end_t=$5; _end_charge=$6; _end_capacity=$7; _end_full=$8
-  _elapsed=$((_end_t - _start_t))
-  [ "$_elapsed" -ge 120000 ] || return 1
-  _full=$_end_full; [ -n "$_full" ] || _full=$_start_full
-  _rate=
-  if [ -n "$_start_charge" ] && [ -n "$_end_charge" ] && [ -n "$_full" ] && awk -v f="$_full" 'BEGIN{exit !(f+0>0)}'; then
-    _lost=$(awk -v a="$_start_charge" -v b="$_end_charge" 'BEGIN{printf "%.6f", a-b}')
-    if awk -v l="$_lost" 'BEGIN{exit !(l+0>0)}'; then
-      _rate=$(awk -v l="$_lost" -v f="$_full" -v e="$_elapsed" 'BEGIN{printf "%.6f", (l/f)*100*3600000/e}')
-    fi
-  fi
-  if [ -z "$_rate" ] && [ -n "$_start_capacity" ] && [ -n "$_end_capacity" ]; then
-    _drop=$(awk -v a="$_start_capacity" -v b="$_end_capacity" 'BEGIN{printf "%.6f", a-b}')
-    if awk -v d="$_drop" 'BEGIN{exit !(d+0>0)}'; then
-      _rate=$(awk -v d="$_drop" -v e="$_elapsed" 'BEGIN{printf "%.6f", d*3600000/e}')
-    fi
-  fi
-  valid_measurement "$_rate" || return 1
-  printf '%s\n' "$_rate"
-}
-
-update_window() {
-  _kind=$1; _now=$2
-  if [ "$_kind" = active ]; then
-    [ -n "$active_start_t" ] || {
-      active_start_t=$_now; active_start_charge=$charge; active_start_capacity=$capacity; active_start_full=$full
-      return 0
-    }
-    _start_t=$active_start_t; _start_charge=$active_start_charge; _start_capacity=$active_start_capacity; _start_full=$active_start_full
-  else
-    [ -n "$idle_start_t" ] || {
-      idle_start_t=$_now; idle_start_charge=$charge; idle_start_capacity=$capacity; idle_start_full=$full
-      return 0
-    }
-    _start_t=$idle_start_t; _start_charge=$idle_start_charge; _start_capacity=$idle_start_capacity; _start_full=$idle_start_full
-  fi
-  # A counter/capacity increase means that a charging event may have occurred between polls.
-  # Rebase immediately so a brief, unobserved charging event cannot be averaged into a drain rate.
-  if [ -n "$_start_charge" ] && [ -n "$charge" ] && awk -v a="$_start_charge" -v b="$charge" 'BEGIN { exit !(b > a) }'; then
-    if [ "$_kind" = active ]; then active_start_t=$_now; active_start_charge=$charge; active_start_capacity=$capacity; active_start_full=$full
-    else idle_start_t=$_now; idle_start_charge=$charge; idle_start_capacity=$capacity; idle_start_full=$full
-    fi
-    return 0
-  fi
-  if [ -n "$_start_capacity" ] && [ -n "$capacity" ] && awk -v a="$_start_capacity" -v b="$capacity" 'BEGIN { exit !(b > a) }'; then
-    if [ "$_kind" = active ]; then active_start_t=$_now; active_start_charge=$charge; active_start_capacity=$capacity; active_start_full=$full
-    else idle_start_t=$_now; idle_start_charge=$charge; idle_start_capacity=$capacity; idle_start_full=$full
-    fi
-    return 0
-  fi
-  _elapsed=$((_now - _start_t))
-  # Percentage-only battery interfaces are quantized to whole percentages. Keep the baseline
-  # until a real drop is observable; rebasing every 10 minutes made low idle drain look like a
-  # sudden 6%/h drain (or never produce a useful reading). Screen transitions and charging still
-  # close the window, and these maximums prevent stale behavior being averaged indefinitely.
-  _max_window_ms=5400000
-  [ "$_kind" = idle ] && _max_window_ms=43200000
-  if [ "$_elapsed" -lt 0 ]; then
-    if [ "$_kind" = active ]; then active_start_t=$_now; active_start_charge=$charge; active_start_capacity=$capacity; active_start_full=$full
-    else idle_start_t=$_now; idle_start_charge=$charge; idle_start_capacity=$capacity; idle_start_full=$full
-    fi
-    return 0
-  fi
-  if _rate=$(compute_rate "$_start_t" "$_start_charge" "$_start_capacity" "$_start_full" "$_now" "$charge" "$capacity" "$full"); then
-    # The generation guard prevents an in-flight sample from restoring readings after a reset.
-    _cache_error=$(sh "$CACHE" "set-$_kind" "$_rate" "$_now" "$generation" 2>&1)
-    _cache_rc=$?
-    if [ "$_cache_rc" -ne 0 ] && [ "$_cache_rc" -ne 3 ]; then
-      printf 'monitor-daemon: %s drain cache write failed (status %s): %s\n' "$_kind" "$_cache_rc" "$_cache_error" >&2
-    fi
-    # A good measurement starts the next window here, avoiding repeated use of one large delta.
-    if [ "$_kind" = active ]; then active_start_t=$_now; active_start_charge=$charge; active_start_capacity=$capacity; active_start_full=$full
-    else idle_start_t=$_now; idle_start_charge=$charge; idle_start_capacity=$capacity; idle_start_full=$full
-    fi
-    return 0
-  fi
-  # If the percentage did not move yet, keep the original baseline up to the bounded window.
-  # At that limit, start a new window rather than reporting an inaccurate rate from one tick.
-  if [ "$_elapsed" -gt "$_max_window_ms" ]; then
-    if [ "$_kind" = active ]; then active_start_t=$_now; active_start_charge=$charge; active_start_capacity=$capacity; active_start_full=$full
-    else idle_start_t=$_now; idle_start_charge=$charge; idle_start_capacity=$capacity; idle_start_full=$full
-    fi
-  fi
-}
-
-queue_screen_time_amount() {
-  [ "$#" -eq 2 ] || return 2
-  _time_state=$1; _time_delta=$2
-  case "$_time_state" in on|off) ;; *) return 2 ;; esac
-  case "$_time_delta" in ''|*[!0-9]*) return 2 ;; esac
-  [ "${#_time_delta}" -le 15 ] || return 2
-  [ "$_time_delta" -gt 0 ] || return 0
-  if [ "$_time_state" = on ]; then
-    # Active gaps beyond 120 seconds are not trusted as screen-on time.
-    [ "$_time_delta" -le 120000 ] 2>/dev/null || return 0
-    pending_active_time_ms=$((pending_active_time_ms + _time_delta))
-    [ "${#pending_active_time_ms}" -le 15 ] || { pending_active_time_ms=0; return 2; }
-  else
-    pending_idle_time_ms=$((pending_idle_time_ms + _time_delta))
-    [ "${#pending_idle_time_ms}" -le 15 ] || { pending_idle_time_ms=0; return 2; }
-  fi
-  return 0
-}
-
-# Persist screen-time in batches (30 s, transitions, and idle confirmation), not on each poll.
-# Successfully written chunks are removed from the pending amount immediately, so a later write
-# failure cannot cause the completed chunks to be counted twice on retry.
-flush_screen_time_pending() {
-  for _time_state in on off; do
-    if [ "$_time_state" = on ]; then _time_remaining=$pending_active_time_ms; _time_max=120000
-    else _time_remaining=$pending_idle_time_ms; _time_max=43200000; fi
-    case "$_time_remaining" in ''|*[!0-9]*) _time_remaining=0 ;; esac
-    while [ "$_time_remaining" -gt 0 ]; do
-      _time_part=$_time_remaining
-      [ "$_time_part" -le "$_time_max" ] || _time_part=$_time_max
-      _time_error=$(sh "$CACHE" add-screen-time "$_time_state" "$_time_part" "$generation" 2>&1)
-      _time_rc=$?
-      if [ "$_time_rc" -eq 0 ]; then
-        _time_remaining=$((_time_remaining - _time_part))
-        if [ "$_time_state" = on ]; then pending_active_time_ms=$_time_remaining
-        else pending_idle_time_ms=$_time_remaining; fi
-      elif [ "$_time_rc" -eq 3 ]; then
-        # The cycle was reset concurrently; its generation change makes these old deltas invalid.
-        if [ "$_time_state" = on ]; then pending_active_time_ms=0
-        else pending_idle_time_ms=0; fi
-        break
-      else
-        printf 'monitor-daemon: screen-time cache write failed (status %s): %s\n' "$_time_rc" "$_time_error" >&2
-        # Back off after storage errors instead of retrying a failed write on every fast poll.
-        last_screen_time_flush_t=${now_mono_ms:-${last_screen_time_flush_t:-0}}
-        return 1
-      fi
-    done
+discover_battery() {
+  BATT_DIR=
+  ONLINE_FILES=
+  set +f
+  for _d in "$SYS_ROOT"/class/power_supply/*; do
+    [ -d "$_d" ] || continue
+    _btype=
+    read_first "$_d/type" && _btype=$_R
+    case "$_btype" in [Bb]attery) BATT_DIR=$_d; break ;; esac
+    [ "${_d##*/}" = battery ] && BATT_DIR=$_d
   done
-  last_screen_time_flush_t=${now_mono_ms:-${last_screen_time_flush_t:-0}}
+  if [ -n "$BATT_DIR" ]; then
+    for _d in "$SYS_ROOT"/class/power_supply/*; do
+      [ -d "$_d" ] || continue
+      [ "$_d" != "$BATT_DIR" ] || continue
+      _stype=
+      read_first "$_d/type" && _stype=$_R
+      case "$_stype:${_d##*/}" in
+        Mains:*|USB:*|USB_C:*|Wireless:*|Usb*:*|*usb*:*|*USB*:*|*mains*:*|*wireless*:*|*typec*:*|*AC:*)
+          [ -r "$_d/online" ] && ONLINE_FILES="$ONLINE_FILES $_d/online" ;;
+      esac
+    done
+  fi
+  set -f
+  [ -n "$BATT_DIR" ]
+}
+
+# Reads the battery. Sets b_status, b_cur (raw), b_ctr (charge counter, uAh) and b_online (1, 0 or unknown).
+read_battery() {
+  b_status=; b_cur=; b_ctr=; b_online=unknown
+  [ -n "$BATT_DIR" ] && [ -d "$BATT_DIR" ] || discover_battery || return 1
+  read_first "$BATT_DIR/status" && b_status=$_R
+  read_first "$BATT_DIR/current_now" && b_cur=$_R
+  read_first "$BATT_DIR/charge_counter" && b_ctr=$_R
+  _seen=0
+  for _f in $ONLINE_FILES; do
+    if read_first "$_f"; then
+      _seen=1
+      if [ "$_R" = 1 ]; then b_online=1; break; fi
+    fi
+  done
+  if [ "$b_online" != 1 ] && [ "$_seen" = 1 ]; then b_online=0; fi
   return 0
 }
 
-roll_add() {
-  [ "$#" -eq 3 ] || return 1
-  _roll_kind=$1; _roll_charge=$2; _roll_ms=$3
-  case "$_roll_kind" in active|idle) ;; *) return 2 ;; esac
-  monitor_valid_elapsed_ms "$_roll_ms" || return 2
-  monitor_add_decimal 0 "$_roll_charge" >/dev/null || return 2
-  if [ "$_roll_kind" = active ]; then
-    _roll_history=$active_roll_history
-  else
-    _roll_history=$idle_roll_history
+# PLUG = plugged | unplugged | unknown. A full or "not charging" battery on a charger is still plugged in, so
+# reaching 100% never looks like an unplug.
+plug_from() {
+  PLUG=unknown
+  if [ "$b_online" = 1 ]; then PLUG=plugged; return 0; fi
+  case "$b_status" in
+    Charging|Full) PLUG=plugged ;;
+    "Not charging") if [ "$b_online" = 0 ]; then PLUG=unplugged; else PLUG=plugged; fi ;;
+    Discharging) PLUG=unplugged ;;
+  esac
+  return 0
+}
+
+# SCR = on | off | unknown
+probe_screen() {
+  SCR=unknown
+  if [ -n "$SCREEN_FILE" ]; then
+    read_first "$SCREEN_FILE" && SCR=$_R
+    case "$SCR" in on|off) ;; *) SCR=unknown ;; esac
+    return 0
   fi
-  if [ -n "$_roll_history" ]; then _roll_history="$_roll_history
-${_roll_ms}|${_roll_charge}"; else _roll_history="${_roll_ms}|${_roll_charge}"; fi
-  _roll_trimmed=$(printf '%s\n' "$_roll_history" | "$AWK_CMD" -F '|' -v w=300000 '
-    NF >= 2 && $1 ~ /^[0-9]+$/ && $2 ~ /^[0-9]+([.][0-9]+)?$/ && $1+0 > 0 && $2+0 >= 0 {
-      n++; d[n]=$1+0; q[n]=$2+0; total+=d[n]
-    }
-    END {
-      excess=total-w
-      for (i=1; i<=n; i++) {
-        if (excess > 0) {
-          if (d[i] <= excess) { excess-=d[i]; d[i]=0; q[i]=0 }
-          else { keep=d[i]-excess; if (d[i] > 0) q[i]=q[i]*keep/d[i]; d[i]=keep; excess=0 }
-        }
-        if (d[i] > 0) printf "%d|%.6f\n", d[i], q[i]
+  command -v dumpsys >/dev/null 2>&1 || return 0
+  _pdump=$(dumpsys power 2>/dev/null)
+  case "$_pdump" in
+    *mWakefulness=Asleep*|*mWakefulness=Dozing*|*mInteractive=false*|*"Display Power: state=OFF"*) SCR=off ;;
+    *mWakefulness=Awake*|*mInteractive=true*|*"Display Power: state=ON"*) SCR=on ;;
+  esac
+  return 0
+}
+
+# Android's own screen-state event log gives the real moment of a transition even when this process was not
+# scheduled for a while (deep sleep). EV_T = that moment on the monotonic clock, clamped to the sample pair, or
+# empty when the log has nothing usable (the sample time is then used).
+screen_event_time() {
+  EV_T=
+  _want=$1; _lo=$2; _hi=$3
+  if [ ! -x "$LOGCAT_CMD" ]; then command -v "$LOGCAT_CMD" >/dev/null 2>&1 || return 1; fi
+  _evlog=$("$LOGCAT_CMD" -b events -d -v epoch -t 400 'power_screen_state:I' 'screen_toggled:I' '*:S' 2>/dev/null) || return 1
+  [ -n "$_evlog" ] || return 1
+  _evms=$(printf '%s\n' "$_evlog" | "$AWK_CMD" -v want="$_want" '
+    /power_screen_state|screen_toggled/ {
+      if (match($0, /(power_screen_state: \[|screen_toggled: )[0-9]/)) {
+        d = substr($0, RSTART + RLENGTH - 1, 1)
+        st = (d == "0") ? "off" : "on"
+        ts = $1 + 0
+        if (ts > 1000000000) { last_state = st; last_ts = ts }
       }
-    }') || return 1
-  _roll_totals=$(printf '%s\n' "$_roll_trimmed" | "$AWK_CMD" -F '|' 'NF >= 2 { d += $1; q += $2 } END { printf "%.6f|%.0f", q, d }') || return 1
-  _roll_charge=${_roll_totals%%|*}; _roll_duration=${_roll_totals#*|}
-  _roll_avg=
-  if [ "$_roll_duration" -gt 0 ] 2>/dev/null; then
-    _roll_avg=$(monitor_average_current_ma "$_roll_charge" "$_roll_duration") || _roll_avg=
-  fi
-  if [ "$_roll_kind" = active ]; then
-    active_roll_history=$_roll_trimmed; active_roll_charge_uah=$_roll_charge; active_roll_current_ms=$_roll_duration; active_roll_avg_ma=$_roll_avg
-  else
-    idle_roll_history=$_roll_trimmed; idle_roll_charge_uah=$_roll_charge; idle_roll_current_ms=$_roll_duration; idle_roll_avg_ma=$_roll_avg
-  fi
-}
-
-queue_current_contribution() {
-  [ "$#" -eq 3 ] || return 1
-  _queue_kind=$1; _queue_charge=$2; _queue_ms=$3
-  case "$_queue_kind" in active|idle) ;; *) return 2 ;; esac
-  monitor_valid_elapsed_ms "$_queue_ms" || return 2
-  monitor_average_current_ma "$_queue_charge" "$_queue_ms" >/dev/null || return 2
-  if [ "$_queue_kind" = active ]; then
-    pending_active_charge_uah=$(monitor_add_decimal "$pending_active_charge_uah" "$_queue_charge") || return 2
-    pending_active_current_ms=$((pending_active_current_ms + _queue_ms))
-  else
-    pending_idle_charge_uah=$(monitor_add_decimal "$pending_idle_charge_uah" "$_queue_charge") || return 2
-    pending_idle_current_ms=$((pending_idle_current_ms + _queue_ms))
-  fi
-  roll_add "$_queue_kind" "$_queue_charge" "$_queue_ms" || :
-}
-
-flush_current_pending() {
-  [ -n "${generation:-}" ] || return 0
-  if [ "${pending_active_current_ms:-0}" -gt 0 ] 2>/dev/null; then
-    _flush_error=$(sh "$CACHE" add-current active "$pending_active_charge_uah" "$pending_active_current_ms" "${current_capacity_uah:-}" "$generation" 2>&1)
-    _flush_rc=$?
-    if [ "$_flush_rc" -eq 0 ] || [ "$_flush_rc" -eq 3 ]; then
-      pending_active_charge_uah=0; pending_active_current_ms=0
-    else
-      printf 'monitor-daemon: active current cache write failed (status %s): %s\n' "$_flush_rc" "$_flush_error" >&2
-    fi
-  fi
-  if [ "${pending_idle_current_ms:-0}" -gt 0 ] 2>/dev/null; then
-    _flush_error=$(sh "$CACHE" add-current idle "$pending_idle_charge_uah" "$pending_idle_current_ms" "${current_capacity_uah:-}" "$generation" 2>&1)
-    _flush_rc=$?
-    if [ "$_flush_rc" -eq 0 ] || [ "$_flush_rc" -eq 3 ]; then
-      pending_idle_charge_uah=0; pending_idle_current_ms=0
-    else
-      printf 'monitor-daemon: idle current cache write failed (status %s): %s\n' "$_flush_rc" "$_flush_error" >&2
-    fi
-  fi
-  last_current_flush_t=${now_mono_ms:-${last_current_flush_t:-0}}
-}
-
-calculate_interval_contribution() {
-  # Arguments describe the previous and current sample. Never attribute an interval that crosses
-  # a display-state boundary to either side: even a charge-counter delta would blend ON and OFF
-  # consumption. Counter fallback is reserved for long gaps wholly inside one confirmed state.
-  _ci_old_state=$1; _ci_new_state=$2; _ci_start_t=$3; _ci_start_i=$4; _ci_start_charge=$5; _ci_start_full=$6
-  _ci_end_t=$7; _ci_end_i=$8; _ci_end_charge=$9; _ci_end_full=${10}
-  contribution_charge_uah=; contribution_ms=0
-  case "$_ci_old_state" in
-    on) _ci_current_gap=5000; _ci_counter_min_gap=30000; _ci_counter_gap=5400000 ;;
-    off) _ci_current_gap=15000; _ci_counter_min_gap=120000; _ci_counter_gap=43200000 ;;
-    *) return 1 ;;
-  esac
-  case "$_ci_start_t:$_ci_end_t" in *[!0-9:]*) return 1 ;; esac
-  [ "$_ci_old_state" = "$_ci_new_state" ] || return 1
-  _ci_elapsed=$((_ci_end_t - _ci_start_t))
-  [ "$_ci_elapsed" -gt 0 ] && [ "$_ci_elapsed" -le "$_ci_counter_gap" ] || return 1
-  if [ -n "$_ci_start_i" ] && [ -n "$_ci_end_i" ] && [ "$_ci_elapsed" -le "$_ci_current_gap" ]; then
-    contribution_charge_uah=$(monitor_integrate_current_uah "$_ci_start_i" "$_ci_end_i" "$_ci_elapsed") || contribution_charge_uah=
-  fi
-  # Charge counters are too quantized for safe mA estimates over 1–15 second polls. Use them
-  # only for longer same-state gaps, and never to assign a mixed ON/OFF interval to one bucket.
-  if [ -z "$contribution_charge_uah" ] && [ "$_ci_elapsed" -ge "$_ci_counter_min_gap" ] && [ -n "$_ci_start_charge" ] && [ -n "$_ci_end_charge" ]; then
-    _ci_cap=$_ci_end_full; [ -n "$_ci_cap" ] || _ci_cap=$_ci_start_full
-    contribution_charge_uah=$(monitor_counter_loss_uah "$_ci_start_charge" "$_ci_end_charge" "$_ci_elapsed" "${_ci_cap:-}") || contribution_charge_uah=
-  fi
-  [ -n "$contribution_charge_uah" ] || return 1
-  monitor_average_current_ma "$contribution_charge_uah" "$_ci_elapsed" >/dev/null || { contribution_charge_uah=; return 1; }
-  contribution_ms=$_ci_elapsed
+    }
+    END { if (last_state == want && last_ts > 0) printf "%.0f\n", last_ts * 1000 }')
+  case "$_evms" in ''|*[!0-9]*) return 1 ;; esac
+  _epoch_s=$("$DATE_CMD" +%s 2>/dev/null)
+  case "$_epoch_s" in ''|*[!0-9]*) return 1 ;; esac
+  now_ms || return 1
+  # Mid-second correction: date has one-second resolution.
+  EV_T=$(( _evms - (_epoch_s * 1000 + 500 - NOW) ))
+  [ "$EV_T" -ge "$_lo" ] || EV_T=$_lo
+  [ "$EV_T" -le "$_hi" ] || EV_T=$_hi
   return 0
 }
 
-queue_previous_interval() {
-  [ "$last_screen_sample_valid" = 1 ] || return 0
-  calculate_interval_contribution "$last_screen_sample_state" "$1" "$last_screen_sample_t" \
-    "$last_screen_sample_current_ua" "$last_screen_sample_charge" "$last_screen_sample_full" \
-    "$now_mono_ms" "$current_ua" "$charge" "$full" || return 0
-  case "$last_screen_sample_state" in
-    on)
-      queue_current_contribution active "$contribution_charge_uah" "$contribution_ms" || :
-      ;;
-    off)
-      if [ "$screen_off_confirmed" = 1 ]; then
-        queue_current_contribution idle "$contribution_charge_uah" "$contribution_ms" || :
-      else
-        pending_off_charge_uah=$(monitor_add_decimal "$pending_off_charge_uah" "$contribution_charge_uah") || pending_off_charge_uah=0
-        pending_off_current_ms=$((pending_off_current_ms + contribution_ms))
-      fi
-      ;;
-  esac
+# --- rolling window of recent eligible time (internal; trimmed by time, not by sample count) ---
+# Buffer = space-separated "durationMs:charge" tokens, oldest first.
+roll_push() {
+  R_BUF="$1 $4:$5"; R_MS=$(( $2 + $4 )); R_Q=$(( $3 + $5 ))
+  while [ "$R_MS" -gt "$ROLL_MS" ]; do
+    _first=${R_BUF# }; _first=${_first%% *}
+    _fd=${_first%%:*}; _fq=${_first#*:}
+    _ex=$(( R_MS - ROLL_MS ))
+    if [ "$_fd" -le "$_ex" ]; then
+      R_BUF=${R_BUF#" $_first"}; R_MS=$(( R_MS - _fd )); R_Q=$(( R_Q - _fq ))
+    else
+      _nd=$(( _fd - _ex )); _nq=$(( _fq * _nd / _fd ))
+      R_BUF=" $_nd:$_nq${R_BUF#" $_first"}"; R_MS=$(( R_MS - _ex )); R_Q=$(( R_Q - _fq + _nq ))
+    fi
+  done
 }
 
-confirm_pending_idle() {
-  [ "$screen_off_confirmed" = 1 ] && return 0
-  [ -n "$pending_off_start_t" ] || return 1
-  _confirm_span=$((now_mono_ms - pending_off_start_t))
-  [ "$_confirm_span" -ge 10000 ] || return 1
-  screen_off_confirmed=1
-  queue_screen_time_amount off "$_confirm_span" || :
-  flush_screen_time_pending || :
-  if [ "$pending_off_current_ms" -gt 0 ] 2>/dev/null; then
-    queue_current_contribution idle "$pending_off_charge_uah" "$pending_off_current_ms" || :
+# --- one sample pair: previous (l_t, l_i, l_ctr, l_scr) and current (t, c_i, c_ctr, SCR) ---
+# pair_mode: trap (interpolate between the two readings), trap_prov (same, over a long gap, so provisional),
+# counter (long gap measured by the fuel-gauge charge counter, provisional) or none (no usable reading).
+prepare_pair() {
+  pair_dt=$(( t - l_t )); pair_mode=none; pair_q=0; pair_trans=0
+  if [ "$l_scr" != "$SCR" ]; then pair_trans=1; fi
+  if [ "$pair_dt" -le "$GAP_MS" ]; then
+    if [ -n "$l_i" ] && [ -n "$c_i" ]; then pair_mode=trap; fi
+  else
+    # Long gap (deep sleep): the charge counter is the trustworthy source when it moved; otherwise interpolate
+    # between the two readings and mark the result provisional. A stale reading is never extended across it.
+    if [ -n "$l_ctr" ] && [ -n "$c_ctr" ] && [ "$l_ctr" -gt "$c_ctr" ]; then
+      pair_q=$(( (l_ctr - c_ctr) * 3600000 ))
+      if [ $(( pair_q / pair_dt )) -le "$MAX_SANE_UA" ]; then pair_mode=counter; fi
+    fi
+    if [ "$pair_mode" = none ] && [ -n "$l_i" ] && [ -n "$c_i" ]; then pair_mode=trap_prov; fi
   fi
-  pending_off_charge_uah=0; pending_off_current_ms=0
-  # Legacy percentage-rate estimate is kept as a secondary metric, but only after the 10 s
-  # candidate qualifies. Its baseline begins at the original observed OFF timestamp.
-  if [ -z "$idle_start_t" ]; then
-    idle_start_t=$pending_off_wall_t
-    idle_start_charge=$pending_off_start_charge
-    idle_start_capacity=$pending_off_start_capacity
-    idle_start_full=$pending_off_start_full
+}
+
+# Charge in [$1,$2] (inside the current pair). Sets SEG_DT, SEG_Q, SEG_OK (1 = measured), SEG_PROV.
+# Across a screen transition each side uses its OWN state's reading (HOLD), never a blend of the two states.
+seg_calc() {
+  SEG_DT=$(( $2 - $1 )); SEG_Q=0; SEG_OK=0; SEG_PROV=0
+  if [ "$SEG_DT" -le 0 ]; then SEG_DT=0; return 0; fi
+  if [ "$pair_mode" = counter ]; then
+    SEG_Q=$(( pair_q * SEG_DT / pair_dt )); SEG_OK=1; SEG_PROV=1
+  elif [ "$pair_trans" = 1 ]; then
+    if [ -n "$HOLD" ]; then
+      SEG_Q=$(( HOLD * SEG_DT )); SEG_OK=1
+      if [ "$pair_dt" -gt "$GAP_MS" ]; then SEG_PROV=1; fi
+    fi
+  elif [ "$pair_mode" = trap ] || [ "$pair_mode" = trap_prov ]; then
+    _ia=$(( l_i + (c_i - l_i) * ($1 - l_t) / pair_dt ))
+    _ib=$(( l_i + (c_i - l_i) * ($2 - l_t) / pair_dt ))
+    SEG_Q=$(( (_ia + _ib) * SEG_DT / 2 )); SEG_OK=1
+    if [ "$pair_mode" = trap_prov ]; then SEG_PROV=1; fi
   fi
-  flush_current_pending
   return 0
 }
 
-record_drain_state() {
-  idle_session_completed=0
-  current_capacity_uah=$full
-  on_battery=0
-  if [ "$battery_status" = Discharging ] || [ "$charger_online" = 0 ]; then on_battery=1; fi
-  if [ "$monitor_enabled" != 1 ] || [ "$charger_now" = connected ] || [ "$on_battery" != 1 ]; then
-    flush_current_pending
-    flush_screen_time_pending || :
-    clear_screen_sample
-    return 0
-  fi
-  case "$screen_state" in on|off) ;; *)
-    flush_current_pending
-    flush_screen_time_pending || :
-    clear_screen_sample
-    return 0
-    ;;
-  esac
-
-  if [ "$last_screen_sample_valid" = 1 ]; then
-    _state_delta=$((now_mono_ms - last_screen_sample_t))
-    if [ "$_state_delta" -lt 0 ]; then
-      # Monotonic time reset/corruption: rebase instead of creating negative/huge durations.
-      flush_current_pending
-      flush_screen_time_pending || :
-      clear_screen_sample
-      if [ "$screen_state" = off ]; then
-        pending_off_start_t=$now_mono_ms; pending_off_wall_t=$now
-        pending_off_start_charge=$charge; pending_off_start_capacity=$capacity; pending_off_start_full=$full
-      fi
-    elif [ "$last_screen_sample_state" = on ]; then
-      queue_screen_time_amount on "$_state_delta" || :
-      queue_previous_interval "$screen_state"
-      if [ "$screen_state" = off ]; then
-        # Close the active measurement window at the observed transition; a cross-state current
-        # pair is never trapezoid-integrated into either class.
-        flush_current_pending
-        flush_screen_time_pending || :
-        pending_off_start_t=$now_mono_ms
-        pending_off_wall_t=$now
-        pending_off_start_charge=$charge
-        pending_off_start_capacity=$capacity
-        pending_off_start_full=$full
-        pending_off_charge_uah=0; pending_off_current_ms=0
-        screen_off_confirmed=0
-        idle_start_t=; idle_start_charge=; idle_start_capacity=; idle_start_full=
-      fi
-    elif [ "$last_screen_sample_state" = off ]; then
-      queue_previous_interval "$screen_state"
-      if [ "$screen_off_confirmed" = 1 ]; then
-        [ "$_state_delta" -gt 0 ] && queue_screen_time_amount off "$_state_delta" || :
-      fi
-      if [ "$screen_state" = on ]; then
-        if [ "$screen_off_confirmed" != 1 ]; then confirm_pending_idle || :; fi
-        if [ "$screen_off_confirmed" = 1 ]; then
-          idle_session_completed=1
-          flush_current_pending
-          flush_screen_time_pending || :
-        else
-          # The entire under-10-second candidate, including any buffered current charge, is rejected.
-          pending_off_charge_uah=0; pending_off_current_ms=0
-          idle_start_t=; idle_start_charge=; idle_start_capacity=; idle_start_full=
-        fi
-        pending_off_start_t=; pending_off_wall_t=; pending_off_start_charge=; pending_off_start_capacity=; pending_off_start_full=
-        screen_off_confirmed=0
-      else
-        if [ "$screen_off_confirmed" != 1 ]; then confirm_pending_idle || :; fi
-      fi
-    else
-      clear_screen_sample
-    fi
+acc_active() {
+  seg_calc "$1" "$2"
+  [ "$SEG_DT" -gt 0 ] || return 0
+  A_ms=$(( A_ms + SEG_DT )); dirty=1
+  if [ "$SEG_OK" = 1 ]; then
+    A_chg=$(( A_chg + SEG_Q ))
+    roll_push "$A_roll" "$A_rms" "$A_rq" "$SEG_DT" "$SEG_Q"
+    A_roll=$R_BUF; A_rms=$R_MS; A_rq=$R_Q
   else
-    if [ "$screen_state" = off ]; then
-      pending_off_start_t=$now_mono_ms
-      pending_off_wall_t=$now
-      pending_off_start_charge=$charge
-      pending_off_start_capacity=$capacity
-      pending_off_start_full=$full
-      pending_off_charge_uah=0; pending_off_current_ms=0
-      screen_off_confirmed=0
-    fi
+    A_unm=$(( A_unm + SEG_DT ))
   fi
-
-  last_screen_sample_t=$now_mono_ms
-  last_screen_sample_state=$screen_state
-  last_screen_sample_charge=$charge
-  last_screen_sample_capacity=$capacity
-  last_screen_sample_full=$full
-  last_screen_sample_current_ua=$current_ua
-  last_screen_sample_valid=1
-
-  _flush_elapsed=$((now_mono_ms - last_current_flush_t))
-  if [ "$last_current_flush_t" -eq 0 ] 2>/dev/null || [ "$_flush_elapsed" -ge 30000 ]; then flush_current_pending; fi
-  _screen_time_flush_elapsed=$((now_mono_ms - last_screen_time_flush_t))
-  if [ "$last_screen_time_flush_t" -eq 0 ] 2>/dev/null || [ "$_screen_time_flush_elapsed" -ge 30000 ]; then flush_screen_time_pending || :; fi
+  if [ "$SEG_PROV" = 1 ]; then A_prov=1; fi
+  return 0
 }
 
-sample_once() {
-  read_settings || return 1
-  if [ "$generation" != "$seen_generation" ]; then
-    clear_windows
-    clear_drain_tracking
-    seen_generation=$generation
+acc_idle() {
+  seg_calc "$1" "$2"
+  [ "$SEG_DT" -gt 0 ] || return 0
+  I_ms=$(( I_ms + SEG_DT )); dirty=1
+  if [ "$SEG_OK" = 1 ]; then
+    I_chg=$(( I_chg + SEG_Q ))
+    roll_push "$I_roll" "$I_rms" "$I_rq" "$SEG_DT" "$SEG_Q"
+    I_roll=$R_BUF; I_rms=$R_MS; I_rq=$R_Q
+  else
+    I_unm=$(( I_unm + SEG_DT ))
   fi
-  _out=$(sh "$MODDIR/monitor.sh" screen 2>/dev/null) || _out='screen_state=unknown'
-  record_from_output "$_out"
-  now_s=$("$DATE_CMD" +%s 2>/dev/null)
-  case "$now_s" in ''|*[!0-9]*) return 1 ;; esac
-  now="${now_s}000"
-  now_mono_ms=$(read_monotonic_ms) || { printf 'monitor-daemon: monotonic clock unavailable; skipping sample\n' >&2; return 1; }
+  if [ "$SEG_PROV" = 1 ]; then I_prov=1; fi
+  return 0
+}
 
-  if is_charging; then charger_now=connected; else charger_now=disconnected; fi
-  if [ "$charger_now" != "$last_charger" ]; then
-    if [ "$charger_now" = connected ]; then
-      if [ "$reset_on_charging" = 1 ]; then
-        sh "$CACHE" reset-data >/dev/null 2>&1 || :
-      else
-        # The preference controls legacy %/h history only. New cycle-wide current averages and
-        # both screen-time totals always reset at plug-in, as the drain cycle has ended.
-        sh "$CACHE" reset-cycle keep-rates >/dev/null 2>&1 || :
-      fi
-      clear_windows
-      read_settings || return 1
-      seen_generation=$generation
-      clear_drain_tracking
-    else
-      # A new discharge cycle starts from empty current totals left by the plug-in boundary.
-      clear_windows
-      clear_drain_tracking
-    fi
-    sh "$CACHE" set-charger-state "$charger_now" >/dev/null 2>&1 || :
-    last_charger=$charger_now
+# Screen-off time before the 10 s rule is met is buffered, not counted anywhere.
+acc_pending() {
+  seg_calc "$1" "$2"
+  [ "$SEG_DT" -gt 0 ] || return 0
+  P_ms=$(( P_ms + SEG_DT ))
+  if [ "$SEG_OK" = 1 ]; then
+    P_chg=$(( P_chg + SEG_Q )); P_roll="$P_roll $SEG_DT:$SEG_Q"
+  else
+    P_unm=$(( P_unm + SEG_DT ))
   fi
+  if [ "$SEG_PROV" = 1 ]; then P_prov=1; fi
+  return 0
+}
 
-  previous_screen_state=$last_screen_sample_state
-  record_drain_state
+clear_pending() { P_chg=0; P_ms=0; P_unm=0; P_prov=0; P_roll=; }
 
-  if [ "$charger_now" = connected ] || [ "$monitor_enabled" != 1 ] || [ "$battery_status" != Discharging ]; then
-    clear_windows
+# The screen stayed off for the whole pending time: it becomes confirmed idle, counted from the ORIGINAL
+# screen-off timestamp.
+confirm_pending() {
+  I_ms=$(( I_ms + P_ms )); I_chg=$(( I_chg + P_chg )); I_unm=$(( I_unm + P_unm ))
+  if [ "$P_prov" = 1 ]; then I_prov=1; fi
+  for _tok in $P_roll; do
+    roll_push "$I_roll" "$I_rms" "$I_rq" "${_tok%%:*}" "${_tok#*:}"
+    I_roll=$R_BUF; I_rms=$R_MS; I_rq=$R_Q
+  done
+  clear_pending
+  conf=1; dirty=1; force=1
+}
+
+# Screen-off segment [$1,$2]: pending until PENDING_MS after the original screen-off time.
+acc_off() {
+  _a=$1; _b=$2
+  if [ "$conf" = 0 ]; then
+    _c=$(( pend_t + PENDING_MS ))
+    if [ "$_b" -lt "$_c" ]; then acc_pending "$_a" "$_b"; return 0; fi
+    if [ "$_a" -lt "$_c" ]; then acc_pending "$_a" "$_c"; _a=$_c; fi
+    confirm_pending
+  fi
+  acc_idle "$_a" "$_b"
+}
+
+start_off() { pend_t=$1; conf=0; clear_pending; }
+end_off() { clear_pending; conf=0; pend_t=; }
+
+# Account for everything between the previous sample and this one, splitting at a screen transition.
+process_pair() {
+  prepare_pair
+  HOLD=
+  if [ "$l_scr" = "$SCR" ]; then
+    case "$SCR" in
+      on) acc_active "$l_t" "$t" ;;
+      off) acc_off "$l_t" "$t" ;;
+    esac
     return 0
   fi
-
-  # The UI preference controls how often the older battery-counter %/h estimator is checked.
-  # Current integration itself uses the lower-latency 1 s screen-ON / 5 s screen-OFF cadence.
-  rate_due=0
-  if [ -z "$last_rate_check_t" ]; then rate_due=1
-  else
-    rate_elapsed=$((now - last_rate_check_t))
-    [ "$rate_elapsed" -ge "$((sampling_interval * 1000))" ] && rate_due=1
-  fi
-  if [ "$previous_screen_state" != "$screen_state" ]; then rate_due=1; fi
-  [ "$rate_due" -eq 1 ] && last_rate_check_t=$now
-
-  case "$screen_state" in
+  _tt=$t
+  if screen_event_time "$SCR" "$l_t" "$t"; then _tt=$EV_T; fi
+  case "$l_scr" in
     on)
-      if [ "$previous_screen_state" = off ] && [ "$idle_session_completed" = 1 ] && [ -n "$idle_start_t" ]; then
-        update_window idle "$now"
-      fi
-      if [ "$previous_screen_state" = off ]; then
-        idle_start_t=; idle_start_charge=; idle_start_capacity=; idle_start_full=
-      fi
-      [ "$rate_due" -eq 1 ] && update_window active "$now"
+      HOLD=$l_i
+      acc_active "$l_t" "$_tt"
+      start_off "$_tt"
+      HOLD=$c_i
+      acc_off "$_tt" "$t"
       ;;
     off)
-      active_start_t=; active_start_charge=; active_start_capacity=; active_start_full=
-      if [ "$screen_off_confirmed" = 1 ] && [ "$rate_due" -eq 1 ]; then update_window idle "$now"; fi
+      HOLD=$l_i
+      acc_off "$l_t" "$_tt"
+      end_off
+      HOLD=$c_i
+      acc_active "$_tt" "$t"
       ;;
-    *) clear_windows ;;
   esac
+  HOLD=
+  sm=
+  force=1
+  return 0
+}
+
+# --- state ---
+reset_memory() {
+  l_t=; l_i=; l_ctr=; l_scr=; sm=
+  conf=0; pend_t=
+  clear_pending
+  A_roll=; A_rms=0; A_rq=0; I_roll=; I_rms=0; I_rq=0
+}
+
+zero_totals() {
+  A_chg=0; A_ms=0; A_unm=0; A_prov=0; I_chg=0; I_ms=0; I_unm=0; I_prov=0
+}
+
+load_totals() {
+  _out=$(sh "$CACHE" get 2>/dev/null) || return 1
+  gen=0; cyc_id=0; cyc_state=none; cyc_boot=
+  zero_totals
+  while IFS='=' read -r _k _v; do
+    case "$_k" in
+      generation) gen=$_v ;;
+      cycle_id) cyc_id=$_v ;;
+      cycle_state) cyc_state=$_v ;;
+      cycle_boot) cyc_boot=$_v ;;
+      active_charge) A_chg=$_v ;;
+      active_ms) A_ms=$_v ;;
+      active_unmeasured) A_unm=$_v ;;
+      active_prov) A_prov=$_v ;;
+      idle_charge) I_chg=$_v ;;
+      idle_ms) I_ms=$_v ;;
+      idle_unmeasured) I_unm=$_v ;;
+      idle_prov) I_prov=$_v ;;
+    esac
+  done <<EOF_CACHE
+$_out
+EOF_CACHE
+  for _n in gen cyc_id A_chg A_ms A_unm A_prov I_chg I_ms I_unm I_prov; do
+    case "$_n" in
+      gen) case "$gen" in ''|*[!0-9]*) gen=0 ;; esac ;;
+      cyc_id) case "$cyc_id" in ''|*[!0-9]*) cyc_id=0 ;; esac ;;
+      A_chg) case "$A_chg" in ''|*[!0-9]*) A_chg=0 ;; esac ;;
+      A_ms) case "$A_ms" in ''|*[!0-9]*) A_ms=0 ;; esac ;;
+      A_unm) case "$A_unm" in ''|*[!0-9]*) A_unm=0 ;; esac ;;
+      A_prov) case "$A_prov" in 0|1) ;; *) A_prov=0 ;; esac ;;
+      I_chg) case "$I_chg" in ''|*[!0-9]*) I_chg=0 ;; esac ;;
+      I_ms) case "$I_ms" in ''|*[!0-9]*) I_ms=0 ;; esac ;;
+      I_unm) case "$I_unm" in ''|*[!0-9]*) I_unm=0 ;; esac ;;
+      I_prov) case "$I_prov" in 0|1) ;; *) I_prov=0 ;; esac ;;
+    esac
+  done
+  dirty=0; force=0
+  return 0
+}
+
+peek_cache() {
+  pk_gen=$gen; pk_en=1
+  [ -r "$CACHE_FILE" ] || return 0
+  while IFS='=' read -r _k _v; do
+    case "$_k" in
+      generation) pk_gen=$_v ;;
+      monitor_enabled) pk_en=$_v ;;
+    esac
+  done < "$CACHE_FILE"
+  case "$pk_gen" in ''|*[!0-9]*) pk_gen=$gen ;; esac
+  case "$pk_en" in 0|1) ;; *) pk_en=1 ;; esac
+  return 0
+}
+
+persist() {
+  _aru=; _iru=
+  if [ "$A_rms" -gt 0 ]; then _aru=$(( A_rq / A_rms )); fi
+  if [ "$I_rms" -gt 0 ]; then _iru=$(( I_rq / I_rms )); fi
+  sh "$CACHE" set-cycle "$gen" "cycle_id=$cyc_id" "cycle_state=$cyc_state" "cycle_boot=$cyc_boot" \
+    "active_charge=$A_chg" "active_ms=$A_ms" "active_unmeasured=$A_unm" "active_prov=$A_prov" \
+    "idle_charge=$I_chg" "idle_ms=$I_ms" "idle_unmeasured=$I_unm" "idle_prov=$I_prov" \
+    "active_recent_ua=$_aru" "active_recent_ms=$A_rms" "idle_recent_ua=$_iru" "idle_recent_ms=$I_rms" >/dev/null 2>&1
+  _prc=$?
+  case "$_prc" in
+    0) dirty=0; force=0; last_persist=${t:-0} ;;
+    3)
+      # A reset happened since this process last looked: the cache is authoritative. Pick it up and start
+      # measuring again from the current state instead of writing old totals back.
+      load_totals || :
+      reset_memory
+      ;;
+    *) printf 'monitor-daemon: cache write failed (%s)\n' "$_prc" >&2 ;;
+  esac
+  return 0
+}
+
+maybe_persist() {
+  [ "$dirty" = 1 ] || return 0
+  if [ "$force" != 1 ] && [ -n "$last_persist" ] && [ $(( t - last_persist )) -lt "$PERSIST_MS" ]; then return 0; fi
+  persist
+}
+
+start_new_cycle() {
+  cyc_id=$(( cyc_id + 1 )); cyc_state=discharging
+  zero_totals
+  reset_memory
+  dirty=1; force=1
+}
+
+# Raw current_now (uA, either sign) -> c_i (smoothed magnitude) or empty when unusable.
+current_sample() {
+  c_i=
+  case "$b_cur" in
+    ''|-|*[!0-9-]*|?*-*) return 0 ;;
+  esac
+  _raw=${b_cur#-}
+  case "$_raw" in ''|*[!0-9]*) return 0 ;; esac
+  [ "${#_raw}" -le 12 ] || return 0
+  [ "$_raw" -gt 0 ] && [ "$_raw" -le "$MAX_SANE_UA" ] || return 0
+  if [ -z "$sm" ] || [ -z "$l_t" ] || [ "$l_scr" != "$SCR" ]; then
+    # First reading, or the screen state just changed: start from the raw value so one state's smoothed
+    # current never carries into the other state.
+    sm=$_raw
+  else
+    _sa=$(( (t - l_t) * 1000 / (t - l_t + SMOOTH_MS) ))
+    sm=$(( sm + (_raw - sm) * _sa / 1000 ))
+  fi
+  c_i=$sm
+  return 0
+}
+
+tick() {
+  now_ms || return 1
+  t=$NOW
+  if [ -n "$l_t" ] && [ "$t" -lt "$l_t" ]; then reset_memory; fi   # the clock restarted (reboot)
+  read_battery || { reset_memory; return 1; }
+  plug_from
+  peek_cache
+  if [ "$pk_gen" != "$gen" ]; then load_totals || :; reset_memory; fi
+  if [ "$pk_en" != 1 ]; then reset_memory; return 0; fi
+  case "$PLUG" in
+    unknown) reset_memory; return 0 ;;
+    plugged)
+      if [ "$cyc_state" != charging ]; then
+        # The discharge cycle ends here. Everything measured up to the previous sample is already in the
+        # totals; an unconfirmed screen-off interval is discarded; nothing is added while charging.
+        cyc_state=charging; dirty=1; force=1
+      fi
+      reset_memory
+      maybe_persist
+      return 0
+      ;;
+  esac
+  # Unplugged and discharging.
+  if [ "$cyc_state" != discharging ]; then start_new_cycle; fi
+  if [ "$cyc_boot" != "$cur_boot" ]; then cyc_boot=$cur_boot; dirty=1; fi
+  probe_screen
+  if [ "$SCR" = unknown ]; then reset_memory; maybe_persist; return 0; fi
+  c_ctr=
+  case "$b_ctr" in ''|*[!0-9]*) ;; *) [ "${#b_ctr}" -le 12 ] && c_ctr=$b_ctr ;; esac
+  current_sample
+  if [ -n "$l_t" ] && [ $(( t - l_t )) -gt "$MAX_GAP_MS" ]; then reset_memory; current_sample; fi
+  if [ -z "$l_t" ]; then
+    # First sample after start, reset, gap or plug change: anchor only; nothing is credited for time not observed.
+    if [ "$SCR" = off ]; then start_off "$t"; fi
+  elif [ "$t" -gt "$l_t" ]; then
+    process_pair
+  fi
+  l_t=$t; l_i=$c_i; l_ctr=$c_ctr; l_scr=$SCR
+  maybe_persist
+  return 0
+}
+
+persist_on_exit() {
+  [ "${dirty:-0}" = 1 ] && [ -n "${gen:-}" ] || return 0
+  persist
+}
+
+init_engine() {
+  cur_boot=
+  read_first "$BOOT_ID_FILE" && cur_boot=$_R
+  case "$cur_boot" in *[!0-9a-fA-F-]*) cur_boot= ;; esac
+  BATT_DIR=; ONLINE_FILES=
+  last_persist=; t=; NOW=; HOLD=
+  reset_memory
+  zero_totals
+  gen=0; cyc_id=0; cyc_state=none; cyc_boot=; dirty=0; force=0
+  load_totals || return 1
+  return 0
 }
 
 case "$MODE" in
   once)
-    sample_once
-    _once_rc=$?
-    flush_current_pending
-    flush_screen_time_pending
-    exit "$_once_rc"
+    init_engine || exit 1
+    tick || exit 1
+    if [ "$dirty" = 1 ]; then force=1; persist; fi
+    exit 0
+    ;;
+  probe)
+    # On-device check of how fresh current_now is: reads it once a second and reports how often it changed.
+    _n=${3:-20}
+    case "$_n" in ''|*[!0-9]*) _n=20 ;; esac
+    _i=0; _prev=; _changes=0; _valid=0
+    while [ "$_i" -lt "$_n" ]; do
+      if read_battery && [ -n "$b_cur" ]; then
+        _valid=$(( _valid + 1 ))
+        if [ -n "$_prev" ] && [ "$b_cur" != "$_prev" ]; then _changes=$(( _changes + 1 )); fi
+        _prev=$b_cur
+      fi
+      _i=$(( _i + 1 ))
+      if [ "$_i" -lt "$_n" ]; then "$SLEEP_CMD" 1; fi
+    done
+    printf 'samples=%s valid=%s changes=%s\n' "$_n" "$_valid" "$_changes"
+    exit 0
     ;;
   ensure)
     mkdir -p "$DATA_DIR" 2>/dev/null || exit 1
@@ -843,38 +751,36 @@ case "$MODE" in
     printf '%s\n%s\n%s\n' "$$" "$DAEMON_VERSION" "$MODDIR" > "$_pid_tmp" || exit 1
     chmod 600 "$_pid_tmp" 2>/dev/null || { rm -f "$_pid_tmp"; exit 1; }
     mv -f "$_pid_tmp" "$PID_FILE" || { rm -f "$_pid_tmp"; exit 1; }
-    trap 'flush_current_pending; flush_screen_time_pending; rm -f "$PID_FILE"; exit 0' HUP INT TERM
-    trap 'flush_current_pending; flush_screen_time_pending; rm -f "$PID_FILE"' EXIT
+    trap 'persist_on_exit; rm -f "$PID_FILE"; exit 0' HUP INT TERM
+    trap 'rm -f "$PID_FILE"' EXIT
     max_samples=${MONITOR_DAEMON_MAX_SAMPLES:-0}
     case "$max_samples" in ''|*[!0-9]*) max_samples=0 ;; esac
     sample_count=0
-    clear_windows
-    clear_drain_tracking
-    seen_generation=
-    read_settings || exit 1
-    seen_generation=$generation
-    printf '%s\n' "monitor-daemon: started (active current samples every 1s; idle current samples every 5s)"
+    init_engine || exit 1
+    PLUG=unknown; SCR=unknown; pk_en=1
+    last_ver_t=
+    printf '%s\n' "monitor-daemon: started (screen-on every ${ACTIVE_INTERVAL}s, screen-off every ${IDLE_INTERVAL}s)"
     while :; do
       # Stop if the module is disabled or its files have been removed during uninstall/update.
-      CURRENT_VERSION=$(tr -d '\r' < "$MODDIR/module.prop" 2>/dev/null | sed -n 's/^version=//p' | head -n 1)
-      if [ ! -f "$MODDIR/module.prop" ] || [ -f "$MODDIR/disable" ] || [ -f "$MODDIR/remove" ] || [ "$CURRENT_VERSION" != "$DAEMON_VERSION" ]; then exit 0; fi
-      sample_once || :
-      sample_count=$((sample_count + 1))
-      if [ "$max_samples" -gt 0 ] && [ "$sample_count" -ge "$max_samples" ]; then exit 0; fi
-      read_settings || { "$SLEEP_CMD" 60; continue; }
-      if [ "$monitor_enabled" = 1 ] && [ "$screen_state" = on ] && [ "$charger_online" != 1 ] && [ "$battery_status" = Discharging ]; then
-        sleep_for=${MONITOR_ACTIVE_SAMPLE_SECONDS:-1}
-      elif [ "$monitor_enabled" = 1 ] && [ "$screen_state" = off ] && [ "$charger_online" != 1 ] && [ "$battery_status" = Discharging ]; then
-        sleep_for=${MONITOR_IDLE_SAMPLE_SECONDS:-5}
-      else
-        sleep_for=60
+      if [ -f "$MODDIR/disable" ] || [ -f "$MODDIR/remove" ] || [ ! -f "$MODDIR/module.prop" ]; then exit 0; fi
+      if [ -z "$last_ver_t" ] || [ -z "$t" ] || [ $(( t - last_ver_t )) -ge 30000 ] || [ "$t" -lt "$last_ver_t" ]; then
+        CURRENT_VERSION=$(tr -d '\r' < "$MODDIR/module.prop" 2>/dev/null | sed -n 's/^version=//p' | head -n 1)
+        if [ "$CURRENT_VERSION" != "$DAEMON_VERSION" ]; then exit 0; fi
+        last_ver_t=$t
       fi
-      case "$sleep_for" in ''|*[!0-9]*|0) sleep_for=1 ;; esac
+      tick || :
+      sample_count=$((sample_count + 1))
+      if [ "$max_samples" -gt 0 ] && [ "$sample_count" -ge "$max_samples" ]; then persist_on_exit; exit 0; fi
+      if [ "$pk_en" != 1 ]; then sleep_for=10
+      elif [ "$PLUG" = unplugged ] && [ "$SCR" = on ]; then sleep_for=$ACTIVE_INTERVAL
+      elif [ "$PLUG" = unplugged ]; then sleep_for=$IDLE_INTERVAL
+      else sleep_for=10
+      fi
       "$SLEEP_CMD" "$sleep_for"
     done
     ;;
   *)
-    echo 'usage: monitor-daemon.sh run|once|ensure|stop [MODULE_DIR]' >&2
+    echo 'usage: monitor-daemon.sh run|once|ensure|stop [MODULE_DIR] | probe MODULE_DIR [SECONDS]' >&2
     exit 2
     ;;
 esac

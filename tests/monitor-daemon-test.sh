@@ -1,5 +1,7 @@
 #!/bin/sh
 # Background battery-monitor collector tests; all cache and sensor paths are temporary/read-only.
+# The measurement engine is driven by scripted scenarios: a fake sleep applies the next scenario line
+# (clock step, screen state, battery files) before every tick, so every duration and charge is exact.
 HERE=$(cd "$(dirname "$0")" && pwd)
 ROOT=$(cd "$HERE/.." && pwd)
 T=$(mktemp -d) || exit 1
@@ -9,43 +11,8 @@ check() { if [ "$2" = "$3" ]; then echo "ok   $1"; else echo "FAIL $1: expected 
 field() { printf '%s\n' "$1" | sed -n "s/^$2=//p" | head -n 1; }
 setup_mod() {
   mkdir -p "$1"
-  cp "$ROOT/module/monitor-daemon.sh" "$ROOT/module/monitor-cache.sh" "$ROOT/module/monitor-current.sh" "$ROOT/module/module.prop" "$1/"
+  cp "$ROOT/module/monitor-daemon.sh" "$ROOT/module/monitor-cache.sh" "$ROOT/module/module.prop" "$1/"
   chmod +x "$1/monitor-daemon.sh" "$1/monitor-cache.sh"
-  cat > "$1/monitor.sh" <<'MONITOR'
-#!/bin/sh
-screen=${MONITOR_TEST_SCREEN:-on}
-status=${MONITOR_TEST_STATUS:-Discharging}
-capacity=${MONITOR_TEST_CAPACITY:-68}
-charge=${MONITOR_TEST_CHARGE:-2891000}
-charger=${MONITOR_TEST_CHARGER:-unknown}
-current=${MONITOR_TEST_CURRENT:-}
-if [ -n "${MONITOR_TEST_SEQUENCE_FILE:-}" ]; then
-  n=0; [ -r "${MONITOR_TEST_SEQUENCE_COUNT:-}" ] && IFS= read -r n < "$MONITOR_TEST_SEQUENCE_COUNT"
-  case "$n" in ''|*[!0-9]*) n=0 ;; esac
-  n=$((n + 1)); printf '%s\n' "$n" > "$MONITOR_TEST_SEQUENCE_COUNT"
-  line=$(sed -n "${n}p" "$MONITOR_TEST_SEQUENCE_FILE")
-  if [ -n "$line" ]; then
-    IFS='|' read -r capacity charge status charger sequence_screen sequence_current <<EOF_SEQUENCE
-$line
-EOF_SEQUENCE
-    [ -n "$sequence_screen" ] && screen=$sequence_screen
-    [ -n "$sequence_current" ] && current=$sequence_current
-  fi
-fi
-printf 'screen_state=%s\n' "$screen"
-printf 'battery_status=%s\n' "$status"
-printf 'battery_capacity=%s\n' "$capacity"
-printf 'battery_charge_counter=%s\n' "$charge"
-printf 'battery_charge_full=%s\n' "${MONITOR_TEST_FULL:-4425000}"
-printf 'battery_current_now=%s\n' "$current"
-printf 'charger_online=%s\n' "$charger"
-MONITOR
-  chmod +x "$1/monitor.sh"
-}
-run_daemon_once() {
-  MOD=$1; CACHE_FILE=$2
-  shift 2
-  env MONITOR_CACHE_FILE="$CACHE_FILE" MONITOR_DATA_DIR="$T/data-$$" "$@" sh "$MOD/monitor-daemon.sh" once "$MOD"
 }
 setup_fast_tools() {
   mkdir -p "$T/tools"
@@ -69,275 +36,379 @@ DATE
 # Sampling loop only: remove real delays in the deterministic test process.
 exit 0
 SLEEP
-  cat > "$T/tools/clock" <<'CLOCK'
+  chmod +x "$T/tools/date" "$T/tools/sleep"
+}
+mkdir -p "$T/tools"
+# Scenario sleep: applies line N of $SC_DIR/scenario, then returns. Line = "DT SCREEN STATUS CURRENT COUNTER ONLINE [COMMAND]".
+# DT is milliseconds to add to the fake uptime, or Rnnn to set it to nnn (a reboot/clock restart).
+cat > "$T/tools/scenario-sleep" <<'SCSLEEP'
 #!/bin/sh
-n=0; [ -r "${CLOCK_SEQUENCE_COUNT:-}" ] && IFS= read -r n < "$CLOCK_SEQUENCE_COUNT"
-case "$n" in ''|*[!0-9]*) n=0 ;; esac
-n=$((n + 1)); printf '%s\n' "$n" > "$CLOCK_SEQUENCE_COUNT"
-step=${CLOCK_STEP_MS:-}
-if [ -z "$step" ]; then step=${DATE_STEP:-120}; step=$((step * 1000)); fi
-case "$step" in ''|*[!0-9]*|0) step=120000 ;; esac
-start=${CLOCK_START_MS:-1000000}
-case "$start" in ''|*[!0-9]*) start=1000000 ;; esac
-echo $((start + (n - 1) * step))
-CLOCK
-  chmod +x "$T/tools/date" "$T/tools/sleep" "$T/tools/clock"
-}
-# The fake clock and sleep are handed to the daemon BY PATH (MONITOR_DATE_CMD / MONITOR_SLEEP_CMD), never
-# found through PATH: busybox ash on Debian/Ubuntu runs its own date and sleep applets in preference to any
-# file in PATH, which made these tests read the real clock and really sleep on the CI runner.
-run_daemon_limited() {
-  MOD=$1; CACHE_FILE=$2; MAX=$3
-  shift 3
-  env MONITOR_DATE_CMD="$T/tools/date" MONITOR_CLOCK_CMD="$T/tools/clock" MONITOR_SLEEP_CMD="$T/tools/sleep" DATE_SEQUENCE_COUNT="$T/date-count-$$" CLOCK_SEQUENCE_COUNT="$T/clock-count-${CACHE_FILE##*/}-$$" DATE_STEP=120 MONITOR_CACHE_FILE="$CACHE_FILE" \
-    MONITOR_DATA_DIR="$T/data-loop-${CACHE_FILE##*/}-$$" MONITOR_DAEMON_MAX_SAMPLES="$MAX" "$@" \
-    sh "$MOD/monitor-daemon.sh" run "$MOD"
-}
-init_cache() {
-  CACHE_FILE=$1
-  MONITOR_CACHE_FILE="$CACHE_FILE" sh "$ROOT/module/monitor-cache.sh" set-active 4.25 1700000000000
-  MONITOR_CACHE_FILE="$CACHE_FILE" sh "$ROOT/module/monitor-cache.sh" set-idle 1.75 1700000005000
-  MONITOR_CACHE_FILE="$CACHE_FILE" sh "$ROOT/module/monitor-cache.sh" add-screen-time on 30000 0
-  MONITOR_CACHE_FILE="$CACHE_FILE" sh "$ROOT/module/monitor-cache.sh" add-screen-time off 60000 0
-  MONITOR_CACHE_FILE="$CACHE_FILE" sh "$ROOT/module/monitor-cache.sh" set-charger-state disconnected
-}
+d=$SC_DIR
+idx=0; [ -r "$d/idx" ] && IFS= read -r idx < "$d/idx"
+idx=$((idx + 1)); printf '%s\n' "$idx" > "$d/idx"
+line=$(sed -n "${idx}p" "$d/scenario")
+[ -n "$line" ] || exit 0
+dt=${line%% *}; rest=${line#* }
+screen=${rest%% *}; rest=${rest#* }
+status=${rest%% *}; rest=${rest#* }
+cur=${rest%% *}; rest=${rest#* }
+ctr=${rest%% *}; rest=${rest#* }
+online=${rest%% *}; cmd=
+case "$rest" in *" "*) cmd=${rest#* } ;; esac
+up=$(cat "$d/upms")
+case "$dt" in R*) up=${dt#R} ;; *) up=$((up + dt)) ;; esac
+printf '%s\n' "$up" > "$d/upms"
+printf '%d.%02d 1.00\n' $((up / 1000)) $(((up % 1000) / 10)) > "$d/uptime"
+printf '%s\n' "$screen" > "$d/screen"
+b="$d/sys/class/power_supply/battery"
+printf '%s\n' "$(printf '%s' "$status" | tr _ ' ')" > "$b/status"
+if [ "$cur" = EMPTY ]; then : > "$b/current_now"; else printf '%s\n' "$cur" > "$b/current_now"; fi
+if [ "$ctr" = EMPTY ]; then rm -f "$b/charge_counter"; else printf '%s\n' "$ctr" > "$b/charge_counter"; fi
+[ -d "$d/sys/class/power_supply/usb" ] && printf '%s\n' "$online" > "$d/sys/class/power_supply/usb/online"
+[ -z "$cmd" ] || eval "$cmd"
+exit 0
+SCSLEEP
+chmod +x "$T/tools/scenario-sleep"
+
 MOD="$T/module"
 setup_mod "$MOD"
-
-# Plugging in with full auto-reset enabled clears Kprofiles Control's drain data and both screen-time totals.
-CACHE_FILE="$T/charging-on-cache"
-init_cache "$CACHE_FILE"
-MONITOR_CACHE_FILE="$CACHE_FILE" sh "$ROOT/module/monitor-cache.sh" set-reset-on-charging 1
-run_daemon_once "$MOD" "$CACHE_FILE" MONITOR_TEST_STATUS=Charging MONITOR_TEST_CHARGER=1 MONITOR_TEST_SCREEN=on
-out=$(MONITOR_CACHE_FILE="$CACHE_FILE" sh "$ROOT/module/monitor-cache.sh" get)
-for key in active_rate active_time idle_rate idle_time; do check "charger connection clears $key with auto-reset enabled" '' "$(field "$out" "$key")"; done
-check "charger connection clears screen-on time with auto-reset enabled" 0 "$(field "$out" screen_on_ms)"
-check "charger connection clears screen-off time with auto-reset enabled" 0 "$(field "$out" screen_off_ms)"
-check "charger-triggered reset increments generation" 1 "$(field "$out" generation)"
-check "charger connection is remembered" connected "$(field "$out" last_charger)"
-check "auto-reset leaves the monitoring toggle unchanged" 1 "$(field "$out" monitor_enabled)"
-check "auto-reset leaves interval unchanged" 30 "$(field "$out" sampling_interval)"
-check "auto-reset leaves its own preference enabled" 1 "$(field "$out" reset_on_charging)"
-
-# With bulk auto-reset off, preserve valid rates and screen-off time but reset SOT at cycle start; never retain a measurement window over charging.
-CACHE_FILE="$T/charging-off-cache"
-init_cache "$CACHE_FILE"
-MONITOR_CACHE_FILE="$CACHE_FILE" sh "$ROOT/module/monitor-cache.sh" set-reset-on-charging 0
-run_daemon_once "$MOD" "$CACHE_FILE" MONITOR_TEST_STATUS=Charging MONITOR_TEST_CHARGER=1 MONITOR_TEST_SCREEN=on
-out=$(MONITOR_CACHE_FILE="$CACHE_FILE" sh "$ROOT/module/monitor-cache.sh" get)
-check "charger connection preserves active rate when auto-reset is off" 4.25 "$(field "$out" active_rate)"
-check "charger connection preserves idle rate when auto-reset is off" 1.75 "$(field "$out" idle_rate)"
-check "SOT resets at the start of a charge cycle even when bulk auto-reset is OFF" 0 "$(field "$out" screen_on_ms)"
-check "screen-off time resets for the new discharge cycle even when legacy rate reset is off" 0 "$(field "$out" screen_off_ms)"
-check "SOT-only charge reset preserves drain-data generation guard" 1 "$(field "$out" generation)"
-check "auto-reset OFF is preserved" 0 "$(field "$out" reset_on_charging)"
-check "charging state is remembered when auto-reset is off" connected "$(field "$out" last_charger)"
-
-# A Full status without a positive charger-online reading must not be treated as a plug-in event.
-CACHE_FILE="$T/full-unplugged-cache"
-init_cache "$CACHE_FILE"
-run_daemon_once "$MOD" "$CACHE_FILE" MONITOR_TEST_STATUS=Full MONITOR_TEST_CHARGER=0 MONITOR_TEST_SCREEN=off
-out=$(MONITOR_CACHE_FILE="$CACHE_FILE" sh "$ROOT/module/monitor-cache.sh" get)
-check "Full-but-unplugged is not a false charging reset" 4.25 "$(field "$out" active_rate)"
-check "Full-but-unplugged keeps disconnected state" disconnected "$(field "$out" last_charger)"
-
-# Unknown online state plus Full is ambiguous; fail safe and do not erase saved rates.
-CACHE_FILE="$T/full-unknown-cache"
-init_cache "$CACHE_FILE"
-run_daemon_once "$MOD" "$CACHE_FILE" MONITOR_TEST_STATUS=Full MONITOR_TEST_CHARGER=unknown MONITOR_TEST_SCREEN=off
-out=$(MONITOR_CACHE_FILE="$CACHE_FILE" sh "$ROOT/module/monitor-cache.sh" get)
-check "ambiguous Full status does not auto-reset saved data" 4.25 "$(field "$out" active_rate)"
-check "ambiguous Full status does not invent a charger connection" disconnected "$(field "$out" last_charger)"
-
-# A single sampling pass only establishes an in-memory baseline; no incomplete window is persisted.
-CACHE_FILE="$T/fresh-cache"
-run_daemon_once "$MOD" "$CACHE_FILE" MONITOR_TEST_STATUS=Discharging MONITOR_TEST_CHARGER=0 MONITOR_TEST_SCREEN=on
-out=$(MONITOR_CACHE_FILE="$CACHE_FILE" sh "$ROOT/module/monitor-cache.sh" get)
-check "first screen-on sample is not stored as an active rate" '' "$(field "$out" active_rate)"
-check "first screen-on sample is not stored as a timestamp" '' "$(field "$out" active_time)"
-check "daemon does not persist an unfinished active window" 0 "$(find "$T" -type f -name '*.active-window' -o -name '*.pending' | wc -l | tr -d ' ')"
-
-# Verify the live run loop computes rates after a full window, independently of any WebUI.
-# GitHub Actions environments may carry unrelated DATE_STEP values; the helper must remain deterministic.
+SC="$T/sc"; mkdir -p "$SC"
+# new_sc NAME SCREEN STATUS CURRENT COUNTER ONLINE : a fresh fake phone in its initial state
+new_sc() {
+  d="$SC/$1"; rm -rf "$d"
+  mkdir -p "$d/sys/class/power_supply/battery" "$d/sys/class/power_supply/usb" "$d/data"
+  printf 'Battery\n' > "$d/sys/class/power_supply/battery/type"
+  printf 'USB\n' > "$d/sys/class/power_supply/usb/type"
+  printf '100000\n' > "$d/upms"; printf '100.00 1.00\n' > "$d/uptime"
+  printf 'aaaa0001-aaaa-aaaa-aaaa-aaaaaaaaaaaa\n' > "$d/boot_id"
+  printf '0\n' > "$d/idx"; : > "$d/scenario"
+  set_state "$d" "$2" "$3" "$4" "$5" "$6"
+}
+set_state() {
+  printf '%s\n' "$2" > "$1/screen"
+  printf '%s\n' "$3" > "$1/sys/class/power_supply/battery/status"
+  printf '%s\n' "$4" > "$1/sys/class/power_supply/battery/current_now"
+  printf '%s\n' "$5" > "$1/sys/class/power_supply/battery/charge_counter"
+  [ -d "$1/sys/class/power_supply/usb" ] && printf '%s\n' "$6" > "$1/sys/class/power_supply/usb/online"
+}
+rep() { _n=$1; shift; _i=0; while [ "$_i" -lt "$_n" ]; do printf '%s\n' "$*"; _i=$((_i + 1)); done; }
+# sc_run NAME TICKS [ENV=VALUE...] : run the collector for TICKS samples against the scenario in $SC/NAME/scenario
+sc_run() {
+  d="$SC/$1"; n=$2; shift 2
+  printf '0\n' > "$d/idx"
+  env MONITOR_DATA_DIR="$d/data" MONITOR_CACHE_FILE="$d/data/monitor-cache" MONITOR_SYS_ROOT="$d/sys" \
+    MONITOR_UPTIME_FILE="$d/uptime" MONITOR_SCREEN_STATE_FILE="$d/screen" MONITOR_SLEEP_CMD="$T/tools/scenario-sleep" \
+    SC_DIR="$d" MONITOR_DAEMON_MAX_SAMPLES="$n" MONITOR_BOOT_ID_FILE="$d/boot_id" MONITOR_LOGCAT_CMD="$d/no-logcat" \
+    MONITOR_DATE_CMD="$T/tools/date" DATE_SEQUENCE_COUNT="$d/date-count" DATE_STEP=1 "$@" \
+    sh "$MOD/monitor-daemon.sh" run "$MOD" > "$d/out.log" 2>&1
+}
+cache_get() { MONITOR_CACHE_FILE="$SC/$1/data/monitor-cache" sh "$ROOT/module/monitor-cache.sh" get; }
 setup_fast_tools
-CACHE_FILE="$T/active-loop-cache"
-printf '68|2891000|Discharging|0\n68|2890000|Discharging|0\n' > "$T/active-sequence"
-run_daemon_limited "$MOD" "$CACHE_FILE" 2 MONITOR_TEST_SEQUENCE_FILE="$T/active-sequence" MONITOR_TEST_SEQUENCE_COUNT="$T/active-count" MONITOR_TEST_SCREEN=on
-out=$(MONITOR_CACHE_FILE="$CACHE_FILE" sh "$ROOT/module/monitor-cache.sh" get)
-active_rate=$(field "$out" active_rate)
-case "$active_rate" in ''|*[!0-9.]*) check "screen-on collector persists a numeric active drain rate" yes no ;; *) check "screen-on collector persists a numeric active drain rate" yes yes ;; esac
-check "screen-on collector persists a millisecond timestamp" 1700000120000 "$(field "$out" active_time)"
 
-CACHE_FILE="$T/idle-loop-cache"
-rm -f "$T/date-count-$$" "$T/idle-count"
-printf '68|2891000|Discharging|0\n68|2890000|Discharging|0\n' > "$T/idle-sequence"
-run_daemon_limited "$MOD" "$CACHE_FILE" 2 MONITOR_TEST_SEQUENCE_FILE="$T/idle-sequence" MONITOR_TEST_SEQUENCE_COUNT="$T/idle-count" MONITOR_TEST_SCREEN=off
-out=$(MONITOR_CACHE_FILE="$CACHE_FILE" sh "$ROOT/module/monitor-cache.sh" get)
-idle_rate=$(field "$out" idle_rate)
-case "$idle_rate" in ''|*[!0-9.]*) check "screen-off collector persists a numeric idle drain rate" yes no ;; *) check "screen-off collector persists a numeric idle drain rate" yes yes ;; esac
-check "screen-off collector keeps active rate separate" '' "$(field "$out" active_rate)"
+echo '--- steady screen-on drain: exact charge, time and average ---'
+new_sc steady on Discharging -300000 3000000 0
+rep 60 '1000 on Discharging -300000 3000000 0' > "$SC/steady/scenario"
+sc_run steady 61
+out=$(cache_get steady)
+check "screen-on time is the sum of observed intervals" 60000 "$(field "$out" active_ms)"
+check "active charge is current x time (300 mA for 60 s, in uA*ms)" 18000000000 "$(field "$out" active_charge)"
+check "no screen-off time is invented" 0 "$(field "$out" idle_ms)"
+check "no unmeasured time when every reading is valid" 0 "$(field "$out" active_unmeasured)"
+check "the first discharge cycle is numbered 1" 1 "$(field "$out" cycle_id)"
+check "the cycle is open while discharging" discharging "$(field "$out" cycle_state)"
+check "a clean measurement is not marked provisional" 0 "$(field "$out" active_prov)"
+check "the rolling recent average of constant current equals it" 300000 "$(field "$out" active_recent_ua)"
+check "the rolling window holds all 60 s while under 5 min" 60000 "$(field "$out" active_recent_ms)"
 
-CACHE_FILE="$T/charging-pulse-cache"
-rm -f "$T/date-count-$$" "$T/pulse-count"
-printf '68|2891000|Discharging|0\n68|2892000|Discharging|0\n' > "$T/pulse-sequence"
-run_daemon_limited "$MOD" "$CACHE_FILE" 2 MONITOR_TEST_SEQUENCE_FILE="$T/pulse-sequence" MONITOR_TEST_SEQUENCE_COUNT="$T/pulse-count" MONITOR_TEST_SCREEN=on
-out=$(MONITOR_CACHE_FILE="$CACHE_FILE" sh "$ROOT/module/monitor-cache.sh" get)
-check "charge-counter increase discards a potentially contaminated window" '' "$(field "$out" active_rate)"
+echo '--- the 10 s rule ---'
+new_sc short on Discharging -300000 3000000 0
+{ rep 5 '1000 on Discharging -300000 3000000 0'; rep 8 '1000 off Discharging -30000 3000000 0'; rep 5 '1000 on Discharging -300000 3000000 0'; } > "$SC/short/scenario"
+sc_run short 19
+out=$(cache_get short)
+check "a screen-off interval under 10 s adds no Screen-Off Time" 0 "$(field "$out" idle_ms)"
+check "a screen-off interval under 10 s adds no idle charge" 0 "$(field "$out" idle_charge)"
+check "the discarded short interval is not credited to screen-on time either" 10000 "$(field "$out" active_ms)"
+check "screen-on charge excludes the discarded interval" 3000000000 "$(field "$out" active_charge)"
 
-CACHE_FILE="$T/rebased-window-cache"
-rm -f "$T/date-count-$$" "$T/rebase-count"
-printf '68|2891000|Discharging|0\n68|2892000|Discharging|0\n68|2891000|Discharging|0\n' > "$T/rebase-sequence"
-run_daemon_limited "$MOD" "$CACHE_FILE" 3 MONITOR_TEST_SEQUENCE_FILE="$T/rebase-sequence" MONITOR_TEST_SEQUENCE_COUNT="$T/rebase-count" MONITOR_TEST_SCREEN=on
-out=$(MONITOR_CACHE_FILE="$CACHE_FILE" sh "$ROOT/module/monitor-cache.sh" get)
-case "$(field "$out" active_rate)" in ''|*[!0-9.]*) check "collector rebases after an increase before measuring later drain" yes no ;; *) check "collector rebases after an increase before measuring later drain" yes yes ;; esac
+new_sc long on Discharging -300000 3000000 0
+{ rep 5 '1000 on Discharging -300000 3000000 0'; rep 15 '1000 off Discharging -30000 3000000 0'; rep 3 '1000 on Discharging -300000 3000000 0'; } > "$SC/long/scenario"
+sc_run long 24
+out=$(cache_get long)
+check "a confirmed screen-off interval counts from its ORIGINAL timestamp (all 15 s, not 5 s)" 15000 "$(field "$out" idle_ms)"
+check "idle charge covers the whole confirmed interval, including the buffered first 10 s" 450000000 "$(field "$out" idle_charge)"
+check "screen-on time stops when the screen turns off and resumes after" 8000 "$(field "$out" active_ms)"
+check "screen-on charge is only screen-on current" 2400000000 "$(field "$out" active_charge)"
+check "screen-on and confirmed screen-off time do not overlap (sum equals observed time)" 23000 "$(( $(field "$out" active_ms) + $(field "$out" idle_ms) ))"
 
-# Current integration is state-specific: cross-state pairs are never mixed, the 10-second OFF
-# qualification includes the original OFF boundary, and a shorter OFF pulse contributes nothing.
-CACHE_FILE="$T/separated-current-cache"
-rm -f "$T/separated-current-count"
-{
-  printf '68|2891000|Discharging|0|on|-400000\n'
-  printf '68|2891000|Discharging|0|on|-400000\n'
-  i=0; while [ "$i" -lt 11 ]; do printf '68|2891000|Discharging|0|off|-80000\n'; i=$((i + 1)); done
-  printf '68|2891000|Discharging|0|on|-400000\n'
-  printf '68|2891000|Discharging|0|on|-400000\n'
-} > "$T/separated-current-sequence"
-run_daemon_limited "$MOD" "$CACHE_FILE" 15 DATE_STEP=1 CLOCK_STEP_MS=1000 MONITOR_TEST_SEQUENCE_FILE="$T/separated-current-sequence" MONITOR_TEST_SEQUENCE_COUNT="$T/separated-current-count" MONITOR_TEST_SCREEN=on MONITOR_ACTIVE_SAMPLE_SECONDS=1 MONITOR_IDLE_SAMPLE_SECONDS=1
-out=$(MONITOR_CACHE_FILE="$CACHE_FILE" sh "$ROOT/module/monitor-cache.sh" get)
-check "active current average uses screen-ON samples only" 400.000 "$(field "$out" active_avg_ma)"
-check "idle current average uses screen-OFF samples only" 80.000 "$(field "$out" idle_avg_ma)"
-check "current charge is stored in separate active field" 222.222222 "$(field "$out" active_charge_uah)"
-check "current charge is stored in separate idle field with bounded per-sample precision" 222.222220 "$(field "$out" idle_charge_uah)"
-check "current sample duration remains separate by display state" 2000 "$(field "$out" active_current_ms)"
-check "current idle sample duration remains separate by display state" 10000 "$(field "$out" idle_current_ms)"
-check "qualifying screen-OFF duration includes the full interval from OFF boundary" 11000 "$(field "$out" screen_off_ms)"
-check "screen-ON time is independently accumulated" 3000 "$(field "$out" screen_on_ms)"
+new_sc exact10 on Discharging -300000 3000000 0
+{ rep 2 '1000 on Discharging -300000 3000000 0'; rep 11 '1000 off Discharging -30000 3000000 0'; rep 2 '1000 on Discharging -300000 3000000 0'; } > "$SC/exact10/scenario"
+sc_run exact10 16
+out=$(cache_get exact10)
+check "a screen-off interval of exactly 10 s is confirmed" 11000 "$(field "$out" idle_ms)"
 
-# Persisted cycle totals survive process restart; old sample anchors are not reused/double-counted.
-CACHE_FILE="$T/restart-current-cache"
-rm -f "$T/restart-current-count" "$T/clock-count-${CACHE_FILE##*/}-$$"
-printf '68|2891000|Discharging|0|on|-400000\n68|2891000|Discharging|0|on|-400000\n' > "$T/restart-current-sequence"
-run_daemon_limited "$MOD" "$CACHE_FILE" 2 DATE_STEP=1 CLOCK_STEP_MS=1000 MONITOR_TEST_SEQUENCE_FILE="$T/restart-current-sequence" MONITOR_TEST_SEQUENCE_COUNT="$T/restart-current-count" MONITOR_ACTIVE_SAMPLE_SECONDS=1
-out=$(MONITOR_CACHE_FILE="$CACHE_FILE" sh "$ROOT/module/monitor-cache.sh" get)
-check "first process commits its independent active current total" 111.111111 "$(field "$out" active_charge_uah)"
-# A new daemon process starts at the first sensor row again; the monotonic clock file is deliberately retained.
-rm -f "$T/restart-current-count"
-printf '68|2891000|Discharging|0|on|-400000\n68|2891000|Discharging|0|on|-400000\n' > "$T/restart-current-sequence"
-run_daemon_limited "$MOD" "$CACHE_FILE" 2 DATE_STEP=1 CLOCK_STEP_MS=1000 MONITOR_TEST_SEQUENCE_FILE="$T/restart-current-sequence" MONITOR_TEST_SEQUENCE_COUNT="$T/restart-current-count" MONITOR_ACTIVE_SAMPLE_SECONDS=1
-out=$(MONITOR_CACHE_FILE="$CACHE_FILE" sh "$ROOT/module/monitor-cache.sh" get)
-check "active current average stays independent after process restart" 400.000 "$(field "$out" active_avg_ma)"
-check "process restart does not double-count the previous active interval" 222.222222 "$(field "$out" active_charge_uah)"
-check "process restart adds only the new valid current coverage" 2000 "$(field "$out" active_current_ms)"
-check "screen-on time remains separately cumulative after restart" 2000 "$(field "$out" screen_on_ms)"
+echo '--- acceptance matrix: twenty 4-minute screen-off intervals ---'
+new_sc twenty on Discharging -300000 3000000 0
+: > "$SC/twenty/scenario"
+_c=0
+while [ "$_c" -lt 20 ]; do
+  { printf '1000 off Discharging -30000 3000000 0\n'; rep 3 '60000 off Discharging -30000 3000000 0'; printf '60000 on Discharging -300000 3000000 0\n'; } >> "$SC/twenty/scenario"
+  _c=$((_c + 1))
+done
+sc_run twenty 101 MONITOR_GAP_MS=600000
+out=$(cache_get twenty)
+check "twenty qualifying 4-minute intervals add 80 minutes of confirmed Screen-Off Time" 4800000 "$(field "$out" idle_ms)"
+check "idle charge is the sum over all twenty intervals (30 mA for 80 min)" 144000000000 "$(field "$out" idle_charge)"
+check "the idle rolling history holds only its latest 5 eligible minutes" 300000 "$(field "$out" idle_recent_ms)"
+check "rolling eviction left the cycle's idle total at the full 80 minutes" 80 "$(( $(field "$out" idle_ms) / 60000 ))"
+check "the recent idle estimate is the average over those 5 minutes" 30000 "$(field "$out" idle_recent_ua)"
+check "each separate OFF interval started its own pending buffer (not merged)" 20000 "$(field "$out" active_ms)"
 
-# Screen-time persistence is batched across frequent polls; it is flushed on orderly daemon exit.
-CACHE_FILE="$T/batched-screen-time-cache"
-MOD="$T/batched-screen-time-mod"
-setup_mod "$MOD"
-mv "$MOD/monitor-cache.sh" "$MOD/monitor-cache-real.sh"
-cat > "$MOD/monitor-cache.sh" <<'CACHE_WRAPPER'
+echo '--- unequal sample intervals are time-weighted ---'
+new_sc uneq on Discharging -100000 3000000 0
+{ printf '1000 on Discharging -200000 3000000 0\n'; printf '3000 on Discharging -400000 3000000 0\n'; } > "$SC/uneq/scenario"
+sc_run uneq 3 MONITOR_SMOOTH_MS=1
+check "charge over a 1 s and a 3 s interval is weighted by duration" 1049498500 "$(field "$(cache_get uneq)" active_charge)"
+
+echo '--- manual reset while a screen-off interval is pending ---'
+new_sc rpend on Discharging -300000 3000000 0
+{ rep 3 '1000 on Discharging -300000 3000000 0'; rep 6 '1000 off Discharging -30000 3000000 0'; printf '1000 off Discharging -30000 3000000 0 MONITOR_CACHE_FILE="%s/data/monitor-cache" sh "%s/module/monitor-cache.sh" reset-data\n' "$SC/rpend" "$ROOT"; rep 11 '1000 off Discharging -30000 3000000 0'; printf '1000 on Discharging -300000 3000000 0\n'; } > "$SC/rpend/scenario"
+sc_run rpend 23
+out=$(cache_get rpend)
+check "after a reset the old pending buffer and anchors cannot leak into the new record (only the 12 s since the reset)" 12000 "$(field "$out" idle_ms)"
+check "nothing measured before the reset survives it" 0 "$(field "$out" active_ms)"
+
+echo '--- restart does not double-count a screen-off interval ---'
+new_sc rsoff on Discharging -300000 3000000 0
+{ rep 2 '1000 on Discharging -300000 3000000 0'; rep 15 '1000 off Discharging -30000 3000000 0'; } > "$SC/rsoff/scenario"
+sc_run rsoff 18
+out=$(cache_get rsoff)
+check "first run confirms and saves the screen-off time" 14000 "$(field "$out" idle_ms)"
+printf '9000000\n' > "$SC/rsoff/upms"; printf '9000.00 1.00\n' > "$SC/rsoff/uptime"
+set_state "$SC/rsoff" off Discharging -30000 3000000 0
+rep 12 '1000 off Discharging -30000 3000000 0' > "$SC/rsoff/scenario"
+sc_run rsoff 13
+out=$(cache_get rsoff)
+check "after a restart the saved total plus only the newly observed time is counted (14 s + 12 s)" 26000 "$(field "$out" idle_ms)"
+
+echo '--- trapezoid integration and 10 s smoothing ---'
+new_sc trap on Discharging -100000 3000000 0
+printf '1000 on Discharging -300000 3000000 0\n' > "$SC/trap/scenario"
+sc_run trap 2 MONITOR_SMOOTH_MS=1
+out=$(cache_get trap)
+check "charge over a 1 s interval is the trapezoid of the two readings" 199900000 "$(field "$out" active_charge)"
+sc_run trap 1
+new_sc smooth on Discharging -100000 3000000 0
+printf '1000 on Discharging -300000 3000000 0\n' > "$SC/smooth/scenario"
+sc_run smooth 2
+out=$(cache_get smooth)
+check "default smoothing damps a sudden current step (about a 10 s horizon)" 109000000 "$(field "$out" active_charge)"
+new_sc sign on Discharging 300000 3000000 0
+rep 4 '1000 on Discharging 300000 3000000 0' > "$SC/sign/scenario"
+sc_run sign 5
+check "positive and negative current_now give the same discharge magnitude" 1200000000 "$(field "$(cache_get sign)" active_charge)"
+
+echo '--- invalid readings are unmeasured, never zero ---'
+new_sc bad on Discharging -300000 3000000 0
+rep 4 '1000 on Discharging EMPTY 3000000 0' > "$SC/bad/scenario"
+sc_run bad 5
+out=$(cache_get bad)
+check "time with no valid current still counts as screen-on time" 4000 "$(field "$out" active_ms)"
+check "that time is recorded as unmeasured" 4000 "$(field "$out" active_unmeasured)"
+check "no charge is invented for unmeasured time" 0 "$(field "$out" active_charge)"
+new_sc zero on Discharging 0 3000000 0
+rep 3 '1000 on Discharging 0 3000000 0' > "$SC/zero/scenario"
+sc_run zero 4
+check "a constant zero current_now is treated as unavailable, not measured" 3000 "$(field "$(cache_get zero)" active_unmeasured)"
+
+echo '--- cycles: charging closes the cycle, unplugging starts a new one ---'
+new_sc cyc on Discharging -300000 3000000 0
+{ rep 5 '1000 on Discharging -300000 3000000 0'; rep 3 '1000 on Charging 1500000 3000100 1'; } > "$SC/cyc/scenario"
+sc_run cyc 9
+out=$(cache_get cyc)
+check "plugging in ends the discharge cycle" charging "$(field "$out" cycle_state)"
+check "the finished cycle's totals stay visible while charging" 5000 "$(field "$out" active_ms)"
+check "charging time and current are not added to the cycle" 1500000000 "$(field "$out" active_charge)"
+check "no new cycle starts while charging" 1 "$(field "$out" cycle_id)"
+{ rep 2 '1000 off Full 0 3000100 1'; rep 2 '1000 on Full 1000 3000100 1'; } > "$SC/cyc/scenario"
+set_state "$SC/cyc" on Charging 1500000 3000100 1
+sc_run cyc 5
+out=$(cache_get cyc)
+check "reaching 100% (Full) on the charger does not start a new cycle" 1 "$(field "$out" cycle_id)"
+check "Full on the charger keeps the cycle closed" charging "$(field "$out" cycle_state)"
+check "Full on the charger leaves the totals untouched" 5000 "$(field "$out" active_ms)"
+{ rep 4 '1000 on Discharging -300000 3000000 0'; } > "$SC/cyc/scenario"
+set_state "$SC/cyc" on Full 1000 3000100 1
+sc_run cyc 5
+out=$(cache_get cyc)
+check "unplugging starts a new cycle" 2 "$(field "$out" cycle_id)"
+check "the new cycle is discharging" discharging "$(field "$out" cycle_state)"
+check "the new cycle starts from zero (only post-unplug time)" 3000 "$(field "$out" active_ms)"
+check "the new cycle's screen-off total starts from zero" 0 "$(field "$out" idle_ms)"
+
+new_sc nonline on Discharging -300000 3000000 0
+rm -rf "$SC/nonline/sys/class/power_supply/usb"
+{ rep 3 '1000 on Discharging -300000 3000000 0'; rep 3 '1000 on Full 1000 3000100 0'; } > "$SC/nonline/scenario"
+sc_run nonline 7
+out=$(cache_get nonline)
+check "without any charger-online node, Full still means plugged in" charging "$(field "$out" cycle_state)"
+{ rep 2 '1000 on Full 1000 3000100 0'; rep 3 '1000 on Discharging -300000 3000000 0'; } > "$SC/nonline/scenario"
+set_state "$SC/nonline" on Full 1000 3000100 0
+sc_run nonline 6
+check "Full without a charger-online node does not reset the cycle before the real unplug" 2 "$(field "$(cache_get nonline)" cycle_id)"
+new_sc notchg on Discharging -300000 3000000 0
+rm -rf "$SC/notchg/sys/class/power_supply/usb"
+{ rep 3 '1000 on Discharging -300000 3000000 0'; rep 4 '1000 on Not_charging 0 3000000 0'; } > "$SC/notchg/scenario"
+sc_run notchg 8
+out=$(cache_get notchg)
+check "a Not-charging battery with no charger-online node is treated as plugged in" charging "$(field "$out" cycle_state)"
+check "Not charging adds nothing to the closed cycle" 3000 "$(field "$out" active_ms)"
+new_sc notchg2 on Discharging -300000 3000000 0
+{ rep 3 '1000 on Not_charging -300000 3000000 0'; } > "$SC/notchg2/scenario"
+sc_run notchg2 4
+check "Not charging with the charger reported offline is still on battery" 3000 "$(field "$(cache_get notchg2)" active_ms)"
+
+echo '--- gaps: counter-based, provisional, or discarded ---'
+new_sc gap on Discharging -300000 3000000 0
+printf '120000 on Discharging -300000 2999900 0\n' > "$SC/gap/scenario"
+sc_run gap 2
+out=$(cache_get gap)
+check "a long gap is still counted as time" 120000 "$(field "$out" active_ms)"
+check "a long gap's charge comes from the charge counter (100 uAh)" 360000000 "$(field "$out" active_charge)"
+check "a counter-based gap is marked provisional" 1 "$(field "$out" active_prov)"
+new_sc gapi on Discharging -300000 EMPTY 0
+printf '120000 on Discharging -300000 EMPTY 0\n' > "$SC/gapi/scenario"
+sc_run gapi 2
+out=$(cache_get gapi)
+check "without a counter a long gap is interpolated" 36000000000 "$(field "$out" active_charge)"
+check "an interpolated long gap is marked provisional" 1 "$(field "$out" active_prov)"
+new_sc gapmax on Discharging -300000 3000000 0
+{ printf '50000000 on Discharging -300000 3000000 0\n'; rep 2 '1000 on Discharging -300000 3000000 0'; } > "$SC/gapmax/scenario"
+sc_run gapmax 4
+out=$(cache_get gapmax)
+check "a gap beyond 12 h is discarded, nothing is credited for it" 2000 "$(field "$out" active_ms)"
+
+echo '--- Android screen events give the real transition time after a sleep gap ---'
+cat > "$T/tools/fake-logcat" <<'LOGCAT'
 #!/bin/sh
-_here=${0%/*}
-if [ "${1:-}" = add-screen-time ] && [ -n "${MONITOR_SCREEN_TIME_WRITE_LOG:-}" ]; then
-  printf '%s\n' "$2" >> "$MONITOR_SCREEN_TIME_WRITE_LOG"
-fi
-exec sh "$_here/monitor-cache-real.sh" "$@"
-CACHE_WRAPPER
-chmod +x "$MOD/monitor-cache.sh"
-rm -f "$T/date-count-$$" "$T/batched-screen-time-count" "$T/batched-screen-time-writes"
-printf '68|2891000|Discharging|0|on|-400000\n68|2891000|Discharging|0|on|-400000\n68|2891000|Discharging|0|on|-400000\n68|2891000|Discharging|0|on|-400000\n68|2891000|Discharging|0|on|-400000\n' > "$T/batched-screen-time-sequence"
-run_daemon_limited "$MOD" "$CACHE_FILE" 5 DATE_STEP=1 CLOCK_STEP_MS=1000 MONITOR_SCREEN_TIME_WRITE_LOG="$T/batched-screen-time-writes" MONITOR_TEST_SEQUENCE_FILE="$T/batched-screen-time-sequence" MONITOR_TEST_SEQUENCE_COUNT="$T/batched-screen-time-count" MONITOR_ACTIVE_SAMPLE_SECONDS=1 MONITOR_IDLE_SAMPLE_SECONDS=1
-out=$(MONITOR_CACHE_FILE="$CACHE_FILE" sh "$ROOT/module/monitor-cache.sh" get)
-check "screen time accumulates across short sample intervals" 4000 "$(field "$out" screen_on_ms)"
-check "screen-time cache writes are batched instead of one write per poll" 1 "$(wc -l < "$T/batched-screen-time-writes" | tr -d ' ')"
+printf '%s\n' '1699999000.100  1000  1234  1250 I power_screen_state: [0,3,0,0]'
+printf '%s\n' '1699999980.123  1000  1234  1250 I power_screen_state: [1,0,0,0]'
+LOGCAT
+chmod +x "$T/tools/fake-logcat"
+cat > "$T/tools/fixed-date" <<'FDATE'
+#!/bin/sh
+[ "$1" = +%s ] && { echo 1700000000; exit 0; }
+exec /bin/date "$@"
+FDATE
+chmod +x "$T/tools/fixed-date"
+new_sc ev off Discharging -30000 EMPTY 0
+printf '60000 on Discharging -300000 EMPTY 0\n' > "$SC/ev/scenario"
+sc_run ev 2 MONITOR_LOGCAT_CMD="$T/tools/fake-logcat" MONITOR_DATE_CMD="$T/tools/fixed-date"
+out=$(cache_get ev)
+check "the screen-on event time splits the sleep gap (off until 20.377 s before the sample)" 39623 "$(field "$out" idle_ms)"
+check "the time after the real wake-up is screen-on time" 20377 "$(field "$out" active_ms)"
+check "screen-off charge in the gap uses the screen-off reading" 1188690000 "$(field "$out" idle_charge)"
+check "screen-on charge in the gap uses the screen-on reading" 6113100000 "$(field "$out" active_charge)"
+new_sc ev2 off Discharging -30000 EMPTY 0
+printf '60000 on Discharging -300000 EMPTY 0\n' > "$SC/ev2/scenario"
+sc_run ev2 2
+out=$(cache_get ev2)
+check "without an event log the sample time is the transition time" 60000 "$(field "$out" idle_ms)"
+check "without an event log nothing is credited to the new state before the sample" 0 "$(field "$out" active_ms)"
 
-CACHE_FILE="$T/short-screen-off-current-cache"
-rm -f "$T/short-screen-off-current-count"
-{
-  printf '68|2891000|Discharging|0|on|-400000\n'
-  printf '68|2891000|Discharging|0|on|-400000\n'
-  i=0; while [ "$i" -lt 8 ]; do printf '68|2891000|Discharging|0|off|-80000\n'; i=$((i + 1)); done
-  printf '68|2891000|Discharging|0|on|-400000\n'
-  printf '68|2891000|Discharging|0|on|-400000\n'
-} > "$T/short-screen-off-current-sequence"
-run_daemon_limited "$MOD" "$CACHE_FILE" 12 DATE_STEP=1 CLOCK_STEP_MS=1000 MONITOR_TEST_SEQUENCE_FILE="$T/short-screen-off-current-sequence" MONITOR_TEST_SEQUENCE_COUNT="$T/short-screen-off-current-count" MONITOR_TEST_SCREEN=on MONITOR_ACTIVE_SAMPLE_SECONDS=1 MONITOR_IDLE_SAMPLE_SECONDS=1
-out=$(MONITOR_CACHE_FILE="$CACHE_FILE" sh "$ROOT/module/monitor-cache.sh" get)
-check "screen-OFF candidate shorter than 10 seconds is excluded from idle time" 0 "$(field "$out" screen_off_ms)"
-check "screen-OFF candidate shorter than 10 seconds is excluded from idle current duration" 0 "$(field "$out" idle_current_ms)"
-check "screen-OFF candidate shorter than 10 seconds is excluded from idle charge" 0 "$(field "$out" idle_charge_uah)"
-check "short screen-OFF session never contaminates active average current" 400.000 "$(field "$out" active_avg_ma)"
+echo '--- rolling window is bounded by time and never touches cycle totals ---'
+new_sc roll on Discharging -100000 3000000 0
+{ rep 30 '1000 on Discharging -100000 3000000 0'; rep 30 '1000 on Discharging -400000 3000000 0'; } > "$SC/roll/scenario"
+sc_run roll 61 MONITOR_ROLL_MS=20000 MONITOR_SMOOTH_MS=1
+out=$(cache_get roll)
+check "the rolling window never exceeds its configured length" 20000 "$(field "$out" active_recent_ms)"
+check "cycle totals still cover the whole 60 s" 60000 "$(field "$out" active_ms)"
+recent=$(field "$out" active_recent_ua)
+check "the recent estimate follows only the latest data" yes "$([ "$recent" -gt 395000 ] && [ "$recent" -le 400000 ] && echo yes || echo no)"
+total=$(field "$out" active_charge)
+check "cycle charge is the full-run integral, not the recent window" yes "$([ "$total" -gt 14000000000 ] && [ "$total" -lt 14900000000 ] && echo yes || echo no)"
+new_sc roll5 on Discharging -100000 3000000 0
+rep 330 '1000 on Discharging -100000 3000000 0' > "$SC/roll5/scenario"
+sc_run roll5 331
+out=$(cache_get roll5)
+check "the default rolling window is 5 minutes of eligible time" 300000 "$(field "$out" active_recent_ms)"
+check "the cycle total keeps counting past the rolling window" 330000 "$(field "$out" active_ms)"
 
-# A charge-counter delta across a screen-state transition is mixed-state data and must not be
-# assigned to either independent current accumulator, even when the delta itself looks plausible.
-CACHE_FILE="$T/mixed-state-counter-cache"
-rm -f "$T/mixed-state-counter-count"
-printf '68|3000000|Discharging|0|on|-400000\n68|2999900|Discharging|0|off|-80000\n' > "$T/mixed-state-counter-sequence"
-run_daemon_limited "$MOD" "$CACHE_FILE" 2 DATE_STEP=1 CLOCK_STEP_MS=1000 MONITOR_TEST_SEQUENCE_FILE="$T/mixed-state-counter-sequence" MONITOR_TEST_SEQUENCE_COUNT="$T/mixed-state-counter-count" MONITOR_ACTIVE_SAMPLE_SECONDS=1 MONITOR_IDLE_SAMPLE_SECONDS=1
-out=$(MONITOR_CACHE_FILE="$CACHE_FILE" sh "$ROOT/module/monitor-cache.sh" get)
-check "cross-state counter delta is not assigned to Active Drain" 0 "$(field "$out" active_current_ms)"
-check "cross-state counter delta is not assigned to Idle Drain" 0 "$(field "$out" idle_current_ms)"
-check "cross-state counter delta cannot contaminate active charge" 0 "$(field "$out" active_charge_uah)"
-check "cross-state counter delta cannot contaminate idle charge" 0 "$(field "$out" idle_charge_uah)"
+echo '--- disabled monitoring, unknown screen, resets ---'
+new_sc off1 on Discharging -300000 3000000 0
+rep 5 '1000 on Discharging -300000 3000000 0' > "$SC/off1/scenario"
+MONITOR_CACHE_FILE="$SC/off1/data/monitor-cache" sh "$ROOT/module/monitor-cache.sh" set-enabled 0
+sc_run off1 6
+check "nothing is counted while monitoring is switched off" 0 "$(field "$(cache_get off1)" active_ms)"
+new_sc unk unknown Discharging -300000 3000000 0
+rep 4 '1000 unknown Discharging -300000 3000000 0' > "$SC/unk/scenario"
+sc_run unk 5
+check "an unreadable screen state counts as neither screen-on nor screen-off" 0 "$(( $(field "$(cache_get unk)" active_ms) + $(field "$(cache_get unk)" idle_ms) ))"
 
-CACHE_FILE="$T/stale-current-gap-cache"
-rm -f "$T/stale-current-gap-count"
-printf '68|2891000|Discharging|0|on|-400000\n68|2891000|Discharging|0|on|-400000\n' > "$T/stale-current-gap-sequence"
-run_daemon_limited "$MOD" "$CACHE_FILE" 2 DATE_STEP=10 CLOCK_STEP_MS=10000 MONITOR_TEST_SEQUENCE_FILE="$T/stale-current-gap-sequence" MONITOR_TEST_SEQUENCE_COUNT="$T/stale-current-gap-count" MONITOR_TEST_SCREEN=on
-out=$(MONITOR_CACHE_FILE="$CACHE_FILE" sh "$ROOT/module/monitor-cache.sh" get)
-check "long current-sample gap is not integrated by extending a stale current" '' "$(field "$out" active_avg_ma)"
-check "long gap does not create active current coverage" 0 "$(field "$out" active_current_ms)"
+new_sc rst on Discharging -300000 3000000 0
+{ rep 9 '1000 on Discharging -300000 3000000 0'; printf '1000 on Discharging -300000 3000000 0 MONITOR_CACHE_FILE="%s/data/monitor-cache" sh "%s/module/monitor-cache.sh" reset-data\n' "$SC/rst" "$ROOT"; rep 4 '1000 on Discharging -300000 3000000 0'; } > "$SC/rst/scenario"
+sc_run rst 15
+out=$(cache_get rst)
+check "a manual reset advances the generation" 1 "$(field "$out" generation)"
+check "after a reset the collector measures from zero (no pre-reset totals written back)" 4000 "$(field "$out" active_ms)"
+check "a reset does not start a new cycle" 1 "$(field "$out" cycle_id)"
 
-# Screen time totals are persisted only between close samples with the same screen state on battery.
-CACHE_FILE="$T/screen-on-time-cache"
-rm -f "$T/date-count-$$" "$T/screen-on-count"
-printf '68|2891000|Discharging|0|on\n68|2890000|Discharging|0|on\n' > "$T/screen-on-sequence"
-run_daemon_limited "$MOD" "$CACHE_FILE" 2 DATE_STEP=30 MONITOR_TEST_SEQUENCE_FILE="$T/screen-on-sequence" MONITOR_TEST_SEQUENCE_COUNT="$T/screen-on-count" MONITOR_TEST_SCREEN=on
-out=$(MONITOR_CACHE_FILE="$CACHE_FILE" sh "$ROOT/module/monitor-cache.sh" get)
-check "screen-on duration is recorded from a valid 30-second same-state interval" 30000 "$(field "$out" screen_on_ms)"
-check "screen-on duration does not leak into screen-off total" 0 "$(field "$out" screen_off_ms)"
+new_sc rsot on Discharging -300000 3000000 0
+{ rep 3 '1000 on Discharging -300000 3000000 0'; rep 15 '1000 off Discharging -30000 3000000 0'; rep 2 '1000 on Discharging -300000 3000000 0'; printf '1000 on Discharging -300000 3000000 0 MONITOR_CACHE_FILE="%s/data/monitor-cache" sh "%s/module/monitor-cache.sh" reset-screen-on-time\n' "$SC/rsot" "$ROOT"; rep 3 '1000 on Discharging -300000 3000000 0'; } > "$SC/rsot/scenario"
+sc_run rsot 25
+out=$(cache_get rsot)
+check "resetting screen-on time keeps the confirmed screen-off total" 15000 "$(field "$out" idle_ms)"
+check "resetting screen-on time restarts only the active side" 3000 "$(field "$out" active_ms)"
 
-CACHE_FILE="$T/screen-off-time-cache"
-rm -f "$T/date-count-$$" "$T/screen-off-count"
-printf '68|2891000|Discharging|0|off\n68|2890000|Discharging|0|off\n' > "$T/screen-off-sequence"
-run_daemon_limited "$MOD" "$CACHE_FILE" 2 DATE_STEP=60 MONITOR_TEST_SEQUENCE_FILE="$T/screen-off-sequence" MONITOR_TEST_SEQUENCE_COUNT="$T/screen-off-count" MONITOR_TEST_SCREEN=off
-out=$(MONITOR_CACHE_FILE="$CACHE_FILE" sh "$ROOT/module/monitor-cache.sh" get)
-check "screen-off duration is recorded from a valid 60-second same-state interval" 60000 "$(field "$out" screen_off_ms)"
-check "screen-off duration does not leak into screen-on total" 0 "$(field "$out" screen_on_ms)"
+echo '--- restart and reboot recovery ---'
+new_sc rs on Discharging -300000 3000000 0
+rep 19 '1000 on Discharging -300000 3000000 0' > "$SC/rs/scenario"
+sc_run rs 20
+out=$(cache_get rs)
+check "first run totals" 19000 "$(field "$out" active_ms)"
+printf '5000000\n' > "$SC/rs/upms"; printf '5000.00 1.00\n' > "$SC/rs/uptime"
+rep 9 '1000 on Discharging -300000 3000000 0' > "$SC/rs/scenario"
+sc_run rs 10
+out=$(cache_get rs)
+check "a restarted collector continues the same cycle" 1 "$(field "$out" cycle_id)"
+check "the time the collector was not running is not counted" 28000 "$(field "$out" active_ms)"
+printf 'bbbb0002-bbbb-bbbb-bbbb-bbbbbbbbbbbb\n' > "$SC/rs/boot_id"; printf '2000\n' > "$SC/rs/upms"; printf '2.00 1.00\n' > "$SC/rs/uptime"
+rep 4 '1000 on Discharging -300000 3000000 0' > "$SC/rs/scenario"
+sc_run rs 5
+out=$(cache_get rs)
+check "after a reboot the cycle continues with the new boot recorded" bbbb0002-bbbb-bbbb-bbbb-bbbbbbbbbbbb "$(field "$out" cycle_boot)"
+check "after a reboot nothing is subtracted across the two clocks" 32000 "$(field "$out" active_ms)"
 
-CACHE_FILE="$T/screen-transition-cache"
-rm -f "$T/date-count-$$" "$T/screen-transition-count"
-printf '68|2891000|Discharging|0|on\n68|2890000|Discharging|0|off\n' > "$T/screen-transition-sequence"
-run_daemon_limited "$MOD" "$CACHE_FILE" 2 DATE_STEP=30 MONITOR_TEST_SEQUENCE_FILE="$T/screen-transition-sequence" MONITOR_TEST_SEQUENCE_COUNT="$T/screen-transition-count" MONITOR_TEST_SCREEN=on
-out=$(MONITOR_CACHE_FILE="$CACHE_FILE" sh "$ROOT/module/monitor-cache.sh" get)
-check "short ON-to-OFF transition interval is credited to the prior screen-on state" 30000 "$(field "$out" screen_on_ms)"
-check "short ON-to-OFF transition does not leak into screen-off time" 0 "$(field "$out" screen_off_ms)"
+new_sc clk on Discharging -300000 3000000 0
+{ rep 5 '1000 on Discharging -300000 3000000 0'; printf 'R5000 on Discharging -300000 3000000 0\n'; rep 4 '1000 on Discharging -300000 3000000 0'; } > "$SC/clk/scenario"
+sc_run clk 11
+check "a monotonic clock that restarts mid-run never produces negative or double-counted time" 9000 "$(field "$(cache_get clk)" active_ms)"
 
+echo '--- cache write refused after a reset is picked up, not overwritten ---'
+new_sc stale on Discharging -300000 3000000 0
+{ rep 3 '1000 on Discharging -300000 3000000 0'; printf '1000 on Discharging -300000 3000000 0 MONITOR_CACHE_FILE="%s/data/monitor-cache" sh "%s/module/monitor-cache.sh" reset-data\n' "$SC/stale" "$ROOT"; } > "$SC/stale/scenario"
+sc_run stale 5 MONITOR_PERSIST_MS=1
+check "totals are zeroed by the reset and not restored by a late write" 0 "$([ "$(field "$(cache_get stale)" active_ms)" -le 1000 ] && echo 0 || echo 1)"
 
-# With percentage-only telemetry, the rate must use the full interval between visible capacity
-# steps rather than rebasing every ten minutes and overstating low drain.
-CACHE_FILE="$T/active-capacity-only-cache"
-rm -f "$T/date-count-$$" "$T/active-capacity-count"
-printf '68||Discharging|0|on\n68||Discharging|0|on\n67||Discharging|0|on\n' > "$T/active-capacity-sequence"
-run_daemon_limited "$MOD" "$CACHE_FILE" 3 DATE_STEP=1800 MONITOR_TEST_SEQUENCE_FILE="$T/active-capacity-sequence" MONITOR_TEST_SEQUENCE_COUNT="$T/active-capacity-count" MONITOR_TEST_SCREEN=on
-out=$(MONITOR_CACHE_FILE="$CACHE_FILE" sh "$ROOT/module/monitor-cache.sh" get)
-check "capacity-only active drain keeps the 60-minute baseline instead of resetting at 10 minutes" 1.000000 "$(field "$out" active_rate)"
+echo '--- the collector only reads: poisoned date/sleep in PATH are never used ---'
+mkdir -p "$T/poison"
+for tool in date sleep; do
+  printf '#!/bin/sh\necho %s >> "%s/poison-called"\nexit 1\n' "$tool" "$T" > "$T/poison/$tool"
+  chmod +x "$T/poison/$tool"
+done
+new_sc pz on Discharging -300000 3000000 0
+rep 5 '1000 on Discharging -300000 3000000 0' > "$SC/pz/scenario"
+rm -f "$T/poison-called"
+PATH="$T/poison:$PATH" sc_run pz 6
+check "daemon never runs a date or sleep found through PATH when it was given its own" no "$([ -e "$T/poison-called" ] && echo yes || echo no)"
+check "the run still produced its measurements" 5000 "$(field "$(cache_get pz)" active_ms)"
 
-CACHE_FILE="$T/idle-capacity-only-cache"
-rm -f "$T/date-count-$$" "$T/idle-capacity-count"
-printf '68||Discharging|0|off\n68||Discharging|0|off\n67||Discharging|0|off\n' > "$T/idle-capacity-sequence"
-run_daemon_limited "$MOD" "$CACHE_FILE" 3 DATE_STEP=3600 MONITOR_TEST_SEQUENCE_FILE="$T/idle-capacity-sequence" MONITOR_TEST_SEQUENCE_COUNT="$T/idle-capacity-count" MONITOR_TEST_SCREEN=off
-out=$(MONITOR_CACHE_FILE="$CACHE_FILE" sh "$ROOT/module/monitor-cache.sh" get)
-check "capacity-only idle drain uses the full two-hour baseline instead of inflating the rate" 0.500000 "$(field "$out" idle_rate)"
+echo '--- probe reports how fresh current_now is ---'
+new_sc pr on Discharging -300000 3000000 0
+{ printf '1000 on Discharging -300000 3000000 0\n'; printf '1000 on Discharging -310000 3000000 0\n'; printf '1000 on Discharging -310000 3000000 0\n'; } > "$SC/pr/scenario"
+out=$(env MONITOR_SYS_ROOT="$SC/pr/sys" MONITOR_SLEEP_CMD="$T/tools/scenario-sleep" SC_DIR="$SC/pr" sh "$MOD/monitor-daemon.sh" probe "$MOD" 4)
+check "probe counts samples and distinct changes" "samples=4 valid=4 changes=1" "$out"
 
-# A phone may not execute shell timers during Doze; waking after an overnight OFF interval should
-# persist screen-off time and finish the pending idle-drain window instead of leaving it collecting forever.
-CACHE_FILE="$T/overnight-idle-cache"
-rm -f "$T/date-count-$$" "$T/overnight-count"
-printf '68|2891000|Discharging|0|off\n67|2889000|Discharging|0|on\n' > "$T/overnight-sequence"
-run_daemon_limited "$MOD" "$CACHE_FILE" 2 DATE_STEP=28800 MONITOR_TEST_SEQUENCE_FILE="$T/overnight-sequence" MONITOR_TEST_SEQUENCE_COUNT="$T/overnight-count" MONITOR_TEST_SCREEN=off
-out=$(MONITOR_CACHE_FILE="$CACHE_FILE" sh "$ROOT/module/monitor-cache.sh" get)
-check "screen-off time is persisted across an eight-hour sleep interval" 28800000 "$(field "$out" screen_off_ms)"
-case "$(field "$out" idle_rate)" in ''|*[!0-9.]*) check "waking finalizes an overnight idle-drain measurement" yes no ;; *) check "waking finalizes an overnight idle-drain measurement" yes yes ;; esac
+echo '--- process management: ensure / stop / start locks ---'
 
 # ensure mode starts a detached collector even when a stale PID file names an unrelated reused PID.
 CACHE_FILE="$T/ensure-cache"
@@ -397,35 +468,6 @@ env MONITOR_DATE_CMD="$T/tools/date" MONITOR_SLEEP_CMD="$T/tools/sleep" DATE_SEQ
 check "ensure reclaims a start lock whose live PID has a stale process-start token" yes "$(grep -q 'monitor-daemon: started' "$T/ensure-reused-lock-data/monitor.log" 2>/dev/null && echo yes || echo no)"
 check "ensure removes the stale start-lock directory after starting" no "$([ -d "$T/ensure-reused-lock-data/monitor-start.lock" ] && echo yes || echo no)"
 
-CACHE_FILE="$T/full-unplugged-screen-time-cache"
-rm -f "$T/date-count-$$" "$T/full-unplugged-count"
-printf '68|2891000|Full|0|on\n68|2891000|Full|0|on\n' > "$T/full-unplugged-sequence"
-run_daemon_limited "$MOD" "$CACHE_FILE" 2 DATE_STEP=30 MONITOR_TEST_SEQUENCE_FILE="$T/full-unplugged-sequence" MONITOR_TEST_SEQUENCE_COUNT="$T/full-unplugged-count" MONITOR_TEST_SCREEN=on
-out=$(MONITOR_CACHE_FILE="$CACHE_FILE" sh "$ROOT/module/monitor-cache.sh" get)
-check "screen time still accumulates at Full when unplugging is confirmed" 30000 "$(field "$out" screen_on_ms)"
-
-CACHE_FILE="$T/ambiguous-full-screen-time-cache"
-rm -f "$T/date-count-$$" "$T/ambiguous-full-count"
-printf '68|2891000|Full|unknown|on\n68|2891000|Full|unknown|on\n' > "$T/ambiguous-full-sequence"
-run_daemon_limited "$MOD" "$CACHE_FILE" 2 DATE_STEP=30 MONITOR_TEST_SEQUENCE_FILE="$T/ambiguous-full-sequence" MONITOR_TEST_SEQUENCE_COUNT="$T/ambiguous-full-count" MONITOR_TEST_SCREEN=on
-out=$(MONITOR_CACHE_FILE="$CACHE_FILE" sh "$ROOT/module/monitor-cache.sh" get)
-check "ambiguous Full state is not falsely counted as on-battery time" 0 "$(field "$out" screen_on_ms)"
-
-# A shell that prefers its own applets ignores a date or sleep found through PATH. Put poisoned ones first in PATH:
-# the daemon must not run them, and must still use the fake clock it was given by path.
-mkdir -p "$T/poison"
-for tool in date sleep; do
-  printf '#!/bin/sh\necho %s >> "%s/poison-called"\nexit 1\n' "$tool" "$T" > "$T/poison/$tool"
-  chmod +x "$T/poison/$tool"
-done
-CACHE_FILE="$T/poisoned-path-cache"
-rm -f "$T/date-count-$$" "$T/poison-count" "$T/poison-called"
-printf '68|2891000|Discharging|0\n68|2890000|Discharging|0\n' > "$T/poison-sequence"
-PATH="$T/poison:$PATH" run_daemon_limited "$MOD" "$CACHE_FILE" 2 MONITOR_TEST_SEQUENCE_FILE="$T/poison-sequence" MONITOR_TEST_SEQUENCE_COUNT="$T/poison-count" MONITOR_TEST_SCREEN=on
-out=$(MONITOR_CACHE_FILE="$CACHE_FILE" sh "$ROOT/module/monitor-cache.sh" get)
-check "daemon never runs a date or sleep found through PATH when it was given its own" no "$([ -e "$T/poison-called" ] && echo yes || echo no)"
-check "daemon uses the clock it was given even when PATH holds other date/sleep programs" 1700000120000 "$(field "$out" active_time)"
-
 # --- Two starters must never both reclaim the same abandoned start lock ---------------------------------
 # Same race as in the cache: B read "stale", then A reclaimed the lock and took it with a live identity.
 # B must neither delete A's lock nor launch a second collector.
@@ -475,6 +517,5 @@ env MONITOR_DATE_CMD="$T/tools/date" MONITOR_SLEEP_CMD="$T/tools/sleep" MONITOR_
 check "ensure clears a stale start lock that sits behind an abandoned guard" 0 "$?"
 check "the abandoned start-lock guard is gone afterwards" no "$([ -e "$guard2_data/monitor-start.lock.reclaim" ] && echo yes || echo no)"
 check "the start lock is released after that ensure" no "$([ -e "$guard2_data/monitor-start.lock" ] && echo yes || echo no)"
-
 
 [ "$fail" -eq 0 ] && echo "all monitor-daemon tests passed" || exit 1

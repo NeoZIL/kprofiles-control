@@ -51,12 +51,6 @@ jobs:
       - name: dash - monitor tests
         timeout-minutes: 5
         run: sh tests/monitor-test.sh
-      - name: dash - current/cache/daemon regressions
-        timeout-minutes: 10
-        run: |
-          sh tests/monitor-current-test.sh
-          sh tests/monitor-cache-test.sh
-          sh tests/monitor-daemon-test.sh
       - name: dash - build tests
         timeout-minutes: 5
         run: sh tests/build-test.sh
@@ -79,12 +73,6 @@ jobs:
       - name: mksh - monitor tests
         timeout-minutes: 5
         run: PATH="$RUNNER_TEMP/shim-mksh:$PATH" mksh tests/monitor-test.sh
-      - name: mksh - current/cache/daemon regressions
-        timeout-minutes: 10
-        run: |
-          PATH="$RUNNER_TEMP/shim-mksh:$PATH" mksh tests/monitor-current-test.sh
-          PATH="$RUNNER_TEMP/shim-mksh:$PATH" mksh tests/monitor-cache-test.sh
-          PATH="$RUNNER_TEMP/shim-mksh:$PATH" mksh tests/monitor-daemon-test.sh
       - name: mksh - build tests
         timeout-minutes: 5
         run: PATH="$RUNNER_TEMP/shim-mksh:$PATH" mksh tests/build-test.sh
@@ -107,12 +95,6 @@ jobs:
       - name: busybox ash - monitor tests
         timeout-minutes: 5
         run: PATH="$RUNNER_TEMP/shim-bb:$PATH" busybox sh tests/monitor-test.sh
-      - name: busybox ash - current/cache/daemon regressions
-        timeout-minutes: 10
-        run: |
-          PATH="$RUNNER_TEMP/shim-bb:$PATH" busybox sh tests/monitor-current-test.sh
-          PATH="$RUNNER_TEMP/shim-bb:$PATH" busybox sh tests/monitor-cache-test.sh
-          PATH="$RUNNER_TEMP/shim-bb:$PATH" busybox sh tests/monitor-daemon-test.sh
       - name: busybox ash - build tests
         timeout-minutes: 5
         run: PATH="$RUNNER_TEMP/shim-bb:$PATH" busybox sh tests/build-test.sh
