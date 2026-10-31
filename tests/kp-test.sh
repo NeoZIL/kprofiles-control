@@ -71,8 +71,8 @@ rm -f "$T/auto_kp"
 out=$(CFG_DIR="$T/cfg-no-kp" KP_PATH="$T/no-kp-mode" AUTO_PATH="$T/no-kp-auto" sh "$KPSH" apply 2>&1); rc=$?
 check "kernel without Kprofiles does not fail boot apply" "0" "$rc"
 case "$out" in *"saved mode was skipped"*) echo "ok   absent Kprofiles mode is clearly reported as skipped" ;; *) echo "FAIL absent Kprofiles warning missing: $out"; fail=1 ;; esac
-if [ ! -e "$T/no-kp-mode" ] && [ ! -e "$T/no-kp-auto" ]; then none_created=0; else none_created=1; fi
-check "unsupported kernel: no guessed sysfs nodes are created" "0" "$none_created"
+if [ ! -e "$T/no-kp-mode" ] && [ ! -e "$T/no-kp-auto" ]; then nodes_rc=0; else nodes_rc=1; fi
+check "unsupported kernel: no guessed sysfs nodes are created" "0" "$nodes_rc"
 case "$out" in *"support=unsupported"*) echo "ok   no-Kprofiles boot status remains explicit" ;; *) echo "FAIL no-Kprofiles status unclear: $out"; fail=1 ;; esac
 echo N > "$T/auto_kp"
 # A present but malformed/unreadable optional parameter is not equivalent to an absent one.

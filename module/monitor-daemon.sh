@@ -339,7 +339,7 @@ prepare_pair() {
   pair_dt=$(( t - l_t )); pair_mode=none; pair_q=0; pair_trans=0
   if [ "$l_scr" != "$SCR" ]; then pair_trans=1; fi
   if [ "$pair_dt" -le "$GAP_MS" ]; then
-    if [ -n "$l_i" ] && [ -n "$c_i" ]; then pair_mode="trap"; fi
+    if [ -n "$l_i" ] && [ -n "$c_i" ]; then pair_mode='trap'; fi
   else
     # Long gap (deep sleep): the charge counter is the trustworthy source when it moved; otherwise interpolate
     # between the two readings and mark the result provisional. A stale reading is never extended across it.
@@ -347,7 +347,7 @@ prepare_pair() {
       pair_q=$(( (l_ctr - c_ctr) * 3600000 ))
       if [ $(( pair_q / pair_dt )) -le "$MAX_SANE_UA" ]; then pair_mode=counter; fi
     fi
-    if [ "$pair_mode" = none ] && [ -n "$l_i" ] && [ -n "$c_i" ]; then pair_mode=trap_prov; fi
+    if [ "$pair_mode" = none ] && [ -n "$l_i" ] && [ -n "$c_i" ]; then pair_mode='trap_prov'; fi
   fi
 }
 
