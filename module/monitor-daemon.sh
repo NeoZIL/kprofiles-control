@@ -36,7 +36,10 @@ if [ -r "$MODDIR/module.prop" ]; then
 fi
 
 # ---- tunables (the environment overrides exist for off-device tests and later on-device tuning) ----
-pos_int() { case "$1" in ''|*[!0-9]*) return 1 ;; esac; [ "$1" -gt 0 ]; }
+# A tunable must be a positive number of at most 200,000,000 (about 55 hours when it is a time in ms): Android's
+# mksh does 32-bit $(( )) arithmetic, so every value used below stays far under 2^31 (2,147,483,647), the divisor
+# limit of bn_div (214,748,364) included, and anything that could exceed it is done by the helpers.
+pos_int() { case "$1" in ''|*[!0-9]*) return 1 ;; esac; [ "${#1}" -le 9 ] || return 1; [ "$1" -gt 0 ] && [ "$1" -le 200000000 ]; }
 ACTIVE_INTERVAL=${MONITOR_ACTIVE_INTERVAL:-1}      # seconds between samples while the screen is on
 IDLE_INTERVAL=${MONITOR_IDLE_INTERVAL:-5}          # seconds between samples while the screen is off
 PENDING_MS=${MONITOR_PENDING_MS:-10000}            # a screen-off interval counts only after this long
@@ -60,9 +63,92 @@ for _tn in ACTIVE_INTERVAL IDLE_INTERVAL PENDING_MS ROLL_MS SMOOTH_MS GAP_MS MAX
   esac
 done
 
+# SMOOTH_MS is multiplied by 1000 below and added to a time step of up to ~1.5e9 ms.
+[ "$SMOOTH_MS" -le 100000 ] || SMOOTH_MS=100000
+
 if [ ! -x "$CACHE" ]; then
   [ -f "$CACHE" ] || exit 1
 fi
+
+# ---- 32-bit-safe arithmetic on big numbers ----
+# Charge is kept in uA*ms (300 mA for one minute is 18,000,000,000) and the shell's own arithmetic may be 32-bit
+# (mksh), so charge values are decimal strings without leading zeros, added and subtracted in 9-digit pieces,
+# multiplied in 4-digit pieces and divided one digit at a time. Every intermediate stays below 2^31.
+# Results come back in BN (BQ and BR for a division); callers must pass plain digit strings. The integers given
+# to bn_mul must be under 2^31, a divisor (bn_div, bn_muldiv) must be from 1 to 214,748,364.
+bn_unz() { # $1 without leading zeros (empty means 0) -> _z
+  _z=$1
+  [ -n "$_z" ] || _z=0
+  while :; do case "$_z" in 0?*) _z=${_z#0} ;; *) break ;; esac; done
+}
+bn_split() { # $1 -> _bh (everything before the last 9 digits), _bl (the last 9 digits), both plain integers
+  bn_unz "$1"
+  if [ "${#_z}" -le 9 ]; then _bh=0; _bl=$_z
+  else
+    _bh=${_z%?????????}; _bl=${_z#"$_bh"}
+    bn_unz "$_bh"; _bh=$_z
+    bn_unz "$_bl"; _bl=$_z
+  fi
+}
+bn_join() { # $1 high part, $2 low part (0..999999999) -> BN
+  if [ "$1" -eq 0 ]; then BN=$2
+  else _jp=00000000$2; BN=$1${_jp#"${_jp%?????????}"}
+  fi
+}
+bn_add() { # $1 + $2
+  bn_split "$1"; _ah=$_bh; _al=$_bl
+  bn_split "$2"
+  _jl=$(( _al + _bl )); _jh=$(( _ah + _bh ))
+  if [ "$_jl" -ge 1000000000 ]; then _jl=$(( _jl - 1000000000 )); _jh=$(( _jh + 1 )); fi
+  bn_join "$_jh" "$_jl"
+}
+bn_sub() { # $1 - $2, or 0 when $2 is the larger
+  bn_split "$1"; _ah=$_bh; _al=$_bl
+  bn_split "$2"
+  _jl=$(( _al - _bl )); _jh=$(( _ah - _bh ))
+  if [ "$_jl" -lt 0 ]; then _jl=$(( _jl + 1000000000 )); _jh=$(( _jh - 1 )); fi
+  if [ "$_jh" -lt 0 ]; then BN=0; else bn_join "$_jh" "$_jl"; fi
+}
+bn_mul() { # $1 * $2 for two integers under 2^31
+  _mx=$1; _my=$2
+  if [ $(( ${#_mx} + ${#_my} )) -le 9 ]; then BN=$(( _mx * _my )); return 0; fi
+  _a0=$(( _mx % 10000 )); _mx=$(( _mx / 10000 )); _a1=$(( _mx % 10000 )); _a2=$(( _mx / 10000 ))
+  _b0=$(( _my % 10000 )); _my=$(( _my / 10000 )); _b1=$(( _my % 10000 )); _b2=$(( _my / 10000 ))
+  _c0=$(( _a0 * _b0 ))
+  _c1=$(( _a0 * _b1 + _a1 * _b0 ))
+  _c2=$(( _a0 * _b2 + _a1 * _b1 + _a2 * _b0 ))
+  _c3=$(( _a1 * _b2 + _a2 * _b1 ))
+  _c4=$(( _a2 * _b2 ))
+  _c1=$(( _c1 + _c0 / 10000 )); _c0=$(( _c0 % 10000 ))
+  _c2=$(( _c2 + _c1 / 10000 )); _c1=$(( _c1 % 10000 ))
+  _c3=$(( _c3 + _c2 / 10000 )); _c2=$(( _c2 % 10000 ))
+  _c4=$(( _c4 + _c3 / 10000 )); _c3=$(( _c3 % 10000 ))
+  _c5=$(( _c4 / 10000 )); _c4=$(( _c4 % 10000 ))
+  _q=0000$_c4; _ms=$_c5${_q#"${_q%????}"}
+  _q=0000$_c3; _ms=$_ms${_q#"${_q%????}"}
+  _q=0000$_c2; _ms=$_ms${_q#"${_q%????}"}
+  _q=0000$_c1; _ms=$_ms${_q#"${_q%????}"}
+  _q=0000$_c0; _ms=$_ms${_q#"${_q%????}"}
+  bn_unz "$_ms"; BN=$_z
+}
+bn_div() { # $1 / $2 (floor) for a digit string and a divisor from 1 to 214748364 -> BQ, remainder in BR
+  _dn=$1; _dd=$2; _dr=0; _dq=
+  [ -n "$_dn" ] || _dn=0
+  while [ -n "$_dn" ]; do
+    _dg=${_dn%"${_dn#?}"}; _dn=${_dn#?}
+    _dr=$(( _dr * 10 + _dg ))
+    _dk=$(( _dr / _dd )); _dr=$(( _dr - _dk * _dd ))
+    _dq=$_dq$_dk
+  done
+  bn_unz "$_dq"; BQ=$_z; BR=$_dr
+}
+bn_muldiv() { # floor($1 * $2 / $3): a digit string and two integers; $1 / $3 must be under 2^31
+  bn_div "$1" "$3"; _qi=$BQ; _rm=$BR
+  if [ "${#_qi}" -gt 9 ]; then BN=0; return 1; fi
+  bn_mul "$_qi" "$2"; _m1=$BN
+  bn_mul "$_rm" "$2"; bn_div "$BN" "$3"; _m2=$BQ
+  bn_add "$_m1" "$_m2"
+}
 
 is_monitor_process() {
   _pid=$1
@@ -206,8 +292,24 @@ now_ms() {
   case "$_f3" in *[!0-9]*) return 1 ;; esac
   while [ "${#_f3}" -gt 1 ] && [ "${_f3#0}" != "$_f3" ]; do _f3=${_f3#0}; done
   while [ "${#_int}" -gt 1 ] && [ "${_int#0}" != "$_int" ]; do _int=${_int#0}; done
-  [ "${#_int}" -le 13 ] || return 1
-  NOW=$((_int * 1000 + _f3))
+  [ "${#_int}" -le 9 ] || return 1
+  # The clock origin T_BASE (uptime seconds when this process first looked) keeps NOW small: a phone that has
+  # been up for more than 24.8 days has an uptime in ms above 2^31. A clock that went backwards, or jumped
+  # forward by weeks, moves the origin; tick() then sees time going backwards and starts measuring afresh.
+  if [ -z "$T_BASE" ] || [ "$_int" -lt "$T_BASE" ] || [ $(( _int - T_BASE )) -ge 2000000 ]; then T_BASE=$_int; fi
+  NOW=$(( (_int - T_BASE) * 1000 + _f3 ))
+}
+# Keeps NOW below 2^31 in a long-running process: the origin moves forward by 1,000,000 s and every stored
+# time moves with it. A stored time older than that is forgotten (measurement restarts, which only happens
+# after an unmeasured stretch of days).
+rebase_clock() {
+  T_BASE=$(( T_BASE + 1000000 ))
+  NOW=$(( NOW - 1000000000 ))
+  if [ -n "$l_t" ] && { [ "$l_t" -lt 1000000000 ] || { [ -n "$pend_t" ] && [ "$pend_t" -lt 1000000000 ]; }; }; then reset_memory; fi
+  [ -z "$l_t" ] || l_t=$(( l_t - 1000000000 ))
+  [ -z "$pend_t" ] || pend_t=$(( pend_t - 1000000000 ))
+  if [ -n "$last_persist" ]; then if [ "$last_persist" -ge 1000000000 ]; then last_persist=$(( last_persist - 1000000000 )); else last_persist=; fi; fi
+  if [ -n "$last_ver_t" ]; then if [ "$last_ver_t" -ge 1000000000 ]; then last_ver_t=$(( last_ver_t - 1000000000 )); else last_ver_t=; fi; fi
 }
 
 discover_battery() {
@@ -294,7 +396,11 @@ screen_event_time() {
   if [ ! -x "$LOGCAT_CMD" ]; then command -v "$LOGCAT_CMD" >/dev/null 2>&1 || return 1; fi
   _evlog=$("$LOGCAT_CMD" -b events -d -v epoch -t 400 'power_screen_state:I' 'screen_toggled:I' '*:S' 2>/dev/null) || return 1
   [ -n "$_evlog" ] || return 1
-  _evms=$(printf '%s\n' "$_evlog" | "$AWK_CMD" -v want="$_want" '
+  _epoch_s=$("$DATE_CMD" +%s 2>/dev/null)
+  case "$_epoch_s" in ''|*[!0-9]*) return 1 ;; esac
+  # awk does the epoch-millisecond arithmetic (far above 2^31): _age = how long before "now" (mid-second
+  # corrected, since date has one-second resolution) the event happened. A negative age is an event "in the future".
+  _age=$(printf '%s\n' "$_evlog" | "$AWK_CMD" -v want="$_want" -v now="$_epoch_s" '
     /power_screen_state|screen_toggled/ {
       if (match($0, /(power_screen_state: \[|screen_toggled: )[0-9]/)) {
         d = substr($0, RSTART + RLENGTH - 1, 1)
@@ -303,13 +409,16 @@ screen_event_time() {
         if (ts > 1000000000) { last_state = st; last_ts = ts }
       }
     }
-    END { if (last_state == want && last_ts > 0) printf "%.0f\n", last_ts * 1000 }')
-  case "$_evms" in ''|*[!0-9]*) return 1 ;; esac
-  _epoch_s=$("$DATE_CMD" +%s 2>/dev/null)
-  case "$_epoch_s" in ''|*[!0-9]*) return 1 ;; esac
+    END { if (last_state == want && last_ts > 0) printf "%.0f\n", now * 1000 + 500 - last_ts * 1000 }')
+  case "$_age" in ''|-|*[!0-9-]*|?*-*) return 1 ;; esac
   now_ms || return 1
-  # Mid-second correction: date has one-second resolution.
-  EV_T=$(( _evms - (_epoch_s * 1000 + 500 - NOW) ))
+  _ag=${_age#-}
+  # An event further away than ~5.8 days is outside any sample pair: it is clamped to the pair's edge below.
+  if [ "${#_ag}" -gt 9 ] || [ "$_ag" -gt 500000000 ]; then
+    if [ "$_age" = "$_ag" ]; then EV_T=$_lo; else EV_T=$_hi; fi
+    return 0
+  fi
+  EV_T=$(( NOW - _age ))
   [ "$EV_T" -ge "$_lo" ] || EV_T=$_lo
   [ "$EV_T" -le "$_hi" ] || EV_T=$_hi
   return 0
@@ -318,16 +427,21 @@ screen_event_time() {
 # --- rolling window of recent eligible time (internal; trimmed by time, not by sample count) ---
 # Buffer = space-separated "durationMs:charge" tokens, oldest first.
 roll_push() {
-  R_BUF="$1 $4:$5"; R_MS=$(( $2 + $4 )); R_Q=$(( $3 + $5 ))
+  R_BUF="$1 $4:$5"; R_MS=$(( $2 + $4 ))
+  bn_add "$3" "$5"; R_Q=$BN
   while [ "$R_MS" -gt "$ROLL_MS" ]; do
     _first=${R_BUF# }; _first=${_first%% *}
     _fd=${_first%%:*}; _fq=${_first#*:}
     _ex=$(( R_MS - ROLL_MS ))
     if [ "$_fd" -le "$_ex" ]; then
-      R_BUF=${R_BUF#" $_first"}; R_MS=$(( R_MS - _fd )); R_Q=$(( R_Q - _fq ))
+      R_BUF=${R_BUF#" $_first"}; R_MS=$(( R_MS - _fd ))
+      bn_sub "$R_Q" "$_fq"; R_Q=$BN
     else
-      _nd=$(( _fd - _ex )); _nq=$(( _fq * _nd / _fd ))
-      R_BUF=" $_nd:$_nq${R_BUF#" $_first"}"; R_MS=$(( R_MS - _ex )); R_Q=$(( R_Q - _fq + _nq ))
+      # the oldest entry is only partly outside the window: keep the part that is inside
+      _nd=$(( _fd - _ex ))
+      bn_muldiv "$_fq" "$_nd" "$_fd"; _nq=$BN
+      R_BUF=" $_nd:$_nq${R_BUF#" $_first"}"; R_MS=$(( R_MS - _ex ))
+      bn_sub "$R_Q" "$_fq"; bn_add "$BN" "$_nq"; R_Q=$BN
     fi
   done
 }
@@ -344,8 +458,9 @@ prepare_pair() {
     # Long gap (deep sleep): the charge counter is the trustworthy source when it moved; otherwise interpolate
     # between the two readings and mark the result provisional. A stale reading is never extended across it.
     if [ -n "$l_ctr" ] && [ -n "$c_ctr" ] && [ "$l_ctr" -gt "$c_ctr" ]; then
-      pair_q=$(( (l_ctr - c_ctr) * 3600000 ))
-      if [ $(( pair_q / pair_dt )) -le "$MAX_SANE_UA" ]; then pair_mode=counter; fi
+      bn_mul "$(( l_ctr - c_ctr ))" 3600000; pair_q=$BN
+      bn_div "$pair_q" "$pair_dt"
+      if [ "${#BQ}" -le 9 ] && [ "$BQ" -le "$MAX_SANE_UA" ]; then pair_mode=counter; fi
     fi
     if [ "$pair_mode" = none ] && [ -n "$l_i" ] && [ -n "$c_i" ]; then pair_mode='trap_prov'; fi
   fi
@@ -353,20 +468,33 @@ prepare_pair() {
 
 # Charge in [$1,$2] (inside the current pair). Sets SEG_DT, SEG_Q, SEG_OK (1 = measured), SEG_PROV.
 # Across a screen transition each side uses its OWN state's reading (HOLD), never a blend of the two states.
+# Current at time $1 inside the current pair, on the straight line between the two readings -> IV (uA).
+interp() {
+  _off=$(( $1 - l_t ))
+  if [ "$_off" -le 0 ]; then IV=$l_i; return 0; fi
+  if [ "$_off" -ge "$pair_dt" ]; then IV=$c_i; return 0; fi
+  _dl=$(( c_i - l_i ))
+  if [ "$_dl" -ge 0 ]; then
+    bn_muldiv "$_dl" "$_off" "$pair_dt"; IV=$(( l_i + BN ))
+  else
+    bn_muldiv "$(( 0 - _dl ))" "$_off" "$pair_dt"; IV=$(( l_i - BN ))
+  fi
+}
+
 seg_calc() {
   SEG_DT=$(( $2 - $1 )); SEG_Q=0; SEG_OK=0; SEG_PROV=0
   if [ "$SEG_DT" -le 0 ]; then SEG_DT=0; return 0; fi
   if [ "$pair_mode" = counter ]; then
-    SEG_Q=$(( pair_q * SEG_DT / pair_dt )); SEG_OK=1; SEG_PROV=1
+    bn_muldiv "$pair_q" "$SEG_DT" "$pair_dt"; SEG_Q=$BN; SEG_OK=1; SEG_PROV=1
   elif [ "$pair_trans" = 1 ]; then
     if [ -n "$HOLD" ]; then
-      SEG_Q=$(( HOLD * SEG_DT )); SEG_OK=1
+      bn_mul "$HOLD" "$SEG_DT"; SEG_Q=$BN; SEG_OK=1
       if [ "$pair_dt" -gt "$GAP_MS" ]; then SEG_PROV=1; fi
     fi
   elif [ "$pair_mode" = trap ] || [ "$pair_mode" = trap_prov ]; then
-    _ia=$(( l_i + (c_i - l_i) * ($1 - l_t) / pair_dt ))
-    _ib=$(( l_i + (c_i - l_i) * ($2 - l_t) / pair_dt ))
-    SEG_Q=$(( (_ia + _ib) * SEG_DT / 2 )); SEG_OK=1
+    interp "$1"; _ia=$IV
+    interp "$2"; _ib=$IV
+    bn_mul "$(( _ia + _ib ))" "$SEG_DT"; bn_div "$BN" 2; SEG_Q=$BQ; SEG_OK=1
     if [ "$pair_mode" = trap_prov ]; then SEG_PROV=1; fi
   fi
   return 0
@@ -377,7 +505,7 @@ acc_active() {
   [ "$SEG_DT" -gt 0 ] || return 0
   A_ms=$(( A_ms + SEG_DT )); dirty=1
   if [ "$SEG_OK" = 1 ]; then
-    A_chg=$(( A_chg + SEG_Q ))
+    bn_add "$A_chg" "$SEG_Q"; A_chg=$BN
     roll_push "$A_roll" "$A_rms" "$A_rq" "$SEG_DT" "$SEG_Q"
     A_roll=$R_BUF; A_rms=$R_MS; A_rq=$R_Q
   else
@@ -392,7 +520,7 @@ acc_idle() {
   [ "$SEG_DT" -gt 0 ] || return 0
   I_ms=$(( I_ms + SEG_DT )); dirty=1
   if [ "$SEG_OK" = 1 ]; then
-    I_chg=$(( I_chg + SEG_Q ))
+    bn_add "$I_chg" "$SEG_Q"; I_chg=$BN
     roll_push "$I_roll" "$I_rms" "$I_rq" "$SEG_DT" "$SEG_Q"
     I_roll=$R_BUF; I_rms=$R_MS; I_rq=$R_Q
   else
@@ -408,7 +536,7 @@ acc_pending() {
   [ "$SEG_DT" -gt 0 ] || return 0
   P_ms=$(( P_ms + SEG_DT ))
   if [ "$SEG_OK" = 1 ]; then
-    P_chg=$(( P_chg + SEG_Q )); P_roll="$P_roll $SEG_DT:$SEG_Q"
+    bn_add "$P_chg" "$SEG_Q"; P_chg=$BN; P_roll="$P_roll $SEG_DT:$SEG_Q"
   else
     P_unm=$(( P_unm + SEG_DT ))
   fi
@@ -421,7 +549,8 @@ clear_pending() { P_chg=0; P_ms=0; P_unm=0; P_prov=0; P_roll=; }
 # The screen stayed off for the whole pending time: it becomes confirmed idle, counted from the ORIGINAL
 # screen-off timestamp.
 confirm_pending() {
-  I_ms=$(( I_ms + P_ms )); I_chg=$(( I_chg + P_chg )); I_unm=$(( I_unm + P_unm ))
+  I_ms=$(( I_ms + P_ms )); I_unm=$(( I_unm + P_unm ))
+  bn_add "$I_chg" "$P_chg"; I_chg=$BN
   if [ "$P_prov" = 1 ]; then I_prov=1; fi
   for _tok in $P_roll; do
     roll_push "$I_roll" "$I_rms" "$I_rq" "${_tok%%:*}" "${_tok#*:}"
@@ -518,7 +647,7 @@ EOF_CACHE
   for _n in gen cyc_id A_chg A_ms A_unm A_prov I_chg I_ms I_unm I_prov; do
     case "$_n" in
       gen) case "$gen" in ''|*[!0-9]*) gen=0 ;; esac ;;
-      cyc_id) case "$cyc_id" in ''|*[!0-9]*) cyc_id=0 ;; esac ;;
+      cyc_id) case "$cyc_id" in ''|*[!0-9]*) cyc_id=0 ;; esac; [ "${#cyc_id}" -le 9 ] || cyc_id=0 ;;
       A_chg) case "$A_chg" in ''|*[!0-9]*) A_chg=0 ;; esac ;;
       A_ms) case "$A_ms" in ''|*[!0-9]*) A_ms=0 ;; esac ;;
       A_unm) case "$A_unm" in ''|*[!0-9]*) A_unm=0 ;; esac ;;
@@ -529,6 +658,20 @@ EOF_CACHE
       I_prov) case "$I_prov" in 0|1) ;; *) I_prov=0 ;; esac ;;
     esac
   done
+  # Durations are added to below with plain arithmetic: keep them plain integers under 10^9 ms (no leading zeros,
+  # which a shell would read as octal). Charge totals are digit strings handled by the bn_* helpers.
+  for _n in A_ms A_unm I_ms I_unm; do
+    case "$_n" in
+      A_ms) _v=$A_ms ;; A_unm) _v=$A_unm ;; I_ms) _v=$I_ms ;; I_unm) _v=$I_unm ;;
+    esac
+    bn_unz "$_v"; _v=$_z
+    case "$_v" in ?????????|????????|???????|??????|?????|????|???|??|?|1?????????) ;; *) _v=0 ;; esac
+    case "$_n" in A_ms) A_ms=$_v ;; A_unm) A_unm=$_v ;; I_ms) I_ms=$_v ;; I_unm) I_unm=$_v ;; esac
+  done
+  [ "$A_unm" -le "$A_ms" ] || A_unm=$A_ms
+  [ "$I_unm" -le "$I_ms" ] || I_unm=$I_ms
+  bn_unz "$A_chg"; A_chg=$_z; [ "${#A_chg}" -le 18 ] || A_chg=0
+  bn_unz "$I_chg"; I_chg=$_z; [ "${#I_chg}" -le 18 ] || I_chg=0
   dirty=0; force=0
   return 0
 }
@@ -549,8 +692,8 @@ peek_cache() {
 
 persist() {
   _aru=; _iru=
-  if [ "$A_rms" -gt 0 ]; then _aru=$(( A_rq / A_rms )); fi
-  if [ "$I_rms" -gt 0 ]; then _iru=$(( I_rq / I_rms )); fi
+  if [ "$A_rms" -gt 0 ]; then bn_div "$A_rq" "$A_rms"; _aru=$BQ; fi
+  if [ "$I_rms" -gt 0 ]; then bn_div "$I_rq" "$I_rms"; _iru=$BQ; fi
   sh "$CACHE" set-cycle "$gen" "cycle_id=$cyc_id" "cycle_state=$cyc_state" "cycle_boot=$cyc_boot" \
     "active_charge=$A_chg" "active_ms=$A_ms" "active_unmeasured=$A_unm" "active_prov=$A_prov" \
     "idle_charge=$I_chg" "idle_ms=$I_ms" "idle_unmeasured=$I_unm" "idle_prov=$I_prov" \
@@ -590,15 +733,25 @@ current_sample() {
   esac
   _raw=${b_cur#-}
   case "$_raw" in ''|*[!0-9]*) return 0 ;; esac
-  [ "${#_raw}" -le 12 ] || return 0
+  [ "${#_raw}" -le 9 ] || return 0
   [ "$_raw" -gt 0 ] && [ "$_raw" -le "$MAX_SANE_UA" ] || return 0
   if [ -z "$sm" ] || [ -z "$l_t" ] || [ "$l_scr" != "$SCR" ]; then
     # First reading, or the screen state just changed: start from the raw value so one state's smoothed
     # current never carries into the other state.
     sm=$_raw
   else
-    _sa=$(( (t - l_t) * 1000 / (t - l_t + SMOOTH_MS) ))
-    sm=$(( sm + (_raw - sm) * _sa / 1000 ))
+    # smoothing weight of the new reading, per mille: floor(dt * 1000 / (dt + SMOOTH_MS)), written so that no
+    # intermediate product reaches 2^31
+    _sd=$(( t - l_t ))
+    _sa=$(( 1000 - (SMOOTH_MS * 1000 + _sd + SMOOTH_MS - 1) / (_sd + SMOOTH_MS) ))
+    _dl=$(( _raw - sm ))
+    if [ "$_dl" -ge -2000000 ] && [ "$_dl" -le 2000000 ]; then
+      sm=$(( sm + _dl * _sa / 1000 ))
+    elif [ "$_dl" -gt 0 ]; then
+      bn_muldiv "$_dl" "$_sa" 1000; sm=$(( sm + BN ))
+    else
+      bn_muldiv "$(( 0 - _dl ))" "$_sa" 1000; sm=$(( sm - BN ))
+    fi
   fi
   c_i=$sm
   return 0
@@ -607,6 +760,7 @@ current_sample() {
 tick() {
   now_ms || return 1
   t=$NOW
+  if [ "$t" -ge 1500000000 ]; then rebase_clock; t=$NOW; fi
   if [ -n "$l_t" ] && [ "$t" -lt "$l_t" ]; then reset_memory; fi   # the clock restarted (reboot)
   read_battery || { reset_memory; return 1; }
   plug_from
@@ -628,11 +782,14 @@ tick() {
   esac
   # Unplugged and discharging.
   if [ "$cyc_state" != discharging ]; then start_new_cycle; fi
+  # A state's time in one cycle is added with plain arithmetic: after about 22 days of screen-on or confirmed
+  # screen-off time in a single discharge a fresh cycle starts instead of letting a total near 2^31 wrap.
+  if [ "$A_ms" -ge 1900000000 ] || [ "$I_ms" -ge 1900000000 ]; then start_new_cycle; fi
   if [ "$cyc_boot" != "$cur_boot" ]; then cyc_boot=$cur_boot; dirty=1; fi
   probe_screen
   if [ "$SCR" = unknown ]; then reset_memory; maybe_persist; return 0; fi
   c_ctr=
-  case "$b_ctr" in ''|*[!0-9]*) ;; *) [ "${#b_ctr}" -le 12 ] && c_ctr=$b_ctr ;; esac
+  case "$b_ctr" in ''|*[!0-9]*) ;; *) [ "${#b_ctr}" -le 9 ] && c_ctr=$b_ctr ;; esac
   current_sample
   if [ -n "$l_t" ] && [ $(( t - l_t )) -gt "$MAX_GAP_MS" ]; then reset_memory; current_sample; fi
   if [ -z "$l_t" ]; then
@@ -656,7 +813,7 @@ init_engine() {
   read_first "$BOOT_ID_FILE" && cur_boot=$_R
   case "$cur_boot" in *[!0-9a-fA-F-]*) cur_boot= ;; esac
   BATT_DIR=; ONLINE_FILES=
-  last_persist=; t=; NOW=; HOLD=
+  last_persist=; t=; NOW=; HOLD=; T_BASE=
   reset_memory
   zero_totals
   gen=0; cyc_id=0; cyc_state=none; cyc_boot=; dirty=0; force=0
@@ -665,6 +822,10 @@ init_engine() {
 }
 
 case "$MODE" in
+  lib)
+    # Sourced by the tests (set -- lib MODULE_DIR; . monitor-daemon.sh) to exercise the helpers directly.
+    return 0 2>/dev/null || exit 0
+    ;;
   once)
     init_engine || exit 1
     tick || exit 1

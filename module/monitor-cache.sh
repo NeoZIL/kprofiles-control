@@ -28,10 +28,19 @@ valid_duration() {
   [ "${#1}" -le 15 ] || return 1
   return 0
 }
+# Android's mksh does 32-bit $(( )) and [ -le ] arithmetic: a counter that is incremented stays under 10^9, and a
+# duration in ms under 2*10^9 (about 23 days), so nothing here can wrap. Charge totals are only ever handled as
+# digit strings (see monitor-daemon.sh), so valid_duration keeps its 15 digits for them.
 valid_generation() {
   [ "$#" -eq 1 ] || return 1
   case "$1" in ''|*[!0-9]*) return 1 ;; esac
-  [ "${#1}" -le 10 ] || return 1
+  [ "${#1}" -le 9 ] || return 1
+}
+valid_ms() {
+  [ "$#" -eq 1 ] || return 1
+  case "$1" in ''|*[!0-9]*) return 1 ;; esac
+  case "$1" in ?????????|????????|???????|??????|?????|????|???|??|?|1?????????) return 0 ;; esac
+  return 1
 }
 
 monitor_enabled=1
@@ -89,18 +98,18 @@ load_cache() {
   valid_bool "$monitor_enabled" || monitor_enabled=1
   valid_generation "$generation" || generation=0
   valid_time "$reset_time" || reset_time=0
-  valid_duration "$cycle_id" || cycle_id=0
+  valid_generation "$cycle_id" || cycle_id=0
   case "$cycle_state" in discharging|charging|none) ;; *) cycle_state=none ;; esac
   case "$cycle_boot" in *[!0-9a-fA-F-]*) cycle_boot= ;; esac
   [ "${#cycle_boot}" -le 64 ] || cycle_boot=
   valid_duration "$active_charge" || active_charge=0
-  valid_duration "$active_ms" || active_ms=0
-  valid_duration "$active_unmeasured" || active_unmeasured=0
+  valid_ms "$active_ms" || active_ms=0
+  valid_ms "$active_unmeasured" || active_unmeasured=0
   valid_duration "$idle_charge" || idle_charge=0
-  valid_duration "$idle_ms" || idle_ms=0
-  valid_duration "$idle_unmeasured" || idle_unmeasured=0
-  valid_duration "$active_recent_ms" || active_recent_ms=0
-  valid_duration "$idle_recent_ms" || idle_recent_ms=0
+  valid_ms "$idle_ms" || idle_ms=0
+  valid_ms "$idle_unmeasured" || idle_unmeasured=0
+  valid_ms "$active_recent_ms" || active_recent_ms=0
+  valid_ms "$idle_recent_ms" || idle_recent_ms=0
   valid_bool "$active_prov" || active_prov=0
   valid_bool "$idle_prov" || idle_prov=0
   case "$active_recent_ua" in *[!0-9]*) active_recent_ua= ;; esac
@@ -248,8 +257,9 @@ case "$MODE" in
     for _pair in "$@"; do
       _k=${_pair%%=*}; _v=${_pair#*=}
       case "$_k" in
-        cycle_id|active_charge|active_ms|active_unmeasured|idle_charge|idle_ms|idle_unmeasured|active_recent_ms|idle_recent_ms)
-          valid_duration "$_v" || exit 2 ;;
+        cycle_id) valid_generation "$_v" || exit 2 ;;
+        active_ms|active_unmeasured|idle_ms|idle_unmeasured|active_recent_ms|idle_recent_ms) valid_ms "$_v" || exit 2 ;;
+        active_charge|idle_charge) valid_duration "$_v" || exit 2 ;;
         active_prov|idle_prov) valid_bool "$_v" || exit 2 ;;
         cycle_state) case "$_v" in discharging|charging|none) ;; *) exit 2 ;; esac ;;
         cycle_boot) case "$_v" in *[!0-9a-fA-F-]*) exit 2 ;; esac; [ "${#_v}" -le 64 ] || exit 2 ;;

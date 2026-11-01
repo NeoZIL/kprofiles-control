@@ -56,9 +56,23 @@ ctr=${rest%% *}; rest=${rest#* }
 online=${rest%% *}; cmd=
 case "$rest" in *" "*) cmd=${rest#* } ;; esac
 up=$(cat "$d/upms")
-case "$dt" in R*) up=${dt#R} ;; *) up=$((up + dt)) ;; esac
+# The fake uptime is kept as a decimal string and added to in seconds and milliseconds, so that it can pass
+# 2^31 ms (24.8 days) even when the shell running this has 32-bit arithmetic.
+case "$dt" in
+  R*) up=${dt#R} ;;
+  *)
+    us=0; um=$up
+    case "$up" in ???*) us=${up%???}; um=${up#"$us"} ;; esac
+    while :; do case "$um" in 0?*) um=${um#0} ;; *) break ;; esac; done
+    um=$((um + dt)); us=$((us + um / 1000)); um=$((um % 1000))
+    if [ "$us" -eq 0 ]; then up=$um; else um=000$um; up=$us${um#"${um%???}"}; fi
+    ;;
+esac
 printf '%s\n' "$up" > "$d/upms"
-printf '%d.%02d 1.00\n' $((up / 1000)) $(((up % 1000) / 10)) > "$d/uptime"
+us=0; um=$up
+case "$up" in ???*) us=${up%???}; um=${up#"$us"} ;; esac
+while :; do case "$um" in 0?*) um=${um#0} ;; *) break ;; esac; done
+printf '%s.%02d 1.00\n' "$us" $((um / 10)) > "$d/uptime"
 printf '%s\n' "$screen" > "$d/screen"
 b="$d/sys/class/power_supply/battery"
 printf '%s\n' "$(printf '%s' "$status" | tr _ ' ')" > "$b/status"
@@ -517,5 +531,256 @@ env MONITOR_DATE_CMD="$T/tools/date" MONITOR_SLEEP_CMD="$T/tools/sleep" MONITOR_
 check "ensure clears a stale start lock that sits behind an abandoned guard" 0 "$?"
 check "the abandoned start-lock guard is gone afterwards" no "$([ -e "$guard2_data/monitor-start.lock.reclaim" ] && echo yes || echo no)"
 check "the start lock is released after that ensure" no "$([ -e "$guard2_data/monitor-start.lock" ] && echo yes || echo no)"
+
+# ---------- 32-bit arithmetic ----------
+# Android's mksh does 32-bit $(( )) arithmetic (the CI mksh job does too), and charge is kept in uA*ms: one minute
+# at 300 mA is already 18,000,000,000. The helpers below do that arithmetic on digit strings; the expected values
+# were computed independently with arbitrary-precision integers. The scenarios afterwards run past 2^31 ms of uptime.
+echo '--- 32-bit-safe arithmetic helpers ---'
+cat > "$T/lib.sh" <<'LIBSH'
+_snip=$2; _dir=$1
+set -- lib "$_dir"
+. "$_dir/monitor-daemon.sh"
+eval "$_snip"
+LIBSH
+cat > "$T/bnrun.sh" <<'BNRUN'
+D=$1
+set -- lib "$D"
+. "$D/monitor-daemon.sh"
+n=0; bad=0
+while read -r fn a b c exp; do
+  n=$((n + 1)); BN=; BQ=; BR=
+  case "$fn" in
+    add) bn_add "$a" "$b"; got=$BN ;;
+    sub) bn_sub "$a" "$b"; got=$BN ;;
+    mul) bn_mul "$a" "$b"; got=$BN ;;
+    div) bn_div "$a" "$b"; got="$BQ $BR" ;;
+    muldiv) bn_muldiv "$a" "$b" "$c"; got=$BN ;;
+  esac
+  if [ "$got" != "$exp" ]; then bad=$((bad + 1)); echo "MISMATCH $fn $a $b $c: expected '$exp' got '$got'"; fi
+done
+echo "cases=$n bad=$bad"
+BNRUN
+cat > "$T/bn-vectors" <<'BNVEC'
+add 0 0 - 0
+add 999999999 1 - 1000000000
+add 1000000000 999999999 - 1999999999
+add 18000000000 144000000000 - 162000000000
+add 999999999999999 1 - 1000000000000000
+add 123456789012345 876543210987655 - 1000000000000000
+add 1999999998 1999999998 - 3999999996
+add 4294967296 4294967296 - 8589934592
+add 1 999999999999999 - 1000000000000000
+sub 1000000000 1 - 999999999
+sub 18000000000 17999999999 - 1
+sub 5 5 - 0
+sub 5 7 - 0
+sub 1000000000000 999999999999 - 1
+sub 999999999999999 1 - 999999999999998
+sub 2000000000000 1 - 1999999999999
+mul 300000 60000 - 18000000000
+mul 20000000 43000000 - 860000000000000
+mul 2147483647 2147483647 - 4611686014132420609
+mul 3600000 6000000 - 21600000000000
+mul 0 5 - 0
+mul 99999 99999 - 9999800001
+mul 46341 46341 - 2147488281
+mul 1 2147483647 - 2147483647
+mul 10000 10000 - 100000000
+mul 65536 65536 - 4294967296
+div 18000000000 60000 - 300000 0
+div 999999999999999 43000000 - 23255813 40999999
+div 0 7 - 0 0
+div 5 7 - 0 5
+div 123456789012 214748364 - 574 191228076
+div 1000000000 1 - 1000000000 0
+div 18000000000 2 - 9000000000 0
+div 129000000000000 43000000 - 3000000 0
+muldiv 18000000000 273000 300000 16380000000
+muldiv 129000000000000 300000 43000000 900000000000
+muldiv 20000000 30000 43000000 13953
+muldiv 1 1 1 1
+muldiv 0 5 7 0
+muldiv 999999999 999999999 200000000 4999999990
+muldiv 9000000000 1000 3000 3000000000
+muldiv 2147483647 43000000 43000000 2147483647
+add 5573806 2720 - 5576526
+sub 5573806 2720 - 5571086
+add 434182168837368 9807376352 - 434191976213720
+sub 434182168837368 9807376352 - 434172361461016
+add 50271 1312440764540 - 1312440814811
+sub 50271 1312440764540 - 0
+add 7726724908239 153 - 7726724908392
+sub 7726724908239 153 - 7726724908086
+add 181758223531 85806 - 181758309337
+sub 181758223531 85806 - 181758137725
+add 642616328707 1 - 642616328708
+sub 642616328707 1 - 642616328706
+add 582344976259 4728424 - 582349704683
+sub 582344976259 4728424 - 582340247835
+add 30381459755992 92 - 30381459756084
+sub 30381459755992 92 - 30381459755900
+add 767914 16777724 - 17545638
+sub 767914 16777724 - 0
+add 719355813 1 - 719355814
+sub 719355813 1 - 719355812
+add 18 56597974120 - 56597974138
+sub 18 56597974120 - 0
+add 41654 427 - 42081
+sub 41654 427 - 41227
+add 2481583515 962857 - 2482546372
+sub 2481583515 962857 - 2480620658
+add 52357 109 - 52466
+sub 52357 109 - 52248
+add 56236238717 10 - 56236238727
+sub 56236238717 10 - 56236238707
+add 31760529239 1 - 31760529240
+sub 31760529239 1 - 31760529238
+add 79 97738993 - 97739072
+sub 79 97738993 - 0
+add 7141463 799338122 - 806479585
+sub 7141463 799338122 - 0
+add 70750 0 - 70750
+sub 70750 0 - 70750
+add 44941459160 142 - 44941459302
+sub 44941459160 142 - 44941459018
+add 7270903180779 81970809002 - 7352873989781
+sub 7270903180779 81970809002 - 7188932371777
+add 449233058 3643863116 - 4093096174
+sub 449233058 3643863116 - 0
+add 3614 6093430 - 6097044
+sub 3614 6093430 - 0
+add 749298495939 865051995216 - 1614350491155
+sub 749298495939 865051995216 - 0
+add 11139077 74199605795 - 74210744872
+sub 11139077 74199605795 - 0
+mul 908524843 1068773906 - 971007645151146758
+mul 1189540540 1620263398 - 1927368997399154920
+mul 1399038672 1631282765 - 2282227673202088080
+mul 1265907684 1894256393 - 2397953723364823812
+mul 346058200 920481901 - 318540309792638200
+mul 705459859 918440489 - 647922897869831051
+mul 133247605 968715276 - 129078990453913980
+mul 775780837 2013415587 - 1561969229311706319
+mul 1034182480 276449527 - 285899257427686960
+mul 1018801075 666363787 - 678892142536671025
+mul 2116504029 1413345529 - 2991351506497636341
+mul 523832188 980857464 - 513804711483251232
+mul 1650151272 509022793 - 839964609345942696
+mul 1920870043 829093476 - 1592580820895139468
+mul 2138114335 1686851694 - 3606681787960433490
+mul 1531535567 1163889374 - 1782537972334365058
+mul 1519583776 128178404 - 194777823151973504
+mul 767003487 662495629 - 508136457565258323
+mul 657397679 760246559 - 499784323354336561
+mul 1766277876 308032716 - 544071371354991216
+mul 180089843 1511902345 - 272278255942381835
+mul 919620889 1714950099 - 1577103934633018011
+mul 1321858281 1219528991 - 1612044495672924471
+mul 651791159 1112334546 - 725009822933078814
+mul 1630851670 990432529 - 1615248543941973430
+div 39327755443758 8257534 - 4762651 2881124
+div 6084332380 41722095 - 145 34628605
+div 4208427515522 27056312 - 155543 7578106
+div 504519049 6548508 - 77 283933
+div 31277197 39872445 - 0 31277197
+div 925 32467796 - 0 925
+div 9449 31825525 - 0 9449
+div 63294056 16577948 - 3 13560212
+div 7642358140904 38201149 - 200055 27277709
+div 99668225202998 40971609 - 2432616 33603854
+div 10 35910041 - 0 10
+div 8364550 13115317 - 0 8364550
+div 652720639605836 21639183 - 30163830 2254946
+div 274229 11560130 - 0 274229
+div 893 14885833 - 0 893
+div 430116000 41305453 - 10 17061470
+div 10 9965374 - 0 10
+div 402723468 39603724 - 10 6686228
+div 4438 1814386 - 0 4438
+div 8 41746424 - 0 8
+div 421964479783 35268288 - 11964 14682151
+div 8 12496652 - 0 8
+div 5086267965 21967480 - 231 11780085
+div 172053228 4284360 - 40 678828
+div 283 24793324 - 0 283
+muldiv 92705813102441 2930234 32511312 8355544850063
+muldiv 43682882678028 562725 29457004 834485752692
+muldiv 76635388343737 2553856 7123500 27474660817573
+muldiv 72058265040077 14717536 21393048 49573118791902
+muldiv 52158391321187 1426425 12018100 6190665191696
+muldiv 24345838574554 11771431 26115236 10973875898249
+muldiv 12583886936987 5339703 17734363 3788927678377
+muldiv 43363344492588 121330 4379458 1201352904237
+muldiv 2211206830266 10849518 21004987 1142134880002
+muldiv 59648087019148 881503 13082398 4019138360691
+muldiv 38760877177997 7519177 7943765 36689138736684
+muldiv 56882059617087 18370675 35308178 29595461724366
+muldiv 94202602177142 22097757 32470238 64109977009658
+muldiv 38335595797024 35723987 41405091 33075650670352
+muldiv 3589788406668 10827226 38426098 1011485745213
+muldiv 27200255558107 17530905 18513505 25756608279463
+muldiv 35292964196868 9442547 21573373 15447536794466
+muldiv 13014978852935 9079692 19613256 6025108700521
+muldiv 80603629191363 2217335 4521964 39523810479922
+muldiv 77023987239553 5238376 20492777 19688918011452
+muldiv 13143603497754 391912 819521 6285544768238
+muldiv 93522673428308 20131363 27826506 67659909854141
+muldiv 31128441401158 14089790 30209273 14518495773454
+muldiv 41691511072504 850123 2542277 13941404680721
+muldiv 24356850695809 24784287 41006718 14721177590000
+BNVEC
+out=$(sh "$T/bnrun.sh" "$MOD" < "$T/bn-vectors")
+check "every big-number case matches the exact result" "cases=$(wc -l < "$T/bn-vectors" | tr -d ' ') bad=0" "$(printf '%s\n' "$out" | tail -n 1)"
+[ "$(printf '%s\n' "$out" | tail -n 1)" = "cases=$(wc -l < "$T/bn-vectors" | tr -d ' ') bad=0" ] || printf '%s\n' "$out" | head -n 8
+
+echo '--- clock origin and rebase ---'
+printf '3456000.50 1.00\n' > "$T/up1"
+out=$(MONITOR_UPTIME_FILE="$T/up1" sh "$T/lib.sh" "$MOD" 'now_ms; echo "$T_BASE $NOW"')
+check "a phone up for 40 days gives a small NOW (not 3,456,000,500)" "3456000 500" "$out"
+out=$(MONITOR_UPTIME_FILE="$T/up1" sh "$T/lib.sh" "$MOD" 'now_ms; printf "3456010.25 1.00\n" > "$MONITOR_UPTIME_FILE"; now_ms; echo "$T_BASE $NOW"')
+check "NOW counts from the first reading" "3456000 10250" "$out"
+out=$(MONITOR_UPTIME_FILE="$T/up1" sh "$T/lib.sh" "$MOD" 'now_ms; printf "100.00 1.00\n" > "$MONITOR_UPTIME_FILE"; now_ms; echo "$T_BASE $NOW"')
+check "a clock that goes backwards moves the origin and gives a small NOW" "100 0" "$out"
+out=$(MONITOR_UPTIME_FILE="$T/up1" sh "$T/lib.sh" "$MOD" 'now_ms; printf "9000000.00 1.00\n" > "$MONITOR_UPTIME_FILE"; now_ms; echo "$T_BASE $NOW"')
+check "a jump of more than 23 days moves the origin instead of overflowing" "9000000 0" "$out"
+printf '1234567890.00 1.00\n' > "$T/up2"
+out=$(MONITOR_UPTIME_FILE="$T/up2" sh "$T/lib.sh" "$MOD" 'now_ms && echo accepted || echo refused')
+check "an uptime of 10 digits of seconds is refused" refused "$out"
+out=$(sh "$T/lib.sh" "$MOD" 'T_BASE=100; NOW=1600000000; l_t=1599990000; pend_t=1599980000; last_persist=1599000000; last_ver_t=1599500000; rebase_clock; echo "$T_BASE $NOW $l_t $pend_t $last_persist $last_ver_t"')
+check "rebasing moves the origin and every stored time by the same amount" "1000100 600000000 599990000 599980000 599000000 599500000" "$out"
+out=$(sh "$T/lib.sh" "$MOD" 'T_BASE=100; NOW=1600000000; l_t=1599990000; pend_t=; last_persist=500; last_ver_t=300; rebase_clock; echo "$T_BASE $NOW $l_t [$last_persist] [$last_ver_t]"')
+check "stored times older than the shift are forgotten, not made negative" "1000100 600000000 599990000 [] []" "$out"
+out=$(sh "$T/lib.sh" "$MOD" 'T_BASE=100; NOW=1600000000; l_t=900000000; reset_memory_called=0; rebase_clock; echo "$T_BASE $NOW [$l_t]"')
+check "a sample anchor older than the shift restarts the measurement" "1000100 600000000 []" "$out"
+out=$(MONITOR_ROLL_MS=9999999999 MONITOR_SMOOTH_MS=999999999 MONITOR_PENDING_MS=0 MONITOR_MAX_GAP_MS=300000000 MONITOR_MAX_SANE_UA=12345678901 sh "$T/lib.sh" "$MOD" 'echo "$ROLL_MS $SMOOTH_MS $PENDING_MS $MAX_GAP_MS $MAX_SANE_UA"')
+check "tunables that could overflow fall back or are capped" "300000 10000 10000 43200000 20000000" "$out"
+out=$(sh "$T/lib.sh" "$MOD" 'A_ms=1; rep=x; b_cur=2147483650; b_ctr=; current_sample; echo "[$c_i]"')
+check "a 10-digit current reading is rejected before any arithmetic" "[]" "$out"
+
+echo '--- long uptimes and big totals ---'
+new_sc up40 on Discharging -300000 3000000 0
+printf '3456000000\n' > "$SC/up40/upms"; printf '3456000.00 1.00\n' > "$SC/up40/uptime"
+rep 60 '1000 on Discharging -300000 3000000 0' > "$SC/up40/scenario"
+sc_run up40 61
+out=$(cache_get up40)
+check "after 40 days of uptime the screen-on time is exact" 60000 "$(field "$out" active_ms)"
+check "after 40 days of uptime the charge is exact" 18000000000 "$(field "$out" active_charge)"
+new_sc cross on Discharging -300000 3000000 0
+printf '2147400000\n' > "$SC/cross/upms"; printf '2147400.00 1.00\n' > "$SC/cross/uptime"
+rep 120 '1000 on Discharging -300000 3000000 0' > "$SC/cross/scenario"
+sc_run cross 121
+out=$(cache_get cross)
+check "uptime crossing 2^31 ms mid-run: no time is lost" 120000 "$(field "$out" active_ms)"
+check "uptime crossing 2^31 ms mid-run: the charge is exact" 36000000000 "$(field "$out" active_charge)"
+new_sc longrun on Discharging -300000 3000000 0
+rep 40 '43000000 on Discharging -300000 3000000 0' > "$SC/longrun/scenario"
+sc_run longrun 41
+out=$(cache_get longrun)
+check "a 20-day run (40 gaps of almost 12 h, across the clock rebase): exact time" 1720000000 "$(field "$out" active_ms)"
+check "a 20-day run: charge of 15 digits is exact" 516000000000000 "$(field "$out" active_charge)"
+check "a 20-day run: the long gaps are marked provisional" 1 "$(field "$out" active_prov)"
+check "a 20-day run: the rolling window is still exactly 5 minutes" 300000 "$(field "$out" active_recent_ms)"
+check "a 20-day run: the recent average is the constant current" 300000 "$(field "$out" active_recent_ua)"
 
 [ "$fail" -eq 0 ] && echo "all monitor-daemon tests passed" || exit 1

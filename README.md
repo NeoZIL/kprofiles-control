@@ -285,7 +285,11 @@ Dynamic preset entries, a supported-kernel-only Kernel profiles accordion, and a
 control. v3.2.0 reorganized the WebUI into five locally navigated screens without changing the tuning
 engine. v3.2.1 and v3.5.0 polish the icons; v3.5.0 also changes how the phone's own limits are recorded
 (see CHANGELOG.md). v4.0.0 adds universal-interface, read-only live telemetry and mutually exclusive Module presets / Kernel profile control; it still needs on-device
-validation through the installed WebUI to confirm handoffs, performance and drain-rate behavior.
+validation through the installed WebUI to confirm handoffs, performance and drain-rate behavior. v4.1.0 rebuilt the battery monitor around measured charge; its first CI run failed in the mksh job because the
+collector's arithmetic did not fit in 32 bits, and v4.1.1 fixes that (the collector now keeps charge as digit
+strings; see CHANGELOG.md). v4.1.1 was checked off-device only: the suites under dash, plus the collector and
+cache suites under an emulation of mksh's 32-bit arithmetic. It has not been run on a phone: the sampling
+cadence, `current_now` freshness (`monitor-daemon.sh probe`) and the drain figures still need on-device validation.
 The page shows the engine's warning/error text and leaves only Reset everything available after a
 reported frequency restore/apply mismatch. This is a UI safeguard, not an engine fix, and it cannot detect a
 silent mismatch the engine does not report. Android or Xiaomi services may override some values.

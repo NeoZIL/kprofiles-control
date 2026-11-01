@@ -180,4 +180,28 @@ MONITOR_CACHE_FILE="$gd/cache3" sh "$CACHE" set-cycle 0 cycle_id=60 >/dev/null 2
 rm -rf "$gd"
 
 
+# ---------- values that must fit 32-bit arithmetic (Android's mksh) ----------
+echo '--- bounded durations and counters ---'
+rm -f "$T/cache"
+run set-cycle 0 active_ms=1999999999 idle_ms=1999999999 >/dev/null; check "a duration just under 2*10^9 ms is accepted" 0 "$?"
+check "...and stored as given" 1999999999 "$(field "$(run get)" active_ms)"
+rm -f "$T/cache"; run set-cycle 0 active_ms=2000000000 >/dev/null 2>&1; check "a duration of 2*10^9 ms or more is refused" 2 "$?"
+run set-cycle 0 idle_unmeasured=99999999999999 >/dev/null 2>&1; check "a 14-digit unmeasured time is refused" 2 "$?"
+run set-cycle 0 active_recent_ms=12345678901 >/dev/null 2>&1; check "an 11-digit recent time is refused" 2 "$?"
+run set-cycle 0 cycle_id=1234567890 >/dev/null 2>&1; check "a 10-digit cycle number is refused" 2 "$?"
+run set-cycle 0 cycle_id=999999999 >/dev/null; check "a 9-digit cycle number is accepted" 0 "$?"
+run set-cycle 0 active_charge=999999999999999 idle_charge=123456789012345 >/dev/null; check "a 15-digit charge is still accepted (charge is handled as a digit string)" 0 "$?"
+check "...and kept exactly" "999999999999999|123456789012345" "$(field "$(run get)" active_charge)|$(field "$(run get)" idle_charge)"
+run set-cycle 0 active_charge=1234567890123456 >/dev/null 2>&1; check "a 16-digit charge is refused" 2 "$?"
+printf 'generation=1234567890\ncycle_id=1234567890\nactive_ms=99999999999\nactive_unmeasured=5\nidle_ms=7000\nidle_unmeasured=9000\nactive_recent_ms=12345678901\nactive_charge=77\n' > "$T/cache"
+out=$(run get)
+check "a stored generation of 10 digits is not trusted" 0 "$(field "$out" generation)"
+check "a stored cycle number of 10 digits is not trusted" 0 "$(field "$out" cycle_id)"
+check "a stored 11-digit duration is not trusted" 0 "$(field "$out" active_ms)"
+check "unmeasured time never exceeds its total after that" 0 "$(field "$out" active_unmeasured)"
+check "a valid unmeasured time above its total is clamped to the total" 7000 "$(field "$out" idle_unmeasured)"
+check "a stored 11-digit recent time is not trusted" 0 "$(field "$out" active_recent_ms)"
+check "valid charge next to invalid values survives" 77 "$(field "$out" active_charge)"
+rm -f "$T/cache"
+
 [ "$fail" -eq 0 ] && echo "all monitor-cache tests passed" || exit 1
