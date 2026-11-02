@@ -5,8 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Kprofiles Control</title>
 <style>
-:root{color-scheme:light dark;--bg:#f2f5f9;--surface:#fff;--surface-2:#f6f8fb;--text:#17202c;--muted:#647184;--line:#dfe5ed;--accent:#1677f9;--accent-soft:#e8f1ff;--ok:#13834f;--warn:#a56608;--err:#bd332a;--danger:#c72c2c;--danger-soft:#fff0ef;--icon-blue:#1677f9;--icon-orange:#c77417;--icon-green:#13834f;--icon-purple:#7856c8;--icon-cyan:#1686a5;--icon-neutral:#647184;--shadow:0 2px 10px rgba(20,42,72,.04)}
-@media(prefers-color-scheme:dark){:root{--bg:#0b1017;--surface:#131b26;--surface-2:#192332;--text:#eef3fa;--muted:#a0aec0;--line:#283648;--accent:#4a9bff;--accent-soft:#182f4e;--ok:#53d69a;--warn:#f1bb5c;--err:#ff938c;--danger:#f04d4d;--danger-soft:#351d22;--icon-blue:#65aaff;--icon-orange:#ffad5c;--icon-green:#53d69a;--icon-purple:#b39aff;--icon-cyan:#5dd4f3;--icon-neutral:#a0aec0;--shadow:none}}
+:root{color-scheme:light dark;--bg:#f2f5f9;--surface:#fff;--surface-2:#f6f8fb;--text:#17202c;--muted:#647184;--line:#dfe5ed;--accent:#1677f9;--accent-soft:#e8f1ff;--ok:#13834f;--warn:#a56608;--err:#bd332a;--danger:#c72c2c;--danger-soft:#fff0ef;--icon-blue:#1677f9;--icon-orange:#c77417;--icon-green:#13834f;--icon-purple:#7856c8;--icon-cyan:#1686a5;--icon-neutral:#647184;--shadow:0 2px 10px rgba(20,42,72,.04);--pill-warn-bg:#fff0c2;--pill-warn-fg:#8a5500;--pill-ok-bg:#dcf4e6;--pill-ok-fg:#0d6b3e}
+@media(prefers-color-scheme:dark){:root{--bg:#0b1017;--surface:#131b26;--surface-2:#192332;--text:#eef3fa;--muted:#a0aec0;--line:#283648;--accent:#4a9bff;--accent-soft:#182f4e;--ok:#53d69a;--warn:#f1bb5c;--err:#ff938c;--danger:#f04d4d;--danger-soft:#351d22;--icon-blue:#65aaff;--icon-orange:#ffad5c;--icon-green:#53d69a;--icon-purple:#b39aff;--icon-cyan:#5dd4f3;--icon-neutral:#a0aec0;--shadow:none;--pill-warn-bg:#3d3010;--pill-warn-fg:#f5c862;--pill-ok-bg:#0e3a27;--pill-ok-fg:#5fe0a5}}
 *{box-sizing:border-box}html,body{margin:0;min-height:100%;background:var(--bg);color:var(--text);font:15px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-text-size-adjust:100%}body{overscroll-behavior-y:contain}button,input,select{font:inherit}button{touch-action:manipulation}.topbar{position:sticky;top:0;z-index:20;background:var(--bg);border-bottom:1px solid var(--line)}.topbar-inner{max-width:720px;margin:0 auto;padding:12px 16px;display:flex;align-items:center;gap:11px}.brand-mark{width:40px;height:40px;flex:none;display:grid;place-items:center;border-radius:13px;color:white;background:var(--accent)}.brand-mark svg{width:23px;height:23px}.brand-copy{min-width:0;flex:1}.brand-copy h1{font-size:1.08rem;line-height:1.2;letter-spacing:-.025em;margin:0;font-weight:750}.version{display:block;color:var(--muted);font-size:.73rem;margin-top:3px}.icon-button{width:40px;height:40px;display:grid;place-items:center;flex:none;border:1px solid var(--line);border-radius:13px;color:var(--text);background:var(--surface);cursor:pointer}.icon-button svg{width:19px;height:19px}main{max-width:720px;margin:0 auto;padding:16px 16px calc(124px + env(safe-area-inset-bottom))}.page{display:none;min-height:48vh}.page.active{display:block;animation:page-in .14s ease-out}@keyframes page-in{from{opacity:.7;transform:translateY(3px)}to{opacity:1;transform:translateY(0)}}.page-heading{margin:4px 2px 16px}.page-heading h2{font-size:1.38rem;letter-spacing:-.035em;line-height:1.2;margin:0 0 5px}.page-heading p{margin:0;color:var(--muted);font-size:.88rem}.section-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:22px 2px 10px}.section-heading h3{font-size:.98rem;font-weight:750;margin:0;letter-spacing:-.015em}.text-link{padding:5px 0;border:0;background:transparent;color:var(--accent);font-weight:650;font-size:.84rem;cursor:pointer}.card{background:var(--surface);border:1px solid var(--line);border-radius:17px;padding:15px;margin:0 0 13px;box-shadow:var(--shadow)}.card h2,.card h3{font-size:.96rem;letter-spacing:-.01em;margin:0 0 10px;font-weight:740}.hint{color:var(--muted);font-size:.82rem;margin:0 0 10px}.hero-card{background:var(--accent-soft);border:1px solid var(--line);border-radius:20px;padding:17px;margin-bottom:15px}.hero-head{display:flex;align-items:flex-start;gap:13px}.hero-symbol{width:48px;height:48px;flex:none;display:grid;place-items:center;border-radius:16px;background:var(--accent);color:white}.hero-symbol svg{width:25px;height:25px}.eyebrow{font-size:.68rem;letter-spacing:.09em;font-weight:800;color:var(--accent);text-transform:uppercase;margin:0 0 4px}.hero-copy{flex:1;min-width:0}.hero-copy h2{font-size:1.35rem;line-height:1.15;letter-spacing:-.03em;margin:0 0 5px;font-weight:780}.hero-copy p{font-size:.83rem;color:var(--muted);margin:0;max-width:400px}.status-pill{display:inline-flex;align-items:center;gap:5px;padding:4px 9px;border-radius:999px;font-size:.72rem;font-weight:750;background:var(--surface);color:var(--muted);white-space:nowrap}.status-pill.ok{color:var(--ok)}.status-pill.warn{color:var(--warn)}.status-pill.err{color:var(--err)}.stat-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}.stat-card{min-width:0;background:var(--surface);border:1px solid var(--line);border-radius:15px;padding:12px}.stat-label{display:flex;align-items:center;gap:7px;font-size:.76rem;color:var(--muted);font-weight:650;margin-bottom:8px}.stat-label .mini-icon{display:grid;place-items:center;width:25px;height:25px;border-radius:8px;background:var(--accent-soft);color:var(--accent);font-size:.9rem}.stat-value{font-size:.91rem;font-weight:760;letter-spacing:-.015em;overflow-wrap:anywhere;font-variant-numeric:tabular-nums}.stat-sub{font-size:.72rem;color:var(--muted);margin-top:3px}.quick-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}.quick-card{min-height:66px;display:flex;align-items:center;gap:10px;padding:12px;text-align:left;border:1px solid var(--line);border-radius:14px;background:var(--surface);color:var(--text);cursor:pointer}.quick-card:active,.icon-button:active,.nav-btn:active{opacity:.78}.quick-icon{width:34px;height:34px;display:grid;place-items:center;flex:none;border-radius:11px;background:var(--accent-soft);color:var(--accent);font-size:1rem}.quick-copy{font-size:.84rem;font-weight:700;line-height:1.25}.quick-copy small{display:block;font-size:.72rem;font-weight:450;color:var(--muted);margin-top:3px}
 .control-source-card .source-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}.control-source-card .source-choice{min-height:72px}.control-source-card .source-choice[aria-pressed="true"]{border-color:var(--accent);background:var(--accent-soft)}.control-source-card .source-choice[aria-pressed="true"] .t{color:var(--accent)}.control-source-card .source-choice:disabled{opacity:.5}.control-source-status{margin:0 0 10px}.control-source-conflict{border-left-color:var(--warn)}
 .opts{display:grid;gap:9px}.profile-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.opt{display:block;width:100%;min-width:0;text-align:left;color:var(--text);background:var(--surface);border:1px solid var(--line);border-radius:13px;padding:11px 12px;cursor:pointer;transition:border-color .12s,background-color .12s}.opt .t{display:flex;align-items:flex-start;font-weight:720;line-height:1.3}.opt .d{display:block;margin-top:4px;color:var(--muted);font-size:.76rem;line-height:1.35;font-weight:450}.opt[aria-checked="true"]{border-color:var(--accent);background:var(--accent-soft)}.profile-grid .opt{min-height:91px;padding:12px}.profile-grid .opt[aria-checked="true"] .t{color:var(--accent)}.opt:active{transform:scale(.995)}.opt:disabled,select:disabled,.sw input:disabled,.quick-card:disabled{opacity:.55;cursor:not-allowed}.danger-opt{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:58px;padding:13px 14px;border-color:var(--line);background:var(--surface);color:var(--text);font-weight:750}.danger-opt .danger-leading{display:flex;align-items:center;gap:10px;min-width:0}.danger-opt .reset-icon{width:19px;height:19px;flex:none;color:var(--danger);stroke:currentColor;fill:none;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}.danger-opt .t{font-size:.91rem;color:var(--danger)}.danger-opt .danger-chevron{font-size:1.15rem;line-height:1;color:var(--muted);padding-left:6px}.danger-opt:active{background:var(--surface-2)}.item-icon{width:18px;height:18px;display:block;flex:none;margin-right:7px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}#presets [data-preset="stock"] .item-icon,#kpopts [data-kp="0"] .item-icon{color:var(--icon-neutral)}#presets [data-preset="tilt"] .item-icon{color:var(--icon-orange)}#presets [data-preset="saver"] .item-icon,#kpopts [data-kp="1"] .item-icon{color:var(--icon-green)}#presets [data-preset="performance"] .item-icon{color:var(--icon-blue)}#presets [data-preset="dynamic"] .item-icon{color:var(--icon-purple)}#presets [data-preset="custom"] .item-icon{color:var(--icon-cyan)}#kpopts [data-kp="3"] .item-icon{color:var(--icon-purple)}.mini-icon svg{width:15px;height:15px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}.stat-label .tone-blue{color:var(--icon-blue)}.stat-label .tone-purple{color:var(--icon-purple)}.stat-label .tone-orange{color:var(--icon-orange)}.stat-label .tone-green{color:var(--icon-green)}.quick-icon svg{width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}#homeProfiles .quick-icon{color:var(--icon-blue)}#homeKernel .quick-icon{color:var(--icon-purple)}#homeSettings .quick-icon{color:var(--icon-neutral)}.row{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:8px 0;border-bottom:1px solid var(--line)}.row:last-child{border-bottom:0}.row .k{color:var(--muted);font-size:.84rem}.badge{padding:4px 9px;border-radius:999px;background:var(--accent-soft);font-weight:700;font-size:.8rem;max-width:60%;text-align:right;overflow-wrap:anywhere}.live{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.2fr);gap:0 12px;font-size:.83rem}.live>div{padding:8px 0;border-bottom:1px solid var(--line)}.live>div:nth-last-child(-n+2){border-bottom:0}.live .v{text-align:right;font-variant-numeric:tabular-nums;overflow-wrap:anywhere;font-weight:650}.sw{display:flex;align-items:center;gap:13px;padding:12px 0}.sw+.sw{border-top:1px solid var(--line)}.sw .txt{flex:1;min-width:0}.sw .t{font-weight:700;display:block;font-size:.88rem}.sw .d{color:var(--muted);font-size:.77rem;display:block;margin-top:3px}.sw input{appearance:none;-webkit-appearance:none;flex:none;width:44px;height:27px;border-radius:999px;background:var(--line);position:relative;margin:0;cursor:pointer;transition:background .12s}.sw input::after{content:"";position:absolute;top:3px;left:3px;width:21px;height:21px;border-radius:50%;background:#fff;transition:transform .12s}.sw input:checked{background:var(--accent)}.sw input:checked::after{transform:translateX(17px)}.sw input:disabled{opacity:.55}.grid{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr) minmax(0,1fr);gap:9px 8px;align-items:center}.grid .hd{color:var(--muted);font-size:.75rem;font-weight:700}.grid .lab{font-size:.82rem;line-height:1.25}.grid .lab small{display:block;color:var(--muted);font-size:.69rem;margin-top:3px}.grid select{font-size:.79rem}.grid select:first-of-type{}.select-row{padding-top:4px}select{width:100%;min-width:0;color:var(--text);background:var(--surface-2);border:1px solid var(--line);border-radius:10px;padding:8px 5px;font:inherit;font-size:.84rem;min-height:38px}.warnbox{border:1px solid var(--line);border-left:4px solid var(--warn);border-radius:12px;padding:10px 12px;margin:0 0 10px;font-size:.82rem;color:var(--muted);background:var(--surface-2)}.kernel-unavailable{border-left-color:var(--err)}.kernel-toggle{margin:0 0 10px;display:flex;align-items:center;justify-content:space-between;gap:12px}.kernel-toggle:after{content:"⌄";font-size:1.2rem;color:var(--muted);flex:none}.kernel-toggle[aria-expanded="true"]:after{content:"⌃"}.kernel-panel{margin-top:12px}.kernel-panel .opts{gap:8px}.kernel-panel .opt{min-height:67px}#msg{min-height:0;white-space:pre-line;font-size:.84rem;margin:0 0 12px;padding:0 2px}#msg:not(:empty){min-height:1.3em}#msg.ok{color:var(--ok)}#msg.warn{color:var(--warn)}#msg.err{color:var(--err)}.retry{display:none;width:100%;margin:0 0 12px;font:inherit;font-weight:700;color:var(--text);background:var(--surface);border:1px solid var(--line);border-radius:13px;padding:11px 12px;cursor:pointer}.note{color:var(--muted);font-size:.78rem;margin:10px 2px}.info-list{list-style:none;padding:0;margin:0}.info-list li{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;padding:10px 0;border-bottom:1px solid var(--line);font-size:.83rem}.info-list li:last-child{border-bottom:0}.info-list .k{color:var(--muted)}.info-list .v{text-align:right;font-weight:650;overflow-wrap:anywhere}.bottom-nav{position:fixed;left:0;right:0;bottom:0;z-index:30;padding:0 12px calc(10px + env(safe-area-inset-bottom));background:linear-gradient(to top,var(--bg) 48%,transparent);border:0;pointer-events:none}.bottom-nav-inner{max-width:680px;margin:0 auto;display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:4px;padding:6px;border:1px solid var(--line);border-radius:23px;background:var(--surface);box-shadow:0 10px 34px rgba(0,0,0,.22);pointer-events:auto}.nav-btn{position:relative;min-width:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;min-height:58px;padding:6px 2px;border:1px solid transparent;border-radius:16px;background:transparent;color:var(--muted);font-size:.67rem;font-weight:680;letter-spacing:-.01em;cursor:pointer;transition:background-color .16s ease,color .16s ease,transform .16s ease}.nav-icon{width:25px;height:24px;display:grid;place-items:center;transition:transform .16s ease}.nav-icon svg{width:21px;height:21px;stroke:currentColor;fill:none;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}.nav-btn[aria-current="page"]{color:var(--ok);background:var(--accent-soft);border-color:var(--line)}.nav-btn[aria-current="page"]::before{content:"";position:absolute;top:4px;width:17px;height:3px;border-radius:999px;background:var(--ok)}.nav-btn[aria-current="page"] .nav-icon{transform:translateY(1px)}.nav-btn:focus-visible{outline:2px solid var(--accent);outline-offset:2px}.muted-value{color:var(--muted)}@supports (backdrop-filter:blur(10px)){.bottom-nav-inner{background:color-mix(in srgb,var(--surface) 91%,transparent);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px)}}
@@ -66,6 +66,15 @@
 .hw-hardware-grid .hw-status-card .row{gap:10px;min-width:0}
 .hw-hardware-grid .hw-status-card .row>*{min-width:0}
 @media(max-width:360px){.hw-hardware-grid .hw-status-card{grid-column:1/-1}}
+/* Loading / Live capsule and small loading indicators (UI only) */
+@keyframes kp-pulse{0%,100%{opacity:.35}50%{opacity:1}}
+.live-pill{display:inline-flex;align-items:center;gap:6px;padding:3px 10px 3px 8px;border-radius:999px;font-size:.72rem;font-weight:750;line-height:1.25;white-space:nowrap;background:var(--pill-warn-bg);color:var(--pill-warn-fg)}
+.live-pill::before{content:"";width:7px;height:7px;flex:none;border-radius:50%;background:currentColor}
+.live-pill.is-loading::before{animation:kp-pulse 1.1s ease-in-out infinite}
+.live-pill.is-live{background:var(--pill-ok-bg);color:var(--pill-ok-fg)}
+.status-pill.loading{background:var(--pill-warn-bg);color:var(--pill-warn-fg)}
+.kp-loading{color:var(--muted);font-weight:600}
+.kp-loading::before{content:"";display:inline-block;width:6px;height:6px;margin-right:6px;vertical-align:middle;border-radius:50%;background:currentColor;animation:kp-pulse 1.1s ease-in-out infinite}
 </style>
 </head>
 <body>
@@ -84,8 +93,8 @@
     <div class="hero-card">
       <div class="hero-head">
         <div class="hero-symbol" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 19 7v10l-7 4-7-4V7z"/><path d="M8 12h8M12 8v8"/></svg></div>
-        <div class="hero-copy"><p class="eyebrow" id="homeProfileEyebrow">Current profile</p><h2 id="homePreset">Loading status…</h2><p id="homePresetHint">Reading your phone’s current settings.</p></div>
-        <span class="status-pill" id="homeActiveBadge">Loading</span>
+        <div class="hero-copy"><p class="eyebrow" id="homeProfileEyebrow">Current profile</p><h2 id="homePreset" class="kp-loading">Loading status…</h2><p id="homePresetHint">Reading your phone’s current settings.</p></div>
+        <span class="status-pill loading" id="homeActiveBadge">Loading</span>
       </div>
     </div>
     <section class="card control-source-card" id="controlSourceCard" aria-label="Control source" style="display:none">
@@ -168,7 +177,7 @@
 
   <section class="page active" id="pageMonitor" aria-label="Monitor">
     <div class="page-heading"><h2>Monitor</h2></div>
-    <div class="section-heading hw-monitor-heading"><h3>Live Hardware Monitor</h3><span class="hw-refresh-line"><span class="hw-dot off" id="hwLiveDot" aria-hidden="true"></span><span class="hw-updated" id="hwLiveState" role="status" aria-live="polite">Open Monitor to sample</span></span></div>
+    <div class="section-heading hw-monitor-heading"><h3>Live Hardware Monitor</h3><span class="hw-refresh-line" role="status" aria-live="polite"><span class="live-pill is-loading" id="hwLivePill">Loading</span><span class="hw-updated" id="hwLiveState"></span></span></div>
     <section class="card hw-card" id="hwBatteryCard" aria-label="Live battery readings">
       <div class="hw-head"><h3>Battery</h3><span class="hw-pill hw-pill-muted" id="hwBatteryStatus">Unavailable</span></div>
       <div class="hw-battery-level"><div class="hw-label" id="hwBatteryLevelLabel">Battery level</div><div class="hw-battery-percent" id="hwBatteryLevel">Unavailable</div></div>
@@ -180,14 +189,14 @@
         <div class="hw-metric"><div class="hw-label">Voltage</div><div class="hw-value" id="hwBatteryVoltage">Unavailable</div></div>
       </div>
       <div class="hw-drain-grid">
-        <div class="hw-drain-metric"><div class="hw-label">Active drain · avg current, screen ON</div><div class="hw-value" id="hwBatteryActiveDrain">Loading…</div><div class="hw-battery-sub" id="hwBatteryActiveSub">Reading saved monitor data…</div></div>
-        <div class="hw-drain-metric"><div class="hw-label">Idle drain · avg current, screen OFF</div><div class="hw-value" id="hwBatteryIdleDrain">Loading…</div><div class="hw-battery-sub" id="hwBatteryIdleSub">Reading saved monitor data…</div></div>
-        <div class="hw-drain-metric hw-sot-card"><div class="hw-label">Screen-on time (SOT)</div><div class="hw-value" id="hwBatteryScreenOnTime">Loading…</div><div class="hw-battery-sub" id="hwBatteryScreenOnSub">This discharge cycle</div><div class="hw-sot-reset-row"><button type="button" class="hw-sot-reset" id="hwResetSotMini" aria-label="Reset screen-on time"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg><span>Reset</span></button></div></div>
-        <div class="hw-drain-metric"><div class="hw-label">Screen-off time</div><div class="hw-value" id="hwBatteryScreenOffTime">Loading…</div><div class="hw-battery-sub" id="hwBatteryScreenOffSub">Confirmed (10 s or longer), this cycle</div></div>
+        <div class="hw-drain-metric"><div class="hw-label">Active drain · avg current, screen ON</div><div class="hw-value kp-loading" id="hwBatteryActiveDrain">Loading…</div><div class="hw-battery-sub" id="hwBatteryActiveSub">Reading saved monitor data…</div></div>
+        <div class="hw-drain-metric"><div class="hw-label">Idle drain · avg current, screen OFF</div><div class="hw-value kp-loading" id="hwBatteryIdleDrain">Loading…</div><div class="hw-battery-sub" id="hwBatteryIdleSub">Reading saved monitor data…</div></div>
+        <div class="hw-drain-metric hw-sot-card"><div class="hw-label">Screen-on time (SOT)</div><div class="hw-value kp-loading" id="hwBatteryScreenOnTime">Loading…</div><div class="hw-battery-sub" id="hwBatteryScreenOnSub">This discharge cycle</div><div class="hw-sot-reset-row"><button type="button" class="hw-sot-reset" id="hwResetSotMini" aria-label="Reset screen-on time"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg><span>Reset</span></button></div></div>
+        <div class="hw-drain-metric"><div class="hw-label">Screen-off time</div><div class="hw-value kp-loading" id="hwBatteryScreenOffTime">Loading…</div><div class="hw-battery-sub" id="hwBatteryScreenOffSub">Confirmed (10 s or longer), this cycle</div></div>
       </div>
     </section>
     <div class="hw-hardware-grid">
-    <div id="hwCpuCards" class="hw-stack"><section class="card hw-card"><p class="hw-error" id="hwCpuLoading">Waiting for hardware readings…</p></section></div>
+    <div id="hwCpuCards" class="hw-stack"><section class="card hw-card"><p class="hw-error kp-loading" id="hwCpuLoading">Loading hardware readings…</p></section></div>
     <section class="card hw-card" id="hwGpuCard" aria-label="Live GPU readings">
       <div class="hw-head"><h3>GPU</h3><span class="hw-pill hw-pill-muted" id="hwGpuStatus">Unavailable</span></div>
       <div class="hw-metrics hw-metrics-two">
@@ -285,6 +294,45 @@
   var HW_SAMPLE_INTERVAL_MS = 5000;
   var HW_PRELIMINARY_MS = 300000; /* below 5 minutes of eligible time an average is only preliminary */
   var hwMonitorPrefs = { enabled: true };
+  var hwCacheFromSnapshot = false; /* the drain figures on screen come from the saved snapshot, not yet from a fresh read */
+
+  /* ---------- last-known-data snapshot ----------
+     Display only. The last good readings are kept in this page's own localStorage and drawn straight away at
+     start-up, while the real reads run in the background and replace them. A snapshot never sets statusReady,
+     never enables a control and never feeds a command; it is ignored when older than 24 hours or malformed. */
+  var SNAPSHOT_KEY = "kprofiles-ui-snapshot-v1", SNAPSHOT_MAX_AGE_MS = 86400000, SNAPSHOT_SAVE_MS = 15000;
+  var SNAPSHOT_PARTS = ["monitor", "cache", "tune", "kp", "ctl", "ver"], SNAPSHOT_MAX_PART = 100000;
+  var snapshotText = {}, snapshotAt = {}, snapshotSavedAt = 0, snapshotDirty = false;
+  function snapshotFlush() {
+    snapshotDirty = false;
+    snapshotSavedAt = Date.now();
+    try { window.localStorage.setItem(SNAPSHOT_KEY, JSON.stringify({ v: 1, text: snapshotText, at: snapshotAt })); }
+    catch (e) { /* Storage may be unavailable or full: the page simply starts empty next time. */ }
+  }
+  function snapshotPut(parts, force) {
+    var now = Date.now();
+    Object.keys(parts).forEach(function (k) {
+      var t = parts[k];
+      if (typeof t !== "string" || t === "" || t.length > SNAPSHOT_MAX_PART) return;
+      snapshotText[k] = t; snapshotAt[k] = now; snapshotDirty = true;
+    });
+    if (snapshotDirty && (force || now - snapshotSavedAt >= SNAPSHOT_SAVE_MS)) snapshotFlush();
+  }
+  function snapshotLoad() {
+    var out = {}, any = false;
+    try {
+      var o = JSON.parse(window.localStorage.getItem(SNAPSHOT_KEY) || "null");
+      if (!o || o.v !== 1 || !o.text || !o.at) return null;
+      var now = Date.now();
+      SNAPSHOT_PARTS.forEach(function (k) {
+        var t = o.text[k], at = o.at[k];
+        if (typeof t === "string" && t !== "" && t.length <= SNAPSHOT_MAX_PART && typeof at === "number" && now - at >= 0 && now - at <= SNAPSHOT_MAX_AGE_MS) {
+          out[k] = t; snapshotText[k] = t; snapshotAt[k] = at; any = true;
+        } else out[k] = "";
+      });
+    } catch (e) { return null; }
+    return any ? out : null;
+  }
   function showPage(key) {
     var valid = false;
     for (var i = 0; i < PAGE_ITEMS.length; i++) if (PAGE_ITEMS[i].key === key) valid = true;
@@ -351,6 +399,7 @@
       var profileTitle = $("homePreset");
       var profileHint = $("homePresetHint");
       var activeBadge = $("homeActiveBadge");
+      if (profileTitle) profileTitle.className = "";
       if (controllerSource === "kernel") {
         if (eyebrow) eyebrow.textContent = "Kernel profile";
         if (kernelSupport === "supported" && kp && /^(0|1|2|3)$/.test(String(kp.mode || ""))) {
@@ -623,6 +672,22 @@
   function K(a) { return exec("sh " + BASE + "kp.sh " + a); }
   function C(a) { return exec("sh " + BASE + "control.sh " + a); }
 
+  /* Two states only: yellow "Loading" until live readings arrive, green "Live" while they do. There is no stale state. */
+  function hwSetLive(isLive, detail) {
+    var pill = $("hwLivePill");
+    if (pill) {
+      hwClass(pill, "live-pill " + (isLive ? "is-live" : "is-loading"));
+      hwSet("hwLivePill", isLive ? "Live" : "Loading");
+    }
+    hwSet("hwLiveState", detail || "");
+  }
+  function hwLoadingMark(id, on) {
+    var el = $(id);
+    if (!el) return;
+    var has = (" " + el.className + " ").indexOf(" kp-loading ") >= 0;
+    if (on === has) return;
+    el.className = on ? el.className + " kp-loading" : el.className.replace(/(^| )kp-loading( |$)/g, " ").replace(/^ +| +$/g, "");
+  }
   function hwSet(id, value) {
     var el = $(id);
     if (el && el.textContent !== String(value)) el.textContent = String(value);
@@ -970,19 +1035,26 @@
     hwSet(subId, parts.length ? parts.join(" \u00b7 ") : "Current discharge cycle");
   }
   function hwRenderSavedDrainRates() {
+    var drainIds = ["hwBatteryActiveDrain", "hwBatteryIdleDrain", "hwBatteryScreenOnTime", "hwBatteryScreenOffTime"];
     if (!hwDiskCacheLoaded) {
       var cacheLabel = hwDiskCacheReadFailed ? "Unavailable" : "Loading\u2026";
-      ["hwBatteryActiveDrain", "hwBatteryIdleDrain", "hwBatteryScreenOnTime", "hwBatteryScreenOffTime"].forEach(function (id) { hwSet(id, cacheLabel); });
+      drainIds.forEach(function (id) { hwSet(id, cacheLabel); hwLoadingMark(id, !hwDiskCacheReadFailed); });
       ["hwBatteryActiveSub", "hwBatteryIdleSub"].forEach(function (id) {
         hwSet(id, hwDiskCacheReadFailed ? "Saved monitor data could not be read; retrying" : "Reading saved monitor data\u2026");
       });
       return;
     }
+    drainIds.forEach(function (id) { hwLoadingMark(id, false); });
     var cycle = hwCycle;
     hwRenderDrain("hwBatteryActiveDrain", "hwBatteryActiveSub", cycle.active, cycle.enabled ? "Needs screen-on time" : "Monitoring is off");
     hwRenderDrain("hwBatteryIdleDrain", "hwBatteryIdleSub", cycle.idle, cycle.enabled ? "Needs 10 s of confirmed screen-off" : "Monitoring is off");
     hwSet("hwBatteryScreenOnTime", hwFormatDuration(cycle.active.ms));
     hwSet("hwBatteryScreenOffTime", hwFormatDuration(cycle.idle.ms));
+    if (hwCacheFromSnapshot) {
+      /* Saved figures are shown at once and say so until the fresh read replaces them. */
+      var note = hwDiskCacheReadFailed ? "Last saved reading" : "Updating\u2026";
+      ["hwBatteryActiveSub", "hwBatteryIdleSub"].forEach(function (id) { var el = $(id); if (el) hwSet(id, el.textContent + " \u00b7 " + note); });
+    }
   }
   function hwApplyMonitorSettings(enabled) {
     hwMonitorPrefs.enabled = enabled;
@@ -1001,18 +1073,20 @@
       if (resetEpoch !== hwDataResetEpoch) return;
       if (r.errno !== 0) {
         hwDiskCacheReadFailed = true;
-        if (!hwDiskCacheLoaded) hwRenderSavedDrainRates();
+        if (!hwDiskCacheLoaded || hwCacheFromSnapshot) hwRenderSavedDrainRates();
         return;
       }
       hwDiskCacheLoaded = true;
       hwDiskCacheReadFailed = false;
+      hwCacheFromSnapshot = false;
+      snapshotPut({ cache: r.stdout }, false);
       hwCycle = hwParseCycle(kv(r.stdout || ""));
       hwApplyMonitorSettings(hwCycle.enabled);
       hwLastCacheReadAt = Date.now();
       hwRenderSavedDrainRates();
     }).catch(function () {
       hwDiskCacheReadFailed = true;
-      if (!hwDiskCacheLoaded) hwRenderSavedDrainRates();
+      if (!hwDiskCacheLoaded || hwCacheFromSnapshot) hwRenderSavedDrainRates();
     }).then(function () {
       hwCacheInFlight = false;
     });
@@ -1103,22 +1177,18 @@
     hwDaemonEnsureInFlight = true;
     var modDir = BASE.replace(/\/+$/, "");
     exec('sh "' + modDir + '/monitor-daemon.sh" ensure "' + modDir + '"').then(function (r) {
-      if (r.errno !== 0) {
-        hwSet("hwLiveState", "Background collector unavailable; retrying");
-        hwClass($("hwLiveDot"), "hw-dot off");
-      }
+      if (r.errno !== 0) hwSet("hwLiveState", "Background collector unavailable; retrying");
     }).catch(function () {
       hwSet("hwLiveState", "Background collector unavailable; retrying");
-      hwClass($("hwLiveDot"), "hw-dot off");
     }).then(function () { hwDaemonEnsureInFlight = false; });
   }
 
-  /* The background daemon owns measurement windows; the WebUI only renders its durable results. */
-  hwEnsureMonitorDaemon(true);
-  hwRenderSavedDrainRates();
-  hwLoadDiskDrainCache();
-  function hwUpdate(data) {
-    var policies = hwGetPolicies(data), previous = hwPrevious;
+  /* The background daemon owns measurement windows; the WebUI only renders its durable results.
+     Its start-up reads and the collector check are issued at the end of the script (see "start"). */
+  function hwUpdate(data, cached) {
+    var loadingNote = $("hwCpuLoading");
+    if (loadingNote && loadingNote.parentNode) loadingNote.parentNode.removeChild(loadingNote);
+    var policies = hwGetPolicies(data), previous = cached ? null : hwPrevious;
     hwBuildCpuCards(policies, data);
     var temps = hwSensorTemps(data);
     policies.forEach(function (policy, index) {
@@ -1176,15 +1246,23 @@
     hwClass($("hwBatteryTempStatus"), "hw-pill " + batteryTempState.cls);
     hwSet("hwBatteryTemperature", hwFormatTemp(temps.battery));
     hwClass($("hwBatteryTemperature"), "hw-value hw-temperature-value" + (batteryTempState.valueCls ? " " + batteryTempState.valueCls : ""));
+    if (cached) {
+      /* First paint from the saved snapshot: show it, but start no reads and claim nothing is live yet. */
+      hwCapacityMah = hwCapacityFrom(data);
+      hwRenderSavedDrainRates();
+      return;
+    }
     hwUpdateDrain(data);
-    hwSet("hwLiveState", "Live · refreshes every " + (HW_SAMPLE_INTERVAL_MS / 1000) + " s");
-    hwClass($("hwLiveDot"), "hw-dot");
+    hwSetLive(true, "Refreshes every " + (HW_SAMPLE_INTERVAL_MS / 1000) + " s");
     hwPrevious = data;
   }
   function hwUnavailable(message) {
-    hwSet("hwLiveState", message || "Live readings unavailable; retrying");
-    hwClass($("hwLiveDot"), "hw-dot off");
-    hwSet("hwCpuLoading", "Hardware telemetry is unavailable. Existing tuning status below is unaffected.");
+    hwSetLive(false, message || "Live readings unavailable; retrying");
+    var loadingNote = $("hwCpuLoading");
+    if (loadingNote) {
+      hwClass(loadingNote, "hw-error");
+      hwSet("hwCpuLoading", "Hardware telemetry is unavailable. Existing tuning status below is unaffected.");
+    }
   }
   function hwSample() {
     if (hwInFlight || currentPage !== "monitor" || (document.visibilityState && document.visibilityState === "hidden")) return;
@@ -1195,9 +1273,8 @@
       var data = kv(r.stdout || "");
       if (r.errno !== 0 || data.schema !== "1") hwUnavailable("Live readings unavailable; retrying");
       else {
-        var loading = $("hwCpuLoading");
-        if (loading && loading.parentNode) loading.parentNode.removeChild(loading);
         hwUpdate(data);
+        snapshotPut({ monitor: r.stdout }, false);
       }
     }).catch(function () {
       if (currentPage === "monitor" && !(document.visibilityState && document.visibilityState === "hidden")) hwUnavailable("Live readings unavailable; retrying");
@@ -1225,6 +1302,7 @@
         if (hwTimer) clearTimeout(hwTimer);
         hwTimer = null;
         hwPrevious = null;
+        if (snapshotDirty) snapshotFlush();
       } else {
         hwEnsureMonitorDaemon(true);
         syncHardwareSampler();
@@ -1358,6 +1436,41 @@
     updateDashboard();
   }
 
+  function outText(r) { return [r.stdout || "", r.stderr || ""].join("\n"); }
+  /* Turns the kernel-profile and controller answers into plain values. Used by refresh() and, with saved text, by the
+     first paint; it only reads its arguments. collapse = the kernel panel must be closed (support not confirmed). */
+  function readControlParts(b, c) {
+    var out = { kp: null, kernelSupport: "unknown", collapse: false, controllerSource: "unknown", controllerMessage: "" };
+    var kpText = outText(b);
+    var kpParsed = (b.errno === 0 && /mode=/.test(kpText)) ? kv(kpText.replace(/ /g, "\n")) : null;
+    /* Trust the helper's explicit capability result. Older helper output without a support field
+       remains readable for compatibility, but an unreadable/malformed present node is never
+       mislabeled as an unsupported kernel. */
+    if (kpParsed && kpParsed.support === "supported" && /^(0|1|2|3)$/.test(kpParsed.mode || "")) {
+      out.kp = kpParsed; out.kernelSupport = "supported";
+    } else if (kpParsed && kpParsed.support === "unsupported") {
+      out.kp = null; out.kernelSupport = "unsupported"; out.collapse = true;
+    } else if (kpParsed && kpParsed.support === "unknown") {
+      out.kp = null; out.kernelSupport = "unknown"; out.collapse = true;
+    } else if (kpParsed && !kpParsed.support && /^(0|1|2|3)$/.test(kpParsed.mode || "")) {
+      out.kp = kpParsed; out.kernelSupport = "supported";
+    } else if (b.errno === 0 && kpParsed && !kpParsed.support && (kpParsed.mode === "?" || /no Kprofiles in this kernel/i.test(kpText))) {
+      out.kp = null; out.kernelSupport = "unsupported"; out.collapse = true;
+    } else {
+      out.kp = null; out.kernelSupport = "unknown"; out.collapse = true;
+    }
+    var controlText = outText(c);
+    var controlParsed = (c.errno === 0 && /source=/.test(controlText)) ? kv(controlText) : null;
+    /* Never infer ownership from a failed or malformed controller response. An empty response or
+       an uninitialized legacy state is not proof that Module presets owns the device. */
+    out.controllerSource = controlParsed && /^(module|kernel|conflict|unknown)$/.test(controlParsed.source || "") ? controlParsed.source : "unknown";
+    out.controllerMessage = controlParsed ? (controlParsed.source_message || "") : "";
+    if (controlParsed && controlParsed.source === "legacy") {
+      out.controllerSource = "conflict";
+      out.controllerMessage = "Controller initialization is incomplete. Choose Module presets or Kernel profile to initialize safely.";
+    }
+    return out;
+  }
   function refresh(quiet) {
     return Promise.all([T("status"), K("status"), C("status")]).then(function (rs) {
       var a = rs[0], b = rs[1], c = rs[2];
@@ -1368,34 +1481,11 @@
       }
       st = kv(a.stdout);
       statusReady = true;
-      var kpText = [b.stdout || "", b.stderr || ""].join("\n");
-      var kpParsed = (b.errno === 0 && /mode=/.test(kpText)) ? kv(kpText.replace(/ /g, "\n")) : null;
-      /* Trust the helper's explicit capability result. Older helper output without a support field
-         remains readable for compatibility, but an unreadable/malformed present node is never
-         mislabeled as an unsupported kernel. */
-      if (kpParsed && kpParsed.support === "supported" && /^(0|1|2|3)$/.test(kpParsed.mode || "")) {
-        kp = kpParsed; kernelSupport = "supported";
-      } else if (kpParsed && kpParsed.support === "unsupported") {
-        kp = null; kernelSupport = "unsupported"; kernelExpanded = false;
-      } else if (kpParsed && kpParsed.support === "unknown") {
-        kp = null; kernelSupport = "unknown"; kernelExpanded = false;
-      } else if (kpParsed && !kpParsed.support && /^(0|1|2|3)$/.test(kpParsed.mode || "")) {
-        kp = kpParsed; kernelSupport = "supported";
-      } else if (b.errno === 0 && kpParsed && !kpParsed.support && (kpParsed.mode === "?" || /no Kprofiles in this kernel/i.test(kpText))) {
-        kp = null; kernelSupport = "unsupported"; kernelExpanded = false;
-      } else {
-        kp = null; kernelSupport = "unknown"; kernelExpanded = false;
-      }
-      var controlText = [c.stdout || "", c.stderr || ""].join("\n");
-      var controlParsed = (c.errno === 0 && /source=/.test(controlText)) ? kv(controlText) : null;
-      /* Never infer ownership from a failed or malformed controller response. An empty response or
-         an uninitialized legacy state is not proof that Module presets owns the device. */
-      controllerSource = controlParsed && /^(module|kernel|conflict|unknown)$/.test(controlParsed.source || "") ? controlParsed.source : "unknown";
-      controllerMessage = controlParsed ? (controlParsed.source_message || "") : "";
-      if (controlParsed && controlParsed.source === "legacy") {
-        controllerSource = "conflict";
-        controllerMessage = "Controller initialization is incomplete. Choose Module presets or Kernel profile to initialize safely.";
-      }
+      var parts = readControlParts(b, c);
+      kp = parts.kp; kernelSupport = parts.kernelSupport;
+      if (parts.collapse) kernelExpanded = false;
+      controllerSource = parts.controllerSource; controllerMessage = parts.controllerMessage;
+      snapshotPut({ tune: a.stdout, kp: b.errno === 0 ? outText(b) : "", ctl: c.errno === 0 ? outText(c) : "" }, true);
       if (st.preset === "stock") saveBridgeOrigin("");
       render();
       if (recoveryLock) {
@@ -1616,12 +1706,43 @@
   /* Apply a persisted recovery lock before the first asynchronous status request. Normal controls also stay locked until status is known. */
   syncControlLocks();
 
+  /* ---------- first paint from the saved snapshot ----------
+     Read-only drawing of what was last seen. statusReady stays false, so every control stays locked until the real
+     status has been read; the globals that the controls use (st, kp, controllerSource, ...) are restored afterwards. */
+  function paintSnapshot() {
+    var snap = snapshotLoad();
+    if (!snap) return;
+    if (/^v[0-9][0-9.]*$/.test(snap.ver)) { $("ver").textContent = "Installed: " + snap.ver; $("aboutVersion").textContent = snap.ver; }
+    if (snap.cache) { hwCycle = hwParseCycle(kv(snap.cache)); hwDiskCacheLoaded = true; hwCacheFromSnapshot = true; }
+    if (snap.monitor) {
+      var data = kv(snap.monitor);
+      if (data.schema === "1") hwUpdate(data, true);
+    }
+    if (snap.cache && !snap.monitor) hwRenderSavedDrainRates();
+    if (snap.tune && snap.tune.indexOf("enabled=") >= 0 && snap.kp && snap.ctl) {
+      var keep = { st: st, kp: kp, ks: kernelSupport, src: controllerSource, msg: controllerMessage };
+      try {
+        var parts = readControlParts({ errno: 0, stdout: snap.kp, stderr: "" }, { errno: 0, stdout: snap.ctl, stderr: "" });
+        st = kv(snap.tune); kp = parts.kp; kernelSupport = parts.kernelSupport;
+        controllerSource = parts.controllerSource; controllerMessage = parts.controllerMessage;
+        updateDashboard();
+      } finally {
+        st = keep.st; kp = keep.kp; kernelSupport = keep.ks; controllerSource = keep.src; controllerMessage = keep.msg;
+      }
+      var badge = $("homeActiveBadge");
+      if (badge) { badge.textContent = "Loading"; badge.className = "status-pill loading"; }
+    }
+  }
+  hwSetLive(false, "");
+  paintSnapshot();
+
   /* ---------- start ---------- */
   exec("tr -d '\\r' < " + BASE + "module.prop | sed -n 's/^version=//p' | head -n 1").then(function (r) {
     var v = (r.stdout || "").trim();
     if (r.errno === 0 && /^v[0-9][0-9.]*$/.test(v)) {
       $("ver").textContent = "Installed: " + v;
       $("aboutVersion").textContent = v;
+      snapshotPut({ ver: v }, false);
     }
   });
   /* The first status read opens the controls. If it (or the frequency lists) cannot be read, try again by
@@ -1648,11 +1769,18 @@
     }).catch(function () { return false; }).then(function (loaded) {
       if (loaded === true) return;
       if (startTries <= START_RETRIES) startTimer = setTimeout(startLoad, START_RETRY_MS);
-      else showRetry(true);
+      else {
+        showRetry(true);
+        var failBadge = $("homeActiveBadge");
+        if (!statusReady && failBadge) { failBadge.textContent = "Status unknown"; failBadge.className = "status-pill warn"; }
+      }
     });
   }
   $("retryLoad").addEventListener("click", function () { startTries = 0; startLoad(); });
   startLoad();
+  /* Data reads first, the collector check after them, so that the first readings are not queued behind it. */
+  hwLoadDiskDrainCache();
+  hwEnsureMonitorDaemon(true);
 })();
 </script>
 </body>
