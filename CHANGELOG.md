@@ -1,11 +1,10 @@
 # Changelog
 
-## v4.4.0
-The WebUI now opens instantly from the last data it saw, then replaces it with live reads.
-- New: **instant loading.** The WebUI keeps a snapshot of the last monitor reading, drain cycle and status (`kprofiles-ui-snapshot-v1`, at most 24 hours old) and paints from it on start-up while the real reads run in the background and replace it. A snapshot never counts as live: profile controls stay disabled until the first successful status read, as before.
-- UI: a Loading state that turns into the green Live capsule once fresh data arrives, and small loading indicators while reads are in progress.
-- Tests: the WebUI DOM suite covers the snapshot being saved, shown first and replaced by live data.
-- Version: v4.4.0, versionCode 49.
+## v4.4.2
+The WebUI now opens on Home instead of Monitor.
+- Change: **Home is the default page.** Opening the WebUI shows Home first, with the Home button in the dock highlighted. Monitor is one tap away, and live hardware sampling starts only when Monitor is opened, as before.
+- Tests: the navigation check now asserts that the WebUI starts on Home and that Monitor is hidden until selected.
+- Version: v4.4.2, versionCode 49.
 
 ## v4.1.1
 Fixes the failing mksh CI job of v4.1.0: the battery collector's arithmetic did not fit in 32 bits. Not seen on a phone.

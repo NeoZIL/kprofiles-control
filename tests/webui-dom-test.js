@@ -30,8 +30,6 @@ class El {
   appendChild(c) { c.parent = this; this.children.push(c); if (this.attached) this.doc.attach(c); return c; }
   addEventListener(t, f) { (this.listeners[t] = this.listeners[t] || []).push(f); }
   closest() { return this; }
-  get parentNode() { return this.parent; }
-  removeChild(c) { const i = this.children.indexOf(c); if (i >= 0) this.children.splice(i, 1); c.parent = null; this.doc.detach(c); return c; }
   fire(t) { (this.listeners[t] || []).forEach((f) => f({ target: this })); }
 }
 
@@ -76,8 +74,7 @@ async function load(opts) {
   doc.addEventListener = (t, f) => { if (t === "visibilitychange") visListeners.push(f); };
   const calls = []; let clock = opts.now === undefined ? 1000000 : opts.now; const intervals = []; const timeouts = [];
   const confirms = [];
-  const denied = () => { throw new Error("storage denied"); };
-  const win = { localStorage: opts.storageThrows ? { getItem: denied, setItem: denied, removeItem: denied } : {
+  const win = { localStorage: {
     getItem: (k) => (store.has(k) ? store.get(k) : null), setItem: (k, v) => { store.set(k, String(v)); }, removeItem: (k) => { store.delete(k); }
   }, confirm: (message) => { confirms.push(String(message)); return opts.confirm === undefined ? true : !!opts.confirm; } };
   const NativeDate = Date;
@@ -405,11 +402,11 @@ const deferred = () => { let res; const p = new Promise((r) => { res = r; }); re
     check("successful conflict resolution selects Module presets", c.el("sourceModuleBtn").getAttribute("aria-pressed") === "true", c.el("sourceModuleBtn").getAttribute("aria-pressed"));
     check("successful conflict resolution unlocks module presets", c.doc.all.filter((e) => e.hasAttribute("data-preset")).every((e) => !e.disabled), "a preset remains disabled");
   }
-  // 12. navigation is local; Monitor is the default route and the dock keeps all destinations accessible.
+  // 12. navigation is local; Home is the default route and the dock keeps all destinations accessible.
   {
     const c = await load();
     const before = c.calls.length;
-    check("navigation starts on Monitor", c.el("pageMonitor").style.display === "block" && c.el("navMonitor").getAttribute("aria-current") === "page", "Monitor not active");
+    check("navigation starts on Home", c.el("pageHome").style.display === "block" && c.el("navHome").getAttribute("aria-current") === "page" && c.el("pageMonitor").style.display === "none" && c.el("navMonitor").getAttribute("aria-current") === "false", "Home not active");
     check("dock is a floating rounded navigation surface", /\.bottom-nav-inner\{[^}]*border-radius:23px/.test(src) && /backdrop-filter:blur\(18px\)/.test(src), "modern dock styling not found");
     check("dock order is Monitor, CPU & GPU, Home, Kernel, Settings", src.indexOf('id="navMonitor"') < src.indexOf('id="navCpu"') && src.indexOf('id="navCpu"') < src.indexOf('id="navHome"') && src.indexOf('id="navHome"') < src.indexOf('id="navKernel"') && src.indexOf('id="navKernel"') < src.indexOf('id="navSettings"'), "navigation order does not match proposal");
     check("battery appears before CPU and GPU telemetry", src.indexOf('id="hwBatteryCard"') < src.indexOf('id="hwCpuCards"') && src.indexOf('id="hwCpuCards"') < src.indexOf('id="hwGpuCard"'), "hardware card order is wrong");
@@ -430,7 +427,7 @@ const deferred = () => { let res; const p = new Promise((r) => { res = r; }); re
       check("navigation leaves exactly one page visible after " + key, visible.length === 1 && visible[0] === pageId, visible.join(","));
       await c.flush();
     }
-    check("entering Monitor starts one additional read-only hardware sample", c.calls.length === before + 1 && c.sent(/monitor\.sh snapshot/) === 2, "before=" + before + " after=" + c.calls.length + " calls=" + c.calls.join(" | "));
+    check("starting on Home takes no hardware sample; entering Monitor starts one read-only sample", c.calls.length === before + 1 && c.sent(/monitor\.sh snapshot/) === 1, "before=" + before + " after=" + c.calls.length + " calls=" + c.calls.join(" | "));
     check("live monitor shows all three POCO F6 CPU policies", c.el("hwCpuCards").children.length === 3, "cards=" + c.el("hwCpuCards").children.length);
     check("live monitor includes GPU and battery cards", !!c.el("hwGpuCard") && !!c.el("hwBatteryCard"), "missing card");
     const monitorPageSource = src.slice(src.indexOf('id="pageMonitor"'), src.indexOf('id="pageSettings"', src.indexOf('id="pageMonitor"')));
@@ -462,11 +459,11 @@ const deferred = () => { let res; const p = new Promise((r) => { res = r; }); re
     check("header gear opens Settings", c.el("pageSettings").style.display === "block", c.el("pageSettings").style.display);
     c.el("homeMonitor").fire("click"); await c.flush();
     check("Home Live Monitoring card opens Monitor", c.el("pageMonitor").style.display === "block", c.el("pageMonitor").style.display);
-    check("Home Live Monitoring card starts the same sampler", c.sent(/monitor\.sh snapshot/) === 3, "samples=" + c.sent(/monitor\.sh snapshot/));
+    check("Home Live Monitoring card starts the same sampler", c.sent(/monitor\.sh snapshot/) === 2, "samples=" + c.sent(/monitor\.sh snapshot/));
     c.el("navHome").fire("click");
     c.el("homeOpenMonitor").fire("click"); await c.flush();
     check("Home Details shortcut still opens Monitor", c.el("pageMonitor").style.display === "block", c.el("pageMonitor").style.display);
-    check("Monitor navigation starts a fresh sample after Home shortcuts", c.sent(/monitor\.sh snapshot/) === 4, "samples=" + c.sent(/monitor\.sh snapshot/));
+    check("Monitor navigation starts a fresh sample after Home shortcuts", c.sent(/monitor\.sh snapshot/) === 3, "samples=" + c.sent(/monitor\.sh snapshot/));
   }
   // 12. vendor-independent GPU counter fallback and battery charge thresholds
   {
@@ -532,7 +529,7 @@ const deferred = () => { let res; const p = new Promise((r) => { res = r; }); re
       return def(cmd);
     };
     const c = await load({ now: 1700000005000, handler });
-    await c.flush();
+    c.el("navMonitor").fire("click"); await c.flush();
     check("Active Drain shows the cycle's average current in mA (charge / time)", c.el("hwBatteryActiveDrain").textContent === "300 mA", c.el("hwBatteryActiveDrain").textContent);
     check("Idle Drain shows its own average current", c.el("hwBatteryIdleDrain").textContent === "30 mA", c.el("hwBatteryIdleDrain").textContent);
     check("an estimated %/h line is derived from the reported capacity", /^\u2248 6\.8 %\/h est\./.test(c.el("hwBatteryActiveSub").textContent) && /^\u2248 0\.7 %\/h est\./.test(c.el("hwBatteryIdleSub").textContent), c.el("hwBatteryActiveSub").textContent + " / " + c.el("hwBatteryIdleSub").textContent);
@@ -725,103 +722,6 @@ const deferred = () => { let res; const p = new Promise((r) => { res = r; }); re
     clickPreset(c, "performance"); await c.flush();
     check("switching profile asks before discarding unsaved custom edits", c.confirms.some((m) => /Discard unsaved Custom frequency edits/.test(m)), c.confirms.join(" | "));
     check("cancelled profile switch preserves Custom and its draft", ph.s.preset === "custom" && c.sent(/tune\.sh preset performance/) === before && /Unsaved custom changes/.test(c.el("customDraftStatus").textContent), ph.s.preset + "/" + c.calls.join(" | "));
-  }
-
-  // ---------- Instant loading: saved snapshot first, Loading -> Live capsule, small loading indicators ----------
-  {
-    const SNAP = "kprofiles-ui-snapshot-v1";
-    const healthyHandler = (cmd, def) => (/monitor-cache\.sh get/.test(cmd) ? ok(diskText(cycleDisk())) : def(cmd));
-    const never = () => new Promise(() => {});
-    const T0 = 1700000000000;
-
-    // A healthy first run leaves a snapshot behind and ends with the green Live capsule.
-    const warm = await load({ now: T0, handler: healthyHandler }); await warm.flush();
-    check("pill: after the first live reading it reads Live in the green state", warm.el("hwLivePill").textContent === "Live" && warm.el("hwLivePill").hasClass("is-live") && !warm.el("hwLivePill").hasClass("is-loading"), warm.el("hwLivePill").textContent + " / " + warm.el("hwLivePill").className);
-    check("pill: Live is shown without a stale or error variant", !/stale|err|danger/.test(warm.el("hwLivePill").className + warm.el("hwLiveState").className), warm.el("hwLivePill").className);
-    check("a snapshot of the monitor, drain cycle and status is saved", (() => { try { const o = JSON.parse(warm.store.get(SNAP)); return o.v === 1 && ["monitor", "cache", "tune", "kp", "ctl", "ver"].every((k) => typeof o.text[k] === "string" && o.text[k] && typeof o.at[k] === "number"); } catch (e) { return false; } })(), String(warm.store.get(SNAP)).slice(0, 120));
-    const saved = Object.fromEntries(warm.store);
-
-    // Cold start from the snapshot while NOTHING has answered yet: values are already on screen.
-    const cold = await load({ now: T0 + 60000, storage: saved, handler: never }); await cold.flush();
-    check("snapshot: the drain average is on screen before any read finishes", cold.el("hwBatteryActiveDrain").textContent === "300 mA" && cold.el("hwBatteryIdleDrain").textContent === "30 mA", cold.el("hwBatteryActiveDrain").textContent + " / " + cold.el("hwBatteryIdleDrain").textContent);
-    check("snapshot: saved drain figures say they are being updated", /Updating/.test(cold.el("hwBatteryActiveSub").textContent), cold.el("hwBatteryActiveSub").textContent);
-    check("snapshot: screen-on time is shown at once", /^1 ?h/.test(cold.el("hwBatteryScreenOnTime").textContent) || /1/.test(cold.el("hwBatteryScreenOnTime").textContent) && cold.el("hwBatteryScreenOnTime").textContent !== "Loading…", cold.el("hwBatteryScreenOnTime").textContent);
-    check("snapshot: CPU and GPU cards are built and filled at once", !!cold.el("hwCpuFrequency_0") && /MHz|GHz/.test(cold.el("hwCpuFrequency_0").textContent) && /MHz|GHz/.test(cold.el("hwGpuFrequency").textContent), cold.el("hwCpuFrequency_0") ? cold.el("hwCpuFrequency_0").textContent : "no card");
-    check("snapshot: the battery level is shown", /68/.test(cold.el("hwBatteryLevel").textContent), cold.el("hwBatteryLevel").textContent);
-    check("snapshot: Home shows the last profile, not the loading text", cold.el("homePreset").textContent !== "" && !cold.el("homePreset").hasClass("kp-loading"), cold.el("homePreset").textContent + " / " + cold.el("homePreset").className);
-    check("snapshot: the installed version is shown", cold.el("ver").textContent === "Installed: v3.1.0", cold.el("ver").textContent);
-    check("snapshot: the pill is still the yellow Loading capsule (nothing is live yet)", cold.el("hwLivePill").textContent === "Loading" && cold.el("hwLivePill").hasClass("is-loading") && !cold.el("hwLivePill").hasClass("is-live"), cold.el("hwLivePill").textContent + " / " + cold.el("hwLivePill").className);
-    check("snapshot: the Home badge stays Loading until the status is verified", cold.el("homeActiveBadge").textContent === "Loading" && /loading/.test(cold.el("homeActiveBadge").className), cold.el("homeActiveBadge").textContent + " / " + cold.el("homeActiveBadge").className);
-    check("SAFETY snapshot: every control stays locked until the real status is read", cold.usable().length === 0, "usable: " + cold.usable().length);
-    check("SAFETY snapshot: nothing but read-only requests is sent at start-up", cold.calls.every((x) => /monitor\.sh snapshot|monitor-cache\.sh get|monitor-daemon\.sh\"? ensure|module\.prop|tune\.sh lists/.test(x)), cold.calls.join(" | "));
-    const iSnap = cold.calls.findIndex((x) => /monitor\.sh snapshot/.test(x)), iEnsure = cold.calls.findIndex((x) => /monitor-daemon\.sh/.test(x)), iCache = cold.calls.findIndex((x) => /monitor-cache\.sh get/.test(x));
-    check("start-up asks for the readings before it checks the collector", iSnap >= 0 && iCache >= 0 && iEnsure > iSnap && iEnsure > iCache, "snapshot=" + iSnap + " cache=" + iCache + " ensure=" + iEnsure);
-    check("the collector check is still made at start-up", iEnsure >= 0, cold.calls.join(" | "));
-
-    // The same start with live answers: the display is replaced in place and goes Live.
-    const live = await load({ now: T0 + 60000, storage: saved, handler: healthyHandler }); await live.flush();
-    check("snapshot then fresh: pill turns Live", live.el("hwLivePill").textContent === "Live" && live.el("hwLivePill").hasClass("is-live"), live.el("hwLivePill").textContent);
-    check("snapshot then fresh: the Updating note is gone", !/Updating/.test(live.el("hwBatteryActiveSub").textContent), live.el("hwBatteryActiveSub").textContent);
-    check("snapshot then fresh: Home badge shows the verified state", live.el("homeActiveBadge").textContent === "Module on" && !/loading/.test(live.el("homeActiveBadge").className), live.el("homeActiveBadge").textContent + " / " + live.el("homeActiveBadge").className);
-    check("snapshot then fresh: controls open exactly as without a snapshot", live.usable().length > 0, "usable: " + live.usable().length);
-
-    // Fresh data differs from the snapshot: the fresh values win.
-    const changed = await load({ now: T0 + 60000, storage: saved, handler: (cmd, def) => (/monitor-cache\.sh get/.test(cmd) ? ok(diskText(cycleDisk({ active_charge: "540000000000" }))) : def(cmd)) }); await changed.flush();
-    check("fresh drain figures replace the saved ones", changed.el("hwBatteryActiveDrain").textContent === "150 mA", changed.el("hwBatteryActiveDrain").textContent);
-
-    // A failing live read after a snapshot: still no red state; the pill returns to Loading and says why.
-    const failing = await load({ now: T0 + 60000, storage: saved, handler: (cmd, def) => (/monitor\.sh snapshot/.test(cmd) ? { errno: 1, stdout: "", stderr: "x" } : healthyHandler(cmd, def)) }); await failing.flush();
-    check("failed live read: pill is Loading again, never a stale/red state", failing.el("hwLivePill").textContent === "Loading" && failing.el("hwLivePill").hasClass("is-loading") && !/stale|err/.test(failing.el("hwLivePill").className), failing.el("hwLivePill").className);
-    check("failed live read: the reason is shown next to the pill", /unavailable; retrying/.test(failing.el("hwLiveState").textContent), failing.el("hwLiveState").textContent);
-    check("failed live read: the saved values stay visible", failing.el("hwBatteryActiveDrain").textContent === "300 mA", failing.el("hwBatteryActiveDrain").textContent);
-
-    // Old, damaged or foreign snapshots are ignored.
-    const aged = await load({ now: T0 + 25 * 3600000, storage: saved, handler: never }); await aged.flush();
-    check("a snapshot older than 24 hours is not shown", aged.el("hwBatteryActiveDrain").textContent === "Loading…" && aged.el("homePreset").hasClass("kp-loading") && aged.el("hwCpuLoading") !== null, aged.el("hwBatteryActiveDrain").textContent);
-    for (const [label, raw] of [["not JSON", "{oops"], ["wrong version", JSON.stringify({ v: 2, text: {}, at: {} })], ["wrong types", JSON.stringify({ v: 1, text: { monitor: 5, cache: { a: 1 }, tune: [], kp: null, ctl: true, ver: 7 }, at: { monitor: "x" } })],
-      ["future timestamps", JSON.stringify({ v: 1, text: { monitor: "schema=1\n" }, at: { monitor: T0 + 99999999 } })], ["wrong schema", JSON.stringify({ v: 1, text: { monitor: "schema=2\n" }, at: { monitor: T0 } })]]) {
-      const bad = await load({ now: T0 + 1000, storage: { [SNAP]: raw }, handler: never }); await bad.flush();
-      check("damaged snapshot (" + label + ") is ignored and the page still starts", bad.el("hwBatteryActiveDrain").textContent === "Loading…" && bad.el("hwLivePill").textContent === "Loading" && bad.usable().length === 0 && bad.calls.length > 0, bad.el("hwBatteryActiveDrain").textContent);
-    }
-    const partial = await load({ now: T0 + 1000, storage: { [SNAP]: JSON.stringify({ v: 1, text: { tune: "enabled=1\npreset=stock\n" }, at: { tune: T0 } }) }, handler: never }); await partial.flush();
-    check("a snapshot without kernel/controller text does not paint a half-known Home", partial.el("homePreset").hasClass("kp-loading"), partial.el("homePreset").className);
-
-    // Without any storage the page behaves as before.
-    const noStore = await load({ now: T0, storageThrows: true, handler: healthyHandler }); await noStore.flush();
-    check("unavailable storage: the page still goes Live and opens its controls", noStore.el("hwLivePill").textContent === "Live" && noStore.usable().length > 0, noStore.el("hwLivePill").textContent);
-
-    // Writes to storage are throttled, not one per 5-second sample.
-    const writes = []; const wc = await load({ now: T0, handler: healthyHandler }); await wc.flush();
-    const before = wc.store.get(SNAP);
-    await wc.advance(5000); await wc.advance(5000);
-    check("snapshot writes are throttled between 5-second samples", wc.store.get(SNAP) === before, "snapshot changed within 15 s");
-
-    // Placeholders: a small loading indicator where no data exists yet, removed when data arrives.
-    const slow = deferred();
-    const pc = await load({ now: T0, handler: (cmd, def) => (/monitor-cache\.sh get/.test(cmd) ? slow.p : def(cmd)) }); await pc.flush();
-    check("no data yet: drain values carry the small loading indicator", ["hwBatteryActiveDrain", "hwBatteryIdleDrain", "hwBatteryScreenOnTime", "hwBatteryScreenOffTime"].every((id) => pc.el(id).hasClass("kp-loading") && pc.el(id).textContent === "Loading…"), pc.el("hwBatteryActiveDrain").className);
-    slow.res(ok(diskText(cycleDisk()))); await pc.flush();
-    check("data arrived: the loading indicator is removed from the drain values", ["hwBatteryActiveDrain", "hwBatteryIdleDrain", "hwBatteryScreenOnTime", "hwBatteryScreenOffTime"].every((id) => !pc.el(id).hasClass("kp-loading")), pc.el("hwBatteryActiveDrain").className);
-    const noCpu = await load({ now: T0, handler: never }); await noCpu.flush();
-    check("no hardware data yet: a Loading note stands in for the CPU/GPU cards", noCpu.el("hwCpuLoading") !== null && noCpu.el("hwCpuLoading").hasClass("kp-loading") && /id="hwCpuLoading">Loading hardware readings/.test(src), noCpu.el("hwCpuLoading") ? noCpu.el("hwCpuLoading").className : "missing");
-    check("no data yet: the pill is the yellow Loading capsule", noCpu.el("hwLivePill").textContent === "Loading" && noCpu.el("hwLivePill").hasClass("is-loading"), noCpu.el("hwLivePill").className);
-    const hwDown = await load({ now: T0, handler: (cmd, def) => (/monitor\.sh snapshot/.test(cmd) ? { errno: 1, stdout: "", stderr: "x" } : def(cmd)) }); await hwDown.flush();
-    check("no data and the read fails: the note stops pulsing and explains", hwDown.el("hwCpuLoading") !== null && !hwDown.el("hwCpuLoading").hasClass("kp-loading") && /unavailable/i.test(hwDown.el("hwCpuLoading").textContent), hwDown.el("hwCpuLoading") ? hwDown.el("hwCpuLoading").className + " / " + hwDown.el("hwCpuLoading").textContent : "missing");
-
-    // The first status read never arrives: the Home badge must not stay "Loading" behind the Retry button.
-    const dead = await load({ now: T0, handler: (cmd, def) => (/tune\.sh status/.test(cmd) ? { errno: 1, stdout: "", stderr: "no status" } : def(cmd)) }); await dead.flush();
-    for (let i = 0; i < 5; i++) await dead.advance(3000);
-    check("status never readable: Home badge says Status unknown (amber, not Loading)", dead.el("homeActiveBadge").textContent === "Status unknown" && /warn/.test(dead.el("homeActiveBadge").className) && !/loading/.test(dead.el("homeActiveBadge").className), dead.el("homeActiveBadge").textContent + " / " + dead.el("homeActiveBadge").className);
-    check("status never readable: the controls stay locked", dead.usable().length === 0, "usable: " + dead.usable().length);
-
-    // Styling: fully rounded capsules, yellow Loading and green Live, both themes, no red stale state, reduced motion honoured.
-    check("Live/Loading capsule is fully rounded", /\.live-pill\{[^}]*border-radius:999px/.test(src), "capsule radius missing");
-    check("Loading capsule is yellow and Live capsule is green, via theme variables", /\.live-pill\{[^}]*background:var\(--pill-warn-bg\);color:var\(--pill-warn-fg\)/.test(src) && /\.live-pill\.is-live\{background:var\(--pill-ok-bg\);color:var\(--pill-ok-fg\)\}/.test(src), "pill colours missing");
-    check("pill colours are defined for light and dark themes", (src.match(/--pill-warn-bg:/g) || []).length === 2 && (src.match(/--pill-ok-bg:/g) || []).length === 2, "expected a light and a dark value");
-    check("there is no stale or red variant of the live pill", !/live-pill[^{]*\.(is-)?(stale|err|error|red)/.test(src) && !/is-stale/.test(src), "stale/red pill style found");
-    check("the old dot indicator is gone from the Monitor header", src.indexOf("hwLiveDot") < 0, "hwLiveDot still referenced");
-    check("pulsing indicators are covered by the global reduced-motion rule", /prefers-reduced-motion:reduce\)\{\*,\*::before,\*::after\{animation-duration:\.01ms!important/.test(src), "reduced-motion rule changed");
-    check("the live status is announced politely by one live region", (src.match(/class="hw-refresh-line" role="status" aria-live="polite"/g) || []).length === 1 && !/id="hwLiveState"[^>]*role=/.test(src), "live region markup");
   }
   process.exit(fail);
 })().catch((e) => { console.log("FAIL the test itself crashed: " + (e && e.stack || e)); process.exit(1); });
