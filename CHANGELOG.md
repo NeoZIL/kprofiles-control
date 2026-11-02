@@ -1,5 +1,12 @@
 # Changelog
 
+## v4.4.0
+The WebUI now opens instantly from the last data it saw, then replaces it with live reads.
+- New: **instant loading.** The WebUI keeps a snapshot of the last monitor reading, drain cycle and status (`kprofiles-ui-snapshot-v1`, at most 24 hours old) and paints from it on start-up while the real reads run in the background and replace it. A snapshot never counts as live: profile controls stay disabled until the first successful status read, as before.
+- UI: a Loading state that turns into the green Live capsule once fresh data arrives, and small loading indicators while reads are in progress.
+- Tests: the WebUI DOM suite covers the snapshot being saved, shown first and replaced by live data.
+- Version: v4.4.0, versionCode 49.
+
 ## v4.1.1
 Fixes the failing mksh CI job of v4.1.0: the battery collector's arithmetic did not fit in 32 bits. Not seen on a phone.
 - Fix: **charge totals and every product of two readings are now computed 32-bit safe.** Charge is kept in uA*ms (300 mA for one minute is 18,000,000,000), but Android's mksh, like the CI mksh, does `$(( ))` in 32 bits and silently wraps. In the mksh job this showed up as 23 failing checks (for example an active charge of 820130816 instead of 18000000000). The collector now keeps charge as decimal strings and adds, subtracts, multiplies and divides them in pieces that stay far below 2^31 (9-digit pieces to add and subtract, 4-digit pieces to multiply, one digit at a time to divide). The measurement model, units, cache format and every number it produces are unchanged.
