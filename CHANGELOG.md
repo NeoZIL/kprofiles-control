@@ -1,5 +1,11 @@
 # Changelog
 
+## v4.4.3
+Fixes a slow controller switch, and rewrites the README.
+- Fix: **switching to Module presets no longer waits like a boot.** The switch ran the boot-time recording of the phone's own limits, which reads them over a 30 s window, so every switch took about 30 s with the page locked. If something was holding the CPU minimums up (an interaction boost), it took over a minute more while the step looked again. A switch is a button press, so it now uses a 3 s window and two short retries (`TUNE_CAP_BOOT_SAMPLES`, `TUNE_CAP_BOOT_GAP`, `TUNE_BOOT_RETRIES` and `TUNE_BOOT_WAIT` still override these). Measured on a fake phone: 29 s down to 3 s, and 59 s down to 6 s with the minimums held up. The pinned-minimum check still refuses a bad reading and keeps the earlier stock record. Boot itself is unchanged.
+- Test: the controller suite sets every boot wait to zero to stay fast, so it could not see this. New cases switch to Module presets with the real defaults, normally and with the minimums held up, and fail if the switch takes longer than 12 s or 25 s.
+- Docs: the README is now short. The long explanations moved to `docs/details.md` (how it works, safety, kernel profiles, battery monitor) and `docs/releasing.md` (releases, CI, tests); the files table there now lists `control.sh`, `control-lib.sh`, `monitor-daemon.sh` and `monitor-cache.sh`, which the old table left out.
+
 ## v4.4.2
 The WebUI now opens on Home instead of Monitor.
 - Change: **Home is the default page.** Opening the WebUI shows Home first, with the Home button in the dock highlighted. Monitor is one tap away, and live hardware sampling starts only when Monitor is opened, as before.

@@ -165,4 +165,39 @@ check "upstream path: the live mode is neutralized at that node" 0 "$(cat "$UPP/
 check "upstream path: auto_kp is neutralized at that node" N "$(cat "$UPP/auto_kp")"
 unset KP_SYSROOT
 
+# A controller switch is a button press, not a boot. The rest of this file sets the boot-time waits to zero so it
+# runs fast; this block uses the real defaults, because with them the switch to Module presets used to take about
+# 30 s every time (the stock-recording window) and over a minute when the minimums were held up.
+reset_phone() {
+  make_policy "$CPUFREQ/policy0" 364800 2016000 '364800 595200 787200 1017600 1209600 1401600 1708800 2016000'
+  make_policy "$CPUFREQ/policy3" 480000 2803200 '480000 633600 787200 1286400 1593600 1766400 2016000 2188800 2457600 2572800 2803200'
+  make_policy "$CPUFREQ/policy7" 480000 3014400 '480000 633600 787200 1286400 1593600 1766400 2016000 2188800 2457600 2572800 2668800 2803200 3014400'
+  printf '255000000\n' > "$GPU/min_freq"; printf '1100000000\n' > "$GPU/max_freq"
+}
+timed_switch() { # target -> prints seconds, sets sw_rc
+  ( unset TUNE_CAP_SAMPLES TUNE_CAP_GAP TUNE_CAP_BOOT_SAMPLES TUNE_CAP_BOOT_GAP TUNE_BOOT_RETRIES TUNE_BOOT_WAIT
+    s=$(date +%s); sh "$CONTROL" switch "$1" >"$T/timed.out" 2>&1; echo $? > "$T/timed.rc"; echo $(( $(date +%s) - s )) )
+}
+for case_name in normal held-up; do
+  setup_state "$T/handoff-speed-$case_name"
+  reset_phone
+  printf 'PERSIST=1\nMODE=0\nAUTO=N\n' > "$CFG_DIR/config"
+  printf 'SOURCE=module\nKP_MODE_PREF=0\nKP_AUTO_PREF=N\n' > "$CONTROL_FILE"
+  printf 'ENABLED=0\nSCREENOFF=1\nPRESET=stock\n' > "$CFG_DIR/tune.conf"
+  TUNE_NO_DAEMON=1 sh "$TUNE" boot >/dev/null 2>&1
+  TUNE_NO_DAEMON=1 sh "$TUNE" preset tilt >/dev/null 2>&1
+  sh "$CONTROL" switch kernel >/dev/null 2>&1
+  if [ "$case_name" = held-up ]; then
+    # something (an interaction boost) holds every minimum at its maximum
+    printf '2016000\n' > "$CPUFREQ/policy0/scaling_min_freq"; printf '2803200\n' > "$CPUFREQ/policy3/scaling_min_freq"; printf '3014400\n' > "$CPUFREQ/policy7/scaling_min_freq"
+    limit=25
+  else
+    limit=12
+  fi
+  secs=$(timed_switch module)
+  check "switch to Module presets ($case_name) succeeds" 0 "$(cat "$T/timed.rc")"
+  check "switch to Module presets ($case_name) reports the new controller" module "$(sed -n 's/^SOURCE=//p' "$CONTROL_FILE")"
+  if [ "$secs" -le "$limit" ]; then echo "ok   switch to Module presets ($case_name) does not wait like a boot (${secs}s)"; else echo "FAIL switch to Module presets ($case_name) took ${secs}s, over $limit s"; fail=1; fi
+done
+
 [ "$fail" = 0 ] && echo "all tests passed" || { echo "SOME TESTS FAILED"; exit 1; }

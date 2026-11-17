@@ -215,7 +215,11 @@ cmd_switch() {
       emit_conflict_recovery
       return 1
     fi
-    KPC_CONTROL_INTERNAL=1 sh "$MODDIR/tune.sh" boot > "$CONTROL_DIR/handoff-tune-boot.log" 2>&1; sw_rc=$?
+    # This runs because someone tapped a button, not at boot. tune.sh boot reads the phone's own limits over a
+    # 30 s window and, when the minimums are held up, looks again for up to a minute: right for boot, but here the
+    # page would sit locked for that long. A short window and two quick retries are enough; the pinned-minimum
+    # check still refuses a bad reading and an earlier stock record is kept.
+    KPC_CONTROL_INTERNAL=1 TUNE_CAP_BOOT_SAMPLES="${TUNE_CAP_BOOT_SAMPLES:-3}" TUNE_CAP_BOOT_GAP="${TUNE_CAP_BOOT_GAP:-1}" TUNE_BOOT_RETRIES="${TUNE_BOOT_RETRIES:-2}" TUNE_BOOT_WAIT="${TUNE_BOOT_WAIT:-2}" sh "$MODDIR/tune.sh" boot > "$CONTROL_DIR/handoff-tune-boot.log" 2>&1; sw_rc=$?
     if [ "$sw_rc" -ne 0 ]; then
       cat "$CONTROL_DIR/handoff-tune-boot.log"
       if sh "$MODDIR/tune.sh" stop > "$CONTROL_DIR/handoff-rollback-stop.log" 2>&1 && rollback_to_kernel; then
@@ -247,7 +251,7 @@ cmd_switch() {
   # Kernel-only mode must keep a verified record of the phone's original CPU/GPU limits. Capture only
   # after the module caps have been released, so no module limit is accidentally recorded as Stock.
   if ! sh "$MODDIR/tune.sh" stock-recorded > "$CONTROL_DIR/handoff-stock-check.log" 2>&1; then
-    sh "$MODDIR/tune.sh" boot capture-only > "$CONTROL_DIR/handoff-capture.log" 2>&1 || :
+    TUNE_CAP_BOOT_SAMPLES="${TUNE_CAP_BOOT_SAMPLES:-3}" TUNE_CAP_BOOT_GAP="${TUNE_CAP_BOOT_GAP:-1}" TUNE_BOOT_RETRIES="${TUNE_BOOT_RETRIES:-2}" TUNE_BOOT_WAIT="${TUNE_BOOT_WAIT:-2}" sh "$MODDIR/tune.sh" boot capture-only > "$CONTROL_DIR/handoff-capture.log" 2>&1 || :
     if ! sh "$MODDIR/tune.sh" stock-recorded >> "$CONTROL_DIR/handoff-stock-check.log" 2>&1; then
       cat "$CONTROL_DIR/handoff-capture.log" "$CONTROL_DIR/handoff-stock-check.log" 2>/dev/null
       if rollback_to_module; then
